@@ -1,12 +1,14 @@
 package bosun
 
-// Typed route registration and the request adapter: binds the request,
-// invokes the handler, writes the response, records the observed status,
-// and emits the audit event.
+// Typed route registration and the request adapter: binds the request body
+// into Req[In].Body, invokes the handler, writes the response, records the
+// observed status, and emits the audit event. The raw *http.Request is
+// always available on Req[In] via embedding.
 
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"reflect"
 	"runtime"
@@ -15,23 +17,33 @@ import (
 	"time"
 )
 
-func Get[In, Out any](r *Router, p string, h func(context.Context, In) (Out, error), opts ...RouteOpt) {
+// Req wraps the incoming request for typed handlers. The embedded
+// *http.Request gives handlers full access to headers, cookies, TLS state,
+// the raw body reader, etc. Body holds the parsed request body — a struct
+// (JSON or form decoded, with path/query/header/form tag binding) or a
+// string (raw body verbatim, useful for non-JSON payloads).
+type Req[In any] struct {
+	*http.Request
+	Body In
+}
+
+func Get[In, Out any](r *Router, p string, h func(context.Context, *Req[In]) (Out, error), opts ...RouteOpt) {
 	typed(r, "GET", p, h, opts)
 }
-func Post[In, Out any](r *Router, p string, h func(context.Context, In) (Out, error), opts ...RouteOpt) {
+func Post[In, Out any](r *Router, p string, h func(context.Context, *Req[In]) (Out, error), opts ...RouteOpt) {
 	typed(r, "POST", p, h, opts)
 }
-func Put[In, Out any](r *Router, p string, h func(context.Context, In) (Out, error), opts ...RouteOpt) {
+func Put[In, Out any](r *Router, p string, h func(context.Context, *Req[In]) (Out, error), opts ...RouteOpt) {
 	typed(r, "PUT", p, h, opts)
 }
-func Delete[In, Out any](r *Router, p string, h func(context.Context, In) (Out, error), opts ...RouteOpt) {
+func Delete[In, Out any](r *Router, p string, h func(context.Context, *Req[In]) (Out, error), opts ...RouteOpt) {
 	typed(r, "DELETE", p, h, opts)
 }
-func Patch[In, Out any](r *Router, p string, h func(context.Context, In) (Out, error), opts ...RouteOpt) {
+func Patch[In, Out any](r *Router, p string, h func(context.Context, *Req[In]) (Out, error), opts ...RouteOpt) {
 	typed(r, "PATCH", p, h, opts)
 }
 
-func typed[In, Out any](r *Router, method, p string, h func(context.Context, In) (Out, error), opts []RouteOpt) {
+func typed[In, Out any](r *Router, method, p string, h func(context.Context, *Req[In]) (Out, error), opts []RouteOpt) {
 	var mws []MWRef
 	var declared []int
 	for _, o := range opts {
@@ -49,12 +61,16 @@ func typed[In, Out any](r *Router, method, p string, h func(context.Context, In)
 	}
 	handlerName := runtime.FuncForPC(reflect.ValueOf(h).Pointer()).Name()
 
+	inType := reflect.TypeOf((*In)(nil)).Elem()
+	isString := inType.Kind() == reflect.String
+	isEmptyStruct := inType.Kind() == reflect.Struct && inType.NumField() == 0
+
 	routeIndexMu.Lock()
 	routeIndex = append(routeIndex, RouteInfo{
 		Method:   method,
 		Path:     full,
 		Handler:  handlerName,
-		In:       reflect.TypeOf((*In)(nil)).Elem(),
+		In:       inType,
 		Out:      reflect.TypeOf((*Out)(nil)).Elem(),
 		Declared: declared,
 	})
@@ -76,17 +92,34 @@ func typed[In, Out any](r *Router, method, p string, h func(context.Context, In)
 			}
 		})
 
-		var in In
+		typedReq := &Req[In]{Request: req}
 		status := http.StatusOK
 		var out Out
 		var handlerErr error
+		var bindErr error
 
-		if err := bind(req, &in); err != nil {
+		switch {
+		case isEmptyStruct:
+			// nothing to parse
+		case isString:
+			if req.Body != nil {
+				b, err := io.ReadAll(req.Body)
+				if err != nil {
+					bindErr = err
+				} else {
+					*(any(&typedReq.Body).(*string)) = string(b)
+				}
+			}
+		default:
+			bindErr = bind(req, &typedReq.Body)
+		}
+
+		if bindErr != nil {
 			status = http.StatusBadRequest
-			handlerErr = err
-			http.Error(w, err.Error(), status)
+			handlerErr = bindErr
+			http.Error(w, bindErr.Error(), status)
 		} else {
-			out, handlerErr = h(req.Context(), in)
+			out, handlerErr = h(req.Context(), typedReq)
 			if handlerErr != nil {
 				status = errStatus(handlerErr)
 				writeJSON(w, status, map[string]string{"error": publicMessage(handlerErr)})
@@ -106,7 +139,7 @@ func typed[In, Out any](r *Router, method, p string, h func(context.Context, In)
 				Status:     status,
 				RemoteAddr: req.RemoteAddr,
 				Duration:   time.Since(start),
-				Request:    Redact(in),
+				Request:    Redact(typedReq.Body),
 			}
 			if handlerErr == nil {
 				ev.Response = Redact(out)

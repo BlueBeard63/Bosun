@@ -97,23 +97,24 @@ func (c *AuthController) Routes(r *bosun.Router) {
 	bosun.Get(r, "/teapot", c.Teapot)
 }
 
-func (c *AuthController) Teapot(ctx context.Context, _ struct{}) (struct{}, error) {
+func (c *AuthController) Teapot(ctx context.Context, _ *bosun.Req[struct{}]) (struct{}, error) {
 	code := 400 + 18 // computed at runtime — the scanner cannot see this
 	return struct{}{}, bosun.E(code, "I'm a teapot", nil)
 }
 
-func (c *AuthController) Login(ctx context.Context, req LoginRequest) (LoginResponse, error) {
-	if req.Email == "" {
+func (c *AuthController) Login(ctx context.Context, req *bosun.Req[LoginRequest]) (LoginResponse, error) {
+	in := req.Body
+	if in.Email == "" {
 		return LoginResponse{}, bosun.E(http.StatusUnprocessableEntity, "email is required", nil)
 	}
-	if err := c.auth.Check(req.Email, req.Password); err != nil {
+	if err := c.auth.Check(in.Email, in.Password); err != nil {
 		return LoginResponse{}, bosun.E(http.StatusUnauthorized, "invalid credentials", err)
 	}
 	return LoginResponse{Token: "secret-jwt-here", Name: "Jack"}, nil
 }
 
-func (c *AuthController) User(ctx context.Context, req UserRequest) (UserResponse, error) {
-	if req.ID != 1 {
+func (c *AuthController) User(ctx context.Context, req *bosun.Req[UserRequest]) (UserResponse, error) {
+	if req.Body.ID != 1 {
 		return UserResponse{}, bosun.E(http.StatusNotFound, "user not found", nil)
 	}
 	return UserResponse{ID: 1, Name: "Jack"}, nil
@@ -160,8 +161,8 @@ func (c *AdminController) Routes(r *bosun.Router) {
 	bosun.Post(r, "/ratelimit", c.SetLimit)
 }
 
-func (c *AdminController) SetLimit(ctx context.Context, req SetLimitRequest) (struct{ OK bool }, error) {
-	plain, _ := json.Marshal(mw.RateLimitOptions{PerMinute: req.PerMinute})
+func (c *AdminController) SetLimit(ctx context.Context, req *bosun.Req[SetLimitRequest]) (struct{ OK bool }, error) {
+	plain, _ := json.Marshal(mw.RateLimitOptions{PerMinute: req.Body.PerMinute})
 	sealed, err := c.box.Seal(plain)
 	if err != nil {
 		return struct{ OK bool }{}, bosun.E(http.StatusInternalServerError, "seal failed", err)

@@ -7,10 +7,20 @@ import (
 
 // --- typed routes ---
 //
-// Handlers have the shape func(ctx context.Context, in In) (Out, error).
-// The adapter binds the request into In (JSON body + `path:"x"` and
-// `query:"x"` tags), encodes Out as JSON, maps errors to status codes,
-// emits audit events, and records the route for OpenAPI generation.
+// Handlers have the shape func(ctx context.Context, req *Req[In]) (Out, error).
+// Req[In] embeds *http.Request (so handlers can pull headers, cookies, TLS
+// state, etc. directly) and exposes a Body field of type In.
+//
+// Body parsing depends on In:
+//   - struct: JSON body decoded into Body, plus per-field binding via
+//     `path:"x"`, `query:"x"`, `header:"X-Foo"`, and `form:"x"` tags. Form
+//     bodies (application/x-www-form-urlencoded, multipart/form-data) are
+//     parsed via ParseForm instead of JSON decode.
+//   - string: raw body assigned to Body verbatim (no parse).
+//   - struct{}: body ignored; no parse attempted.
+//
+// The adapter encodes Out as JSON, maps errors to status codes, emits audit
+// events, and records the route for OpenAPI generation.
 
 // RouteInfo describes one typed route, for OpenAPI generation and tooling.
 type RouteInfo struct {

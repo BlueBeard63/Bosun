@@ -11,27 +11,42 @@ import (
 
 // --- request binding ---
 
-// bind fills *In from the JSON body (when present) and from `path:"x"` and
-// `query:"x"` struct tags.
+// bind fills *In from the request body and from struct tags. Body decoding
+// depends on Content-Type: JSON for application/json (or empty), form for
+// application/x-www-form-urlencoded and multipart/form-data. Per-field
+// sources are selected by the first matching tag in this order:
+// `path:"x"`, `query:"x"`, `header:"X-Foo"`, `form:"x"`.
 func bind(req *http.Request, in any) error {
-	if req.Body != nil && req.ContentLength != 0 {
-		ct := req.Header.Get("Content-Type")
-		if ct == "" || strings.HasPrefix(ct, "application/json") {
-			if err := json.NewDecoder(req.Body).Decode(in); err != nil {
-				return fmt.Errorf("invalid JSON body: %w", err)
-			}
+	ct := req.Header.Get("Content-Type")
+	hasBody := req.Body != nil && req.ContentLength != 0
+	isForm := strings.HasPrefix(ct, "application/x-www-form-urlencoded") ||
+		strings.HasPrefix(ct, "multipart/form-data")
+
+	if isForm {
+		if err := req.ParseForm(); err != nil {
+			return fmt.Errorf("invalid form body: %w", err)
+		}
+	} else if hasBody && (ct == "" || strings.HasPrefix(ct, "application/json")) {
+		if err := json.NewDecoder(req.Body).Decode(in); err != nil {
+			return fmt.Errorf("invalid JSON body: %w", err)
 		}
 	}
+
 	v := reflect.ValueOf(in).Elem()
 	t := v.Type()
 	for i := 0; i < t.NumField(); i++ {
 		sf := t.Field(i)
 		var raw string
-		if name := sf.Tag.Get("path"); name != "" {
-			raw = req.PathValue(name)
-		} else if name := sf.Tag.Get("query"); name != "" {
-			raw = req.URL.Query().Get(name)
-		} else {
+		switch {
+		case sf.Tag.Get("path") != "":
+			raw = req.PathValue(sf.Tag.Get("path"))
+		case sf.Tag.Get("query") != "":
+			raw = req.URL.Query().Get(sf.Tag.Get("query"))
+		case sf.Tag.Get("header") != "":
+			raw = req.Header.Get(sf.Tag.Get("header"))
+		case sf.Tag.Get("form") != "":
+			raw = req.PostForm.Get(sf.Tag.Get("form"))
+		default:
 			continue
 		}
 		if raw == "" {

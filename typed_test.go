@@ -26,6 +26,7 @@ type echoOut struct {
 	V     bool    `json:"v"`
 	Ratio float64 `json:"ratio"`
 	Note  string  `json:"note"`
+	Trace string  `json:"trace,omitempty"`
 }
 
 type loginIn struct {
@@ -37,6 +38,26 @@ type loginIn struct {
 type loginOut struct {
 	Token string `json:"token"`
 	Name  string `json:"name"`
+}
+
+type headerIn struct {
+	APIKey string `header:"X-API-Key"`
+	Trace  int    `header:"X-Trace"`
+}
+
+type headerOut struct {
+	APIKey string `json:"api_key"`
+	Trace  int    `json:"trace"`
+}
+
+type formIn struct {
+	Name string `form:"name"`
+	Age  int    `form:"age"`
+}
+
+type formOut struct {
+	Name string `json:"name"`
+	Age  int    `json:"age"`
 }
 
 type typedCtrl struct{}
@@ -51,29 +72,56 @@ func (c *typedCtrl) Routes(r *Router) {
 	Put(r, "/put", c.noop)
 	Delete(r, "/del", c.noop)
 	Patch(r, "/patch", c.noop)
+	Post(r, "/raw", c.raw)
+	Get(r, "/none", c.none)
+	Get(r, "/header", c.header)
+	Post(r, "/form", c.form)
 }
 
-func (c *typedCtrl) echo(ctx context.Context, in echoIn) (echoOut, error) {
-	return echoOut{ID: in.ID, V: in.Verbose, Ratio: in.Ratio, Note: in.Note}, nil
+func (c *typedCtrl) echo(ctx context.Context, req *Req[echoIn]) (echoOut, error) {
+	in := req.Body
+	return echoOut{
+		ID:    in.ID,
+		V:     in.Verbose,
+		Ratio: in.Ratio,
+		Note:  in.Note,
+		Trace: req.Header.Get("X-Trace-Id"),
+	}, nil
 }
 
-func (c *typedCtrl) login(ctx context.Context, in loginIn) (loginOut, error) {
-	if in.Password != "hunter2" {
+func (c *typedCtrl) login(ctx context.Context, req *Req[loginIn]) (loginOut, error) {
+	if req.Body.Password != "hunter2" {
 		return loginOut{}, E(http.StatusUnauthorized, "invalid credentials", errors.New("no user"))
 	}
 	return loginOut{Token: "tok-123", Name: "Jack"}, nil
 }
 
-func (c *typedCtrl) boom(ctx context.Context, _ struct{}) (struct{}, error) {
+func (c *typedCtrl) boom(ctx context.Context, _ *Req[struct{}]) (struct{}, error) {
 	return struct{}{}, errors.New("internal detail that must not leak")
 }
 
-func (c *typedCtrl) declared(ctx context.Context, _ struct{}) (struct{ OK bool }, error) {
+func (c *typedCtrl) declared(ctx context.Context, _ *Req[struct{}]) (struct{ OK bool }, error) {
 	return struct{ OK bool }{true}, nil
 }
 
-func (c *typedCtrl) noop(ctx context.Context, _ struct{}) (struct{ OK bool }, error) {
+func (c *typedCtrl) noop(ctx context.Context, _ *Req[struct{}]) (struct{ OK bool }, error) {
 	return struct{ OK bool }{true}, nil
+}
+
+func (c *typedCtrl) raw(ctx context.Context, req *Req[string]) (struct{ Echo string }, error) {
+	return struct{ Echo string }{Echo: req.Body}, nil
+}
+
+func (c *typedCtrl) none(ctx context.Context, _ *Req[struct{}]) (struct{ OK bool }, error) {
+	return struct{ OK bool }{true}, nil
+}
+
+func (c *typedCtrl) header(ctx context.Context, req *Req[headerIn]) (headerOut, error) {
+	return headerOut{APIKey: req.Body.APIKey, Trace: req.Body.Trace}, nil
+}
+
+func (c *typedCtrl) form(ctx context.Context, req *Req[formIn]) (formOut, error) {
+	return formOut{Name: req.Body.Name, Age: req.Body.Age}, nil
 }
 
 // capturing auditor
@@ -135,6 +183,74 @@ func TestTypedBindingBodyAndBadJSON(t *testing.T) {
 	rec = do(app, "GET", "/api/echo/1", `{not-json`)
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("bad JSON should be 400, got %d", rec.Code)
+	}
+}
+
+func TestRawRequestAccess(t *testing.T) {
+	app := newStarted(t)
+	req := httptest.NewRequest("GET", "/api/echo/7", nil)
+	req.Header.Set("X-Trace-Id", "abc-123")
+	rec := httptest.NewRecorder()
+	app.Mux.ServeHTTP(rec, req)
+	if !strings.Contains(rec.Body.String(), `"trace":"abc-123"`) {
+		t.Fatalf("handler should see X-Trace-Id from req.Header: %s", rec.Body.String())
+	}
+}
+
+func TestRawStringBody(t *testing.T) {
+	app := newStarted(t)
+	req := httptest.NewRequest("POST", "/api/raw", strings.NewReader("hello world"))
+	req.Header.Set("Content-Type", "text/plain")
+	rec := httptest.NewRecorder()
+	app.Mux.ServeHTTP(rec, req)
+	if rec.Code != 200 {
+		t.Fatalf("status %d body %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), `"Echo":"hello world"`) {
+		t.Fatalf("string body not echoed: %s", rec.Body.String())
+	}
+}
+
+func TestEmptyStructSkipsParse(t *testing.T) {
+	app := newStarted(t)
+	// junk body should be ignored when In is empty struct (no parse attempted)
+	req := httptest.NewRequest("GET", "/api/none", strings.NewReader(`{not-json`))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	app.Mux.ServeHTTP(rec, req)
+	if rec.Code != 200 {
+		t.Fatalf("empty-struct route should ignore junk body, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestHeaderTagBinding(t *testing.T) {
+	app := newStarted(t)
+	req := httptest.NewRequest("GET", "/api/header", nil)
+	req.Header.Set("X-API-Key", "secret")
+	req.Header.Set("X-Trace", "42")
+	rec := httptest.NewRecorder()
+	app.Mux.ServeHTTP(rec, req)
+	if rec.Code != 200 {
+		t.Fatalf("status %d: %s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, `"api_key":"secret"`) || !strings.Contains(body, `"trace":42`) {
+		t.Fatalf("header tag binding failed: %s", body)
+	}
+}
+
+func TestFormTagBinding(t *testing.T) {
+	app := newStarted(t)
+	req := httptest.NewRequest("POST", "/api/form", strings.NewReader("name=jack&age=30"))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rec := httptest.NewRecorder()
+	app.Mux.ServeHTTP(rec, req)
+	if rec.Code != 200 {
+		t.Fatalf("status %d: %s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, `"name":"jack"`) || !strings.Contains(body, `"age":30`) {
+		t.Fatalf("form tag binding failed: %s", body)
 	}
 }
 

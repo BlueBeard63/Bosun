@@ -37,11 +37,11 @@ func (c *FixtureController) Routes(r *bosun.Router) {
 	bosun.Get(r, "/dyn", c.Dyn)
 }
 
-func (c *FixtureController) Create(ctx context.Context, in FixIn) (FixOut, error) {
+func (c *FixtureController) Create(ctx context.Context, req *bosun.Req[FixIn]) (FixOut, error) {
 	return FixOut{}, nil
 }
 
-func (c *FixtureController) Dyn(ctx context.Context, _ struct{}) (struct{}, error) {
+func (c *FixtureController) Dyn(ctx context.Context, _ *bosun.Req[struct{}]) (struct{}, error) {
 	code := 400 + 18
 	return struct{}{}, bosun.E(code, "dynamic", nil)
 }

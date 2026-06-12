@@ -34,6 +34,9 @@ func bind(req *http.Request, in any) error {
 
 	v := reflect.ValueOf(in).Elem()
 	t := v.Type()
+	if t.Kind() != reflect.Struct {
+		return nil
+	}
 	for i := 0; i < t.NumField(); i++ {
 		sf := t.Field(i)
 		var raw string

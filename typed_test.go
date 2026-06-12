@@ -76,6 +76,7 @@ func (c *typedCtrl) Routes(r *Router) {
 	Get(r, "/none", c.none)
 	Get(r, "/header", c.header)
 	Post(r, "/form", c.form)
+	Post(r, "/any", c.anyBody)
 }
 
 func (c *typedCtrl) echo(ctx context.Context, req *Req[echoIn]) (echoOut, error) {
@@ -122,6 +123,10 @@ func (c *typedCtrl) header(ctx context.Context, req *Req[headerIn]) (headerOut, 
 
 func (c *typedCtrl) form(ctx context.Context, req *Req[formIn]) (formOut, error) {
 	return formOut{Name: req.Body.Name, Age: req.Body.Age}, nil
+}
+
+func (c *typedCtrl) anyBody(ctx context.Context, req *Req[any]) (struct{ Got any }, error) {
+	return struct{ Got any }{Got: req.Body}, nil
 }
 
 // capturing auditor
@@ -236,6 +241,26 @@ func TestHeaderTagBinding(t *testing.T) {
 	body := rec.Body.String()
 	if !strings.Contains(body, `"api_key":"secret"`) || !strings.Contains(body, `"trace":42`) {
 		t.Fatalf("header tag binding failed: %s", body)
+	}
+}
+
+func TestAnyBodyDecodes(t *testing.T) {
+	app := newStarted(t)
+	rec := do(app, "POST", "/api/any", `{"a":1,"b":"x"}`)
+	if rec.Code != 200 {
+		t.Fatalf("status %d: %s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, `"a":1`) || !strings.Contains(body, `"b":"x"`) {
+		t.Fatalf("any body should JSON-decode: %s", body)
+	}
+}
+
+func TestAnyBodyEmpty(t *testing.T) {
+	app := newStarted(t)
+	rec := do(app, "POST", "/api/any", "")
+	if rec.Code != 200 {
+		t.Fatalf("empty body with In=any should not panic: %d %s", rec.Code, rec.Body.String())
 	}
 }
 

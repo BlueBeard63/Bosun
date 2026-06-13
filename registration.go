@@ -2,6 +2,7 @@ package bosun
 
 import (
 	"fmt"
+	"net/http"
 	"reflect"
 
 	"github.com/amberstack/bosun/registry"
@@ -121,10 +122,72 @@ func DefaultBind[I any, Impl any]() struct{} {
 	return struct{}{}
 }
 
-// MWRef is a type-safe reference to registered middleware.
-type MWRef struct{ t reflect.Type }
+// MWRef references middleware: either a registered singleton (via Use[T]())
+// or an inline factory (via UseFunc / user-defined helpers like
+// HasPermission("admin")).
+type MWRef struct {
+	t      reflect.Type      // set by Use[T]()
+	inline MiddlewareHandler // set by UseFunc() and factory helpers
+	args   []any             // populated when Use is called with arguments
+}
 
-// Use references middleware type T: bosun.Use[LoggingMiddleware]().
-func Use[T any]() MWRef {
-	return MWRef{t: reflect.TypeOf((*T)(nil))}
+// Use references middleware type T.
+//
+// With no arguments, T's Handle(next http.Handler) http.Handler is used —
+// every route shares the same singleton instance:
+//
+//	bosun.Use[LoggingMiddleware]()
+//
+// With arguments, T must define a Configure(...) MiddlewareHandler method
+// whose parameter types match the supplied arguments. At app start, the
+// framework resolves the singleton, calls Configure(args...), and uses the
+// returned MiddlewareHandler for that route. Each call site captures its
+// own arguments:
+//
+//	type HasPermissionMiddleware struct{}
+//	func (m *HasPermissionMiddleware) Configure(roles []string) bosun.MiddlewareHandler { ... }
+//	func (m *HasPermissionMiddleware) Handle(next http.Handler) http.Handler           { ... }
+//	var _ = bosun.Middleware[HasPermissionMiddleware]()
+//
+//	bosun.Get(r, "/admin", c.Admin,
+//	    bosun.Use[RequireAuth](),
+//	    bosun.Use[HasPermissionMiddleware]([]string{"admin"}),
+//	)
+//
+// Argument-type mismatches are caught at app.Start(), not at request time.
+func Use[T any](args ...any) MWRef {
+	return MWRef{t: reflect.TypeOf((*T)(nil)), args: args}
+}
+
+// MiddlewareFunc adapts a plain function to MiddlewareHandler.
+type MiddlewareFunc func(next http.Handler) http.Handler
+
+// Handle satisfies MiddlewareHandler.
+func (f MiddlewareFunc) Handle(next http.Handler) http.Handler { return f(next) }
+
+// UseFunc wraps an inline middleware closure as a MWRef. Use this to write
+// factory helpers that take parameters at the route declaration site:
+//
+//	func HasPermission(roles ...string) bosun.MWRef {
+//	    return bosun.UseFunc(func(next http.Handler) http.Handler {
+//	        return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+//	            u := bosun.Value[AuthUser](r.Context())
+//	            if u == nil || !hasAny(u.Roles, roles) {
+//	                http.Error(w, "forbidden", http.StatusForbidden)
+//	                return
+//	            }
+//	            next.ServeHTTP(w, r)
+//	        })
+//	    })
+//	}
+//
+//	bosun.Get(r, "/admin", c.Admin,
+//	    bosun.Use[RequireAuth](),
+//	    HasPermission("admin", "editor"),
+//	)
+//
+// Each call constructs a fresh closure — there is no shared singleton, so
+// the captured parameters are per-route.
+func UseFunc(f MiddlewareFunc) MWRef {
+	return MWRef{inline: f}
 }

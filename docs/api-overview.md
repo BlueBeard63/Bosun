@@ -209,10 +209,12 @@ Convenience wrapper that registers a `*Dynamic[T]` fallback. See section 7.
 
 ## 4. Middleware references
 
-### `bosun.Use[T any]() MWRef`
+### `bosun.Use[T any](args ...any) MWRef`
 
 Type-safe reference to a registered middleware. Pass to controller
 declaration, route registration, or `bosun.Errors(...)` siblings.
+
+Without args, `T.Handle(next)` runs for every request:
 
 ```go
 // Controller-wide:
@@ -220,6 +222,81 @@ var _ = bosun.Controller[Admin]("/admin", bosun.Use[mw.RequireStaff]())
 
 // Per-route:
 bosun.Post(r, "/login", c.Login, bosun.Use[mw.RateLimit]())
+```
+
+With args, `T` must define a `Configure(args...) MiddlewareHandler` method
+whose parameter types match the args you supply. The framework calls
+`Configure` once at app start; the returned handler closes over those args
+for every request on that route:
+
+```go
+// Middleware definition:
+type HasPermissionMiddleware struct{}
+func (m *HasPermissionMiddleware) Handle(next http.Handler) http.Handler { ... }
+func (m *HasPermissionMiddleware) Configure(roles []string) bosun.MiddlewareHandler {
+    return bosun.MiddlewareFunc(func(next http.Handler) http.Handler { ... })
+}
+var _ = bosun.Middleware[HasPermissionMiddleware]()
+
+// Per-route use:
+bosun.Get(r, "/admin", c.Admin,
+    bosun.Use[RequireAuth](),
+    bosun.Use[HasPermissionMiddleware]([]string{"admin"}),
+)
+bosun.Get(r, "/staff", c.Staff,
+    bosun.Use[RequireAuth](),
+    bosun.Use[HasPermissionMiddleware]([]string{"admin", "editor"}),
+)
+```
+
+Argument-type mismatches surface at `app.Start()`, not at request time.
+
+See [`middleware.md`](./middleware.md#variant-registered-singleton-with-uset-args)
+for the full pattern.
+
+### `bosun.UseFunc(MiddlewareFunc) MWRef`
+
+Inline middleware closure as a `MWRef`. Use this to write factory helpers
+that capture per-route parameters:
+
+```go
+func HasPermission(roles ...string) bosun.MWRef {
+    return bosun.UseFunc(func(next http.Handler) http.Handler {
+        return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+            u := bosun.Value[AuthUser](r.Context())
+            if u == nil || !hasAny(u.Roles, roles) {
+                http.Error(w, "forbidden", http.StatusForbidden); return
+            }
+            next.ServeHTTP(w, r)
+        })
+    })
+}
+
+bosun.Get(r, "/admin", c.Admin,
+    bosun.Use[RequireAuth](),       // singleton: auth + stash *AuthUser
+    HasPermission("admin"),         // factory: per-route role check
+)
+```
+
+`Use[T](args...)` references a shared singleton (parameterized via
+`Configure`); `UseFunc` is per-route from an inline closure. Mix them
+freely.
+
+### `bosun.WithRouteValue[T any](v *T) MWRef`
+
+Per-route helper that attaches a typed value to the request context
+before any subsequent middleware runs. Reach for this when you need to
+pass typed data into a middleware that *can't* expose a `Configure`
+method (e.g. a third-party middleware you don't own). For your own
+middleware, `Use[T](args...)` with a `Configure` method is usually
+cleaner.
+
+```go
+bosun.Get(r, "/admin", c.Admin,
+    bosun.Use[RequireAuth](),
+    bosun.WithRouteValue(&Flag{Name: "x"}),
+    bosun.Use[ThirdPartyMW](),
+)
 ```
 
 ---

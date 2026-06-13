@@ -107,6 +107,24 @@ out, _ := bosun.Convert[UserOut](user)   // Password isn't on UserOut → can't 
 
 Match by exact name; override with `convert:"Other"`; skip with `convert:"-"`.
 
+### Parameterized middleware
+
+```go
+type HasPermissionMiddleware struct{}
+func (m *HasPermissionMiddleware) Handle(next http.Handler) http.Handler        { ... }
+func (m *HasPermissionMiddleware) Configure(roles []string) bosun.MiddlewareHandler {
+    return bosun.MiddlewareFunc(func(next http.Handler) http.Handler { ... })
+}
+var _ = bosun.Middleware[HasPermissionMiddleware]()
+
+bosun.Get(r, "/admin", c.Admin,
+    bosun.Use[RequireAuth](),
+    bosun.Use[HasPermissionMiddleware]([]string{"admin"}),
+)
+```
+
+`Use[T](args...)` calls `T.Configure(args...)` at app start.
+
 ### Typed context values
 
 ```go

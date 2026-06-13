@@ -94,9 +94,21 @@ func (a *App) Shutdown() error { return a.Reg.Shutdown() }
 func (a *App) resolveMWs(refs []MWRef) ([]MiddlewareHandler, error) {
 	out := make([]MiddlewareHandler, 0, len(refs))
 	for _, ref := range refs {
+		if ref.inline != nil {
+			out = append(out, ref.inline)
+			continue
+		}
 		inst, err := a.Reg.ResolveType(ref.t)
 		if err != nil {
 			return nil, fmt.Errorf("resolving middleware %v: %w", ref.t, err)
+		}
+		if len(ref.args) > 0 {
+			mh, err := configureMW(inst, ref.t, ref.args)
+			if err != nil {
+				return nil, err
+			}
+			out = append(out, mh)
+			continue
 		}
 		m, ok := inst.(MiddlewareHandler)
 		if !ok {
@@ -105,4 +117,46 @@ func (a *App) resolveMWs(refs []MWRef) ([]MiddlewareHandler, error) {
 		out = append(out, m)
 	}
 	return out, nil
+}
+
+var middlewareHandlerType = reflect.TypeOf((*MiddlewareHandler)(nil)).Elem()
+
+// configureMW invokes the singleton's Configure(...) method with the
+// per-route arguments and returns the resulting MiddlewareHandler.
+func configureMW(inst any, t reflect.Type, args []any) (MiddlewareHandler, error) {
+	method := reflect.ValueOf(inst).MethodByName("Configure")
+	if !method.IsValid() {
+		return nil, fmt.Errorf("bosun.Use[%v](args...): %v has no Configure method", t, t)
+	}
+	mt := method.Type()
+	if mt.NumIn() != len(args) {
+		return nil, fmt.Errorf("bosun.Use[%v]: Configure wants %d args, got %d",
+			t, mt.NumIn(), len(args))
+	}
+	if mt.NumOut() != 1 || !mt.Out(0).Implements(middlewareHandlerType) {
+		return nil, fmt.Errorf("bosun.Use[%v]: Configure must return bosun.MiddlewareHandler", t)
+	}
+
+	callArgs := make([]reflect.Value, len(args))
+	for i, a := range args {
+		want := mt.In(i)
+		var av reflect.Value
+		if a == nil {
+			av = reflect.Zero(want)
+		} else {
+			av = reflect.ValueOf(a)
+			switch {
+			case av.Type().AssignableTo(want):
+				// ok
+			case av.Type().ConvertibleTo(want):
+				av = av.Convert(want)
+			default:
+				return nil, fmt.Errorf("bosun.Use[%v]: Configure arg %d: cannot use %v as %v",
+					t, i, av.Type(), want)
+			}
+		}
+		callArgs[i] = av
+	}
+	results := method.Call(callArgs)
+	return results[0].Interface().(MiddlewareHandler), nil
 }

@@ -176,6 +176,278 @@ via the config module at runtime.
 
 ---
 
+## Chaining: Auth → HasPermission(roles…)
+
+The most common chain pattern in real apps: one middleware authenticates
+the request and stashes a typed user, the next checks role/permission,
+each route declares which permissions it requires. Bosun supports this
+with two complementary tools:
+
+1. **Registered singleton middleware** for shared, parameterless steps
+   (`bosun.Use[Auth]()`).
+2. **Inline factory middleware** for per-route parameters
+   (`bosun.UseFunc(...)`, usually wrapped in a helper like
+   `HasPermission("admin", "editor")`).
+
+### Step 1 — Auth attaches a typed user
+
+```go
+type AuthUser struct {
+    ID    int
+    Roles []string
+}
+
+type RequireAuth struct {
+    Sessions *SessionStore   // injected
+}
+
+func (m *RequireAuth) Handle(next http.Handler) http.Handler {
+    return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+        u, err := m.Sessions.Lookup(r.Header.Get("Authorization"))
+        if err != nil {
+            http.Error(w, "unauthorized", http.StatusUnauthorized)
+            return
+        }
+        ctx := bosun.WithValue(r.Context(), u)   // *AuthUser
+        next.ServeHTTP(w, r.WithContext(ctx))
+    })
+}
+
+var _ = bosun.Middleware[RequireAuth]()
+```
+
+### Step 2 — HasPermission factory captures the required roles
+
+`bosun.UseFunc` wraps an inline closure as a `MWRef`. Each call returns a
+fresh closure, so the roles are baked into that route only:
+
+```go
+func HasPermission(roles ...string) bosun.MWRef {
+    return bosun.UseFunc(func(next http.Handler) http.Handler {
+        return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+            u := bosun.Value[AuthUser](r.Context())
+            if u == nil {
+                // RequireAuth must run before this — if it didn't, fail closed.
+                http.Error(w, "unauthorized", http.StatusUnauthorized)
+                return
+            }
+            for _, want := range roles {
+                if slices.Contains(u.Roles, want) {
+                    next.ServeHTTP(w, r)
+                    return
+                }
+            }
+            http.Error(w, "forbidden", http.StatusForbidden)
+        })
+    })
+}
+```
+
+### Step 3 — Compose at the route declaration
+
+```go
+func (c *Admin) Routes(r *bosun.Router) {
+    bosun.Get(r, "/wipe", c.Wipe,
+        bosun.Use[RequireAuth](),
+        HasPermission("admin"),
+    )
+    bosun.Get(r, "/posts", c.ListPosts,
+        bosun.Use[RequireAuth](),
+        HasPermission("admin", "editor"),   // either role passes
+    )
+    bosun.Get(r, "/me", c.Me,
+        bosun.Use[RequireAuth](),           // any signed-in user
+    )
+}
+```
+
+Order matters: middleware runs left-to-right, outermost first. `RequireAuth`
+*must* precede `HasPermission` so the typed user is in the context when
+the permission check looks it up.
+
+### Step 4 — Handlers use the same typed user
+
+```go
+func (c *Admin) Me(ctx context.Context, _ *bosun.Req[struct{}]) (MeOut, error) {
+    u := bosun.Value[AuthUser](ctx)
+    return MeOut{ID: u.ID, Roles: u.Roles}, nil
+}
+```
+
+The handler reads the same `*AuthUser` the middleware put in. No string
+keys, no untyped assertions, no plumbing.
+
+### Pulling out boilerplate
+
+Most apps end up with a helper that bundles the common chain:
+
+```go
+func authed(roles ...string) []bosun.RouteOpt {
+    opts := []bosun.RouteOpt{bosun.Use[RequireAuth]()}
+    if len(roles) > 0 {
+        opts = append(opts, HasPermission(roles...))
+    }
+    return opts
+}
+
+bosun.Get(r, "/admin/wipe",  c.Wipe,    authed("admin")...)
+bosun.Get(r, "/admin/posts", c.Posts,   authed("admin", "editor")...)
+bosun.Get(r, "/me",          c.Me,     authed()...)
+```
+
+For controller-wide auth with per-route permissions:
+
+```go
+var _ = bosun.Controller[Admin]("/admin", bosun.Use[RequireAuth]())
+
+func (c *Admin) Routes(r *bosun.Router) {
+    // RequireAuth already applied controller-wide; add per-route role checks
+    bosun.Get(r, "/wipe",  c.Wipe,  HasPermission("admin"))
+    bosun.Get(r, "/posts", c.Posts, HasPermission("admin", "editor"))
+}
+```
+
+### Why `UseFunc` for factories
+
+`bosun.Use[T]()` references a registered singleton — fine when middleware
+has no per-route parameters. The moment you want parameters
+(`HasPermission("admin")`), you need a fresh closure per call site, which
+is exactly what `UseFunc` provides.
+
+You can also pass a singleton's parameters via a registered options
+struct (Pattern 2 in [`service-options.md`](./service-options.md)) — but
+that gives every route the same value. The factory pattern is right when
+different routes need different parameters.
+
+### Variant: registered singleton with `Use[T](args...)`
+
+If you want `HasPermission` to be a `bosun.Middleware[T]` (because it
+needs injected dependencies, or just for symmetry with the rest of your
+middleware), pass the per-route args directly to `bosun.Use[T](...)`. The
+singleton exposes a `Configure(...)` method whose parameters match the
+args you supply at the call site.
+
+```go
+package middleware
+
+import (
+    "net/http"
+    "slices"
+
+    "github.com/amberstack/bosun"
+)
+
+// Registered singleton. Inject deps here as needed.
+type HasPermissionMiddleware struct {
+    // Perms *PermissionsService   // injected — example
+}
+
+// Handle is the no-args fallback. Most parameterized middleware fail
+// closed here: there's no sensible default if no roles were declared.
+func (m *HasPermissionMiddleware) Handle(next http.Handler) http.Handler {
+    return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+        http.Error(w, "permissions not configured", http.StatusInternalServerError)
+    })
+}
+
+// Configure is called once per route at app.Start() with the args you
+// passed to bosun.Use[HasPermissionMiddleware](...). The returned
+// MiddlewareHandler closes over those args for every request to that
+// route.
+func (m *HasPermissionMiddleware) Configure(roles []string) bosun.MiddlewareHandler {
+    return bosun.MiddlewareFunc(func(next http.Handler) http.Handler {
+        return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+            u := bosun.Value[AuthUser](r.Context())
+            if u == nil {
+                http.Error(w, "unauthorized", http.StatusUnauthorized)
+                return
+            }
+            for _, want := range roles {
+                if slices.Contains(u.Roles, want) {
+                    next.ServeHTTP(w, r)
+                    return
+                }
+            }
+            http.Error(w, "forbidden", http.StatusForbidden)
+        })
+    })
+}
+
+var _ = bosun.Middleware[HasPermissionMiddleware]()
+```
+
+Then at the route — args go right into `Use[T](...)`:
+
+```go
+bosun.Get(r, "/admin/wipe", c.Wipe,
+    bosun.Use[RequireAuth](),
+    bosun.Use[middleware.HasPermissionMiddleware]([]string{"admin"}),
+)
+
+bosun.Get(r, "/admin/posts", c.Posts,
+    bosun.Use[RequireAuth](),
+    bosun.Use[middleware.HasPermissionMiddleware]([]string{"admin", "editor"}),
+)
+```
+
+That's it — same `Use[T]` call you write everywhere else, just with
+per-route arguments.
+
+#### How `Use[T](args...)` finds the right method
+
+When you write `bosun.Use[T](a, b, c)`:
+
+1. At app start, the framework resolves the singleton `*T` from the registry.
+2. It looks up `T.Configure` via reflection.
+3. It type-checks the supplied args against `Configure`'s parameter types.
+   Convertible types (e.g. untyped string literal → `string`) are converted automatically.
+4. It calls `Configure(a, b, c)` once. The returned `MiddlewareHandler`
+   closes over the args and runs for every request on that route.
+
+Errors — missing `Configure`, wrong arg count, wrong arg type — surface
+from `app.Start()`. Nothing fails at request time.
+
+#### Configure with multiple args
+
+`Configure` is just a regular method; pass anything you want.
+
+```go
+type RateLimitMW struct{}
+
+func (m *RateLimitMW) Configure(perMinute int, burst int) bosun.MiddlewareHandler {
+    return bosun.MiddlewareFunc(func(next http.Handler) http.Handler { ... })
+}
+
+// usage:
+bosun.Use[RateLimitMW](60, 10)
+```
+
+The framework passes positional args to `Configure` in order.
+
+#### When `Use[T](args...)` won't work
+
+- `T` has no `Configure` method. → Caught at `app.Start()`.
+- `Configure` returns something other than `bosun.MiddlewareHandler`. → Caught at `app.Start()`.
+- Number / types of args don't line up with `Configure`'s parameters. → Caught at `app.Start()`.
+
+If you only ever call `Use[T]()` (no args), `Configure` isn't required —
+`Handle` runs as before.
+
+### Which to pick — factory function vs singleton?
+
+| Question                                                | Pick this                                                |
+| ------------------------------------------------------- | -------------------------------------------------------- |
+| Does the check have **no injected dependencies**?       | Factory function — one helper, no struct, no `Configure` |
+| Does the check need injected deps (DB, cache, etc.)?    | Singleton with `Configure(...)` — DI works as normal     |
+| Do you want the API to look like every other middleware? | Singleton with `Configure(...)` — `bosun.Use[X](args)` is the same shape as all your other middleware refs |
+| Do you want the least code?                              | Factory function                                         |
+
+There's no wrong answer. The factory form is shorter; the singleton form
+is more consistent with the rest of your middleware. Pick per project
+and stay consistent.
+
+---
+
 ## Advanced
 
 ### Conditional short-circuit

@@ -13,7 +13,8 @@ func(ctx context.Context, req *bosun.Req[In]) (Out, error)
 
 - `ctx` — the request context, scoped to this request.
 - `req` — wraps the raw `*http.Request` plus a parsed `Body In`.
-- `Out` — your response type. Returned `Out` is JSON-encoded with status 200.
+- `Out` — your response type. Encoding depends on the type — see "Choosing
+  the `Out` type" below. Default is JSON with status 200.
 - `error` — return `bosun.E(status, publicMsg, cause)` for a controlled
   status + safe public message. Any other `error` becomes a 500 with
   `"internal server error"` and the cause is captured in the audit event
@@ -30,6 +31,21 @@ func (c *MyController) Routes(r *bosun.Router) {
 
 `bosun.Errors(...)` declares additional status codes the route can return,
 for OpenAPI generation in binaries where source scanning isn't available.
+
+### Path syntax
+
+Both `:id` and `{id}` work — the router normalizes `:id` to `{id}` before
+handing the route to Go's `net/http` mux. Mix freely:
+
+```go
+bosun.Get(r, "/users/:id",                c.GetUser)
+bosun.Get(r, "/users/{id}",               c.GetUser)        // equivalent
+bosun.Get(r, "/orgs/:org/users/{user_id}", c.GetOrgUser)    // mix is fine
+```
+
+Both forms bind the same way: `path:"id"` on a struct field pulls the value
+out via `req.PathValue("id")`. The normalized `{id}` form is what
+`TypedRoutes()` and OpenAPI generation see.
 
 ## `Req[In]` — what's inside
 
@@ -53,6 +69,19 @@ raw  := req.Request.Body          // raw io.ReadCloser (use req.Request to disam
 
 `req.Request.Body` reaches the underlying `io.ReadCloser`. Plain `req.Body`
 refers to the parsed-body field — it shadows the embedded one.
+
+### Query parameter shortcut
+
+For ad-hoc query reads (where you don't want a struct field with a
+`query:` tag), `req.Query()` wraps `req.URL.Query()`:
+
+```go
+q    := req.Query().Get("q")        // single value
+tags := req.Query()["tag"]          // []string for ?tag=a&tag=b
+```
+
+It returns the standard `url.Values`, so anything `url.Values` supports
+works.
 
 ## Choosing the `In` type
 
@@ -128,6 +157,42 @@ func (c *Events) Log(ctx context.Context, req *bosun.Req[any]) (struct{ OK bool 
     return struct{ OK bool }{OK: true}, nil
 }
 ```
+
+## Choosing the `Out` type
+
+`Out` controls how the response is encoded. Four shapes, symmetric with `In`:
+
+| `Out` type            | Response                                                       |
+| --------------------- | -------------------------------------------------------------- |
+| any struct / map / slice / scalar number / bool | JSON-encoded with `Content-Type: application/json` |
+| `string`              | Raw bytes, `Content-Type: text/plain; charset=utf-8`           |
+| `[]byte`              | Raw bytes, `Content-Type: application/octet-stream`            |
+| `struct{}`            | No body, status only — useful for 204 / pure-side-effect routes |
+
+Examples:
+
+```go
+// JSON (default)
+func (c *Users) Get(ctx context.Context, req *Req[GetIn]) (User, error) { ... }
+
+// Plain text
+func (c *Health) Status(ctx context.Context, _ *Req[struct{}]) (string, error) {
+    return "ok", nil
+}
+
+// Binary
+func (c *Avatar) Get(ctx context.Context, req *Req[GetIn]) ([]byte, error) {
+    return c.store.Read(req.Body.ID)
+}
+
+// No body
+func (c *Items) Delete(ctx context.Context, req *Req[DeleteIn]) (struct{}, error) {
+    return struct{}{}, c.db.Delete(req.Body.ID)
+}
+```
+
+For richer control (custom `Content-Type`, streaming, etc.) use the untyped
+escape hatch — see end of doc.
 
 ## Body content-types
 

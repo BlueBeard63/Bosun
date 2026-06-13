@@ -77,6 +77,11 @@ func (c *typedCtrl) Routes(r *Router) {
 	Get(r, "/header", c.header)
 	Post(r, "/form", c.form)
 	Post(r, "/any", c.anyBody)
+	Get(r, "/colon/:id", c.echo)
+	Get(r, "/mixed/:org/items/{id}", c.echo)
+	Get(r, "/out/string", c.outString)
+	Get(r, "/out/bytes", c.outBytes)
+	Get(r, "/out/empty", c.outEmpty)
 }
 
 func (c *typedCtrl) echo(ctx context.Context, req *Req[echoIn]) (echoOut, error) {
@@ -127,6 +132,18 @@ func (c *typedCtrl) form(ctx context.Context, req *Req[formIn]) (formOut, error)
 
 func (c *typedCtrl) anyBody(ctx context.Context, req *Req[any]) (struct{ Got any }, error) {
 	return struct{ Got any }{Got: req.Body}, nil
+}
+
+func (c *typedCtrl) outString(ctx context.Context, _ *Req[struct{}]) (string, error) {
+	return "hello world", nil
+}
+
+func (c *typedCtrl) outBytes(ctx context.Context, _ *Req[struct{}]) ([]byte, error) {
+	return []byte{0x01, 0x02, 0x03}, nil
+}
+
+func (c *typedCtrl) outEmpty(ctx context.Context, _ *Req[struct{}]) (struct{}, error) {
+	return struct{}{}, nil
 }
 
 // capturing auditor
@@ -261,6 +278,108 @@ func TestAnyBodyEmpty(t *testing.T) {
 	rec := do(app, "POST", "/api/any", "")
 	if rec.Code != 200 {
 		t.Fatalf("empty body with In=any should not panic: %d %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestReqQueryShortcut(t *testing.T) {
+	req := httptest.NewRequest("GET", "/?q=hello&tag=a&tag=b", nil)
+	r := &Req[struct{}]{Request: req}
+	if r.Query().Get("q") != "hello" {
+		t.Fatalf("q = %q", r.Query().Get("q"))
+	}
+	tags := r.Query()["tag"]
+	if len(tags) != 2 || tags[0] != "a" || tags[1] != "b" {
+		t.Fatalf("tags = %v", tags)
+	}
+}
+
+func TestColonPathSyntax(t *testing.T) {
+	app := newStarted(t)
+	rec := do(app, "GET", "/api/colon/42", "")
+	if rec.Code != 200 {
+		t.Fatalf("status %d: %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), `"id":42`) {
+		t.Fatalf(":id should bind to path:\"id\": %s", rec.Body.String())
+	}
+}
+
+func TestColonAndBracePathMixed(t *testing.T) {
+	app := newStarted(t)
+	rec := do(app, "GET", "/api/mixed/acme/items/7", "")
+	if rec.Code != 200 {
+		t.Fatalf("status %d: %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), `"id":7`) {
+		t.Fatalf("{id} segment should still bind: %s", rec.Body.String())
+	}
+}
+
+func TestRouteInfoNormalizesColons(t *testing.T) {
+	found := false
+	for _, rt := range TypedRoutes() {
+		if rt.Path == "/api/colon/{id}" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatal("RouteInfo.Path should store the normalized {id} form for OpenAPI")
+	}
+}
+
+func TestNormalizePath(t *testing.T) {
+	for _, c := range []struct{ in, want string }{
+		{"/users/:id", "/users/{id}"},
+		{"/users/:id/posts/:slug", "/users/{id}/posts/{slug}"},
+		{"/users/{id}", "/users/{id}"},
+		{"/health", "/health"},
+		{"", ""},
+		{"/orgs/:org_id/mix/{a}/:b", "/orgs/{org_id}/mix/{a}/{b}"},
+	} {
+		if got := normalizePath(c.in); got != c.want {
+			t.Fatalf("normalizePath(%q) = %q, want %q", c.in, got, c.want)
+		}
+	}
+}
+
+func TestOutString(t *testing.T) {
+	app := newStarted(t)
+	rec := do(app, "GET", "/api/out/string", "")
+	if rec.Code != 200 {
+		t.Fatalf("status %d: %s", rec.Code, rec.Body.String())
+	}
+	if ct := rec.Header().Get("Content-Type"); ct != "text/plain; charset=utf-8" {
+		t.Fatalf("want text/plain content-type, got %q", ct)
+	}
+	if rec.Body.String() != "hello world" {
+		t.Fatalf("string body should be verbatim, got %q", rec.Body.String())
+	}
+}
+
+func TestOutBytes(t *testing.T) {
+	app := newStarted(t)
+	rec := do(app, "GET", "/api/out/bytes", "")
+	if rec.Code != 200 {
+		t.Fatalf("status %d", rec.Code)
+	}
+	if ct := rec.Header().Get("Content-Type"); ct != "application/octet-stream" {
+		t.Fatalf("want octet-stream content-type, got %q", ct)
+	}
+	got := rec.Body.Bytes()
+	if len(got) != 3 || got[0] != 0x01 || got[1] != 0x02 || got[2] != 0x03 {
+		t.Fatalf("byte body should be verbatim, got %v", got)
+	}
+}
+
+func TestOutEmptyStructNoBody(t *testing.T) {
+	app := newStarted(t)
+	rec := do(app, "GET", "/api/out/empty", "")
+	if rec.Code != 200 {
+		t.Fatalf("status %d", rec.Code)
+	}
+	if rec.Body.Len() != 0 {
+		t.Fatalf("empty struct should write no body, got %q", rec.Body.String())
 	}
 }
 

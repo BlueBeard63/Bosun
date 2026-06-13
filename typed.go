@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"net/url"
 	"reflect"
 	"runtime"
 	"strings"
@@ -27,18 +28,52 @@ type Req[In any] struct {
 	Body In
 }
 
+// Query returns the parsed query parameters of the request. Shorthand for
+// req.URL.Query().
+//
+//	q    := req.Query().Get("q")
+//	tags := req.Query()["tag"]   // []string for repeated ?tag=a&tag=b
+func (r *Req[In]) Query() url.Values {
+	return r.URL.Query()
+}
+
+// Get registers a typed GET handler at p. The handler shape is
+// func(ctx context.Context, req *Req[In]) (Out, error). Return
+// bosun.E(status, msg, cause) for controlled errors.
+//
+// In controls body parsing: a struct gets JSON/form decode + path/query/
+// header/form tag binding, string takes the raw body verbatim, struct{}
+// skips parsing, and any decodes loose JSON.
+//
+// Out controls response encoding: structs/maps/etc are JSON, string is
+// text/plain, []byte is application/octet-stream, struct{} writes status
+// only with no body.
+//
+// Use bosun.Get(r, ...) — not r.Get(...), which is the untyped escape hatch.
 func Get[In, Out any](r *Router, p string, h func(context.Context, *Req[In]) (Out, error), opts ...RouteOpt) {
 	typed(r, "GET", p, h, opts)
 }
+
+// Post registers a typed POST handler at p. See Get for the handler shape
+// and the rules for In.
 func Post[In, Out any](r *Router, p string, h func(context.Context, *Req[In]) (Out, error), opts ...RouteOpt) {
 	typed(r, "POST", p, h, opts)
 }
+
+// Put registers a typed PUT handler at p. See Get for the handler shape
+// and the rules for In.
 func Put[In, Out any](r *Router, p string, h func(context.Context, *Req[In]) (Out, error), opts ...RouteOpt) {
 	typed(r, "PUT", p, h, opts)
 }
+
+// Delete registers a typed DELETE handler at p. See Get for the handler
+// shape and the rules for In.
 func Delete[In, Out any](r *Router, p string, h func(context.Context, *Req[In]) (Out, error), opts ...RouteOpt) {
 	typed(r, "DELETE", p, h, opts)
 }
+
+// Patch registers a typed PATCH handler at p. See Get for the handler shape
+// and the rules for In.
 func Patch[In, Out any](r *Router, p string, h func(context.Context, *Req[In]) (Out, error), opts ...RouteOpt) {
 	typed(r, "PATCH", p, h, opts)
 }
@@ -55,6 +90,7 @@ func typed[In, Out any](r *Router, method, p string, h func(context.Context, *Re
 		}
 	}
 
+	p = normalizePath(p)
 	full := p
 	if r.prefix != "" {
 		full = joinPrefix(r.prefix, p)
@@ -64,6 +100,11 @@ func typed[In, Out any](r *Router, method, p string, h func(context.Context, *Re
 	inType := reflect.TypeOf((*In)(nil)).Elem()
 	isString := inType.Kind() == reflect.String
 	isEmptyStruct := inType.Kind() == reflect.Struct && inType.NumField() == 0
+
+	outType := reflect.TypeOf((*Out)(nil)).Elem()
+	outIsString := outType.Kind() == reflect.String
+	outIsBytes := outType.Kind() == reflect.Slice && outType.Elem().Kind() == reflect.Uint8
+	outIsEmptyStruct := outType.Kind() == reflect.Struct && outType.NumField() == 0
 
 	routeIndexMu.Lock()
 	routeIndex = append(routeIndex, RouteInfo{
@@ -124,7 +165,7 @@ func typed[In, Out any](r *Router, method, p string, h func(context.Context, *Re
 				status = errStatus(handlerErr)
 				writeJSON(w, status, map[string]string{"error": publicMessage(handlerErr)})
 			} else {
-				writeJSON(w, status, out)
+				writeOut(w, status, out, outIsString, outIsBytes, outIsEmptyStruct)
 			}
 		}
 
@@ -162,4 +203,27 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(v)
+}
+
+// writeOut emits the handler's Out value. Symmetric with In:
+//
+//   - string  → text/plain; charset=utf-8, verbatim bytes
+//   - []byte  → application/octet-stream, verbatim bytes
+//   - struct{} → no body, status only
+//   - any other type → JSON
+func writeOut[Out any](w http.ResponseWriter, status int, v Out, isString, isBytes, isEmptyStruct bool) {
+	switch {
+	case isEmptyStruct:
+		w.WriteHeader(status)
+	case isString:
+		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+		w.WriteHeader(status)
+		_, _ = io.WriteString(w, *(any(&v).(*string)))
+	case isBytes:
+		w.Header().Set("Content-Type", "application/octet-stream")
+		w.WriteHeader(status)
+		_, _ = w.Write(*(any(&v).(*[]byte)))
+	default:
+		writeJSON(w, status, v)
+	}
 }

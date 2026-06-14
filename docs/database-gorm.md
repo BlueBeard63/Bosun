@@ -1,5 +1,10 @@
 # GORM integration
 
+> Looking for a generic `Repo[T]` with CRUD, a chainable query builder, and
+> cross-repo transactions? See the [repo module](./repo.md). The page below
+> covers the bare-metal pattern of injecting `*gorm.DB` directly and writing
+> per-domain repo structs by hand.
+
 Bosun has no opinions about your data layer. You register `*gorm.DB` as an
 instance on the registry; services that need it declare a `*gorm.DB` field
 and the framework wires it.

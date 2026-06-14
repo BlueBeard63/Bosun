@@ -62,7 +62,7 @@ func Middleware[T any]() struct{} {
 // the host via OverridePrefix). T must implement Routes(*bosun.Router).
 func Controller[T any](prefix string, mws ...MWRef) struct{} {
 	var probe any = (*T)(nil)
-	if _, ok := probe.(HasRoutes); !ok {
+	if _, ok := probe.(BaseController); !ok {
 		panic(fmt.Sprintf("bosun: %T must implement Routes(*bosun.Router)", probe))
 	}
 	_ = Service[T]()

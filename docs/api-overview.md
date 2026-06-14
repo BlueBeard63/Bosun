@@ -491,10 +491,10 @@ for _, ri := range bosun.TypedRoutes() {
 
 ## 11. Interfaces you implement
 
-### `bosun.HasRoutes`
+### `bosun.BaseController`
 
 ```go
-type HasRoutes interface {
+type BaseController interface {
     Routes(r *Router)
 }
 ```

@@ -25,7 +25,8 @@ Short, focused pages — start at the top, jump to whatever you need.
 
 ## Data layer
 
-- [**GORM**](./database-gorm.md) — typical Bosun + GORM setup.
+- [**Repo module**](./repo.md) — generic `Repo[T]` interface + GORM driver with multi-DB and transaction support.
+- [**GORM**](./database-gorm.md) — typical Bosun + GORM setup (hand-rolled repo pattern).
 - [**sqlc**](./database-sqlc.md) — typical Bosun + sqlc setup.
 
 ## Ops & operations

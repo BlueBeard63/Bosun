@@ -7,8 +7,10 @@ type MiddlewareHandler interface {
 	Handle(next http.Handler) http.Handler
 }
 
-// HasRoutes is implemented by controllers.
-type HasRoutes interface {
+// BaseController is implemented by controllers. The framework discovers
+// controller types by this interface; bosun.Controller[T] panics at startup
+// if T does not satisfy it.
+type BaseController interface {
 	Routes(r *Router)
 }
 

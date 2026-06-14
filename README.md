@@ -114,7 +114,7 @@ func main() {
 ```
 package bosun (root) — one concern per file:
   doc.go            package documentation
-  interfaces.go     MiddlewareHandler, HasRoutes contracts
+  interfaces.go     MiddlewareHandler, BaseController contracts
   registration.go   Service/Middleware/Controller/Default/DefaultBind, Use
   inject.go         reflective construction + field injection
   app.go            App lifecycle: New, Start, Run, Shutdown
@@ -144,6 +144,7 @@ modules/            example installable feature modules
 examples/
   basic/            services, middleware, controllers
   modules/          installing modules, extension points
+  repo/             generic Repo[T] backed by GORM + SQLite
   kitchen-sink/     everything: typed handlers, audit, OpenAPI,
                     encrypted hot-reload config
 ```
@@ -153,6 +154,7 @@ examples/
 ```sh
 go run ./examples/basic            # :8090
 go run ./examples/modules          # :8091
+go run ./examples/repo             # :8090 — Repo[T] CRUD over SQLite
 cd examples/kitchen-sink && CONFIG_MASTER_KEY=dev-key go run .   # :8094
 ```
 

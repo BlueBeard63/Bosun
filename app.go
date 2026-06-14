@@ -72,7 +72,7 @@ func (a *App) Start() error {
 			prefix = p
 		}
 		router := &Router{app: a, prefix: prefix, base: base}
-		inst.(HasRoutes).Routes(router)
+		inst.(BaseController).Routes(router)
 		if err := errors.Join(router.errs...); err != nil {
 			return err
 		}

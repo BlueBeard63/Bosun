@@ -77,3 +77,26 @@ func normalizePath(p string) string {
 	}
 	return strings.Join(parts, "/")
 }
+
+// extractParamNames pulls the param names out of a normalized path pattern.
+// Expects the {name} form produced by normalizePath. Trailing wildcards
+// like {rest...} are reported under the bare name ("rest").
+//
+//	/users/{id}/posts/{slug} → []string{"id", "slug"}
+//	/files/{path...}         → []string{"path"}
+func extractParamNames(p string) []string {
+	if !strings.Contains(p, "{") {
+		return nil
+	}
+	var names []string
+	for _, seg := range strings.Split(p, "/") {
+		if !strings.HasPrefix(seg, "{") || !strings.HasSuffix(seg, "}") || len(seg) <= 2 {
+			continue
+		}
+		name := strings.TrimSuffix(seg[1:len(seg)-1], "...")
+		if name != "" {
+			names = append(names, name)
+		}
+	}
+	return names
+}

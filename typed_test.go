@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -79,6 +80,7 @@ func (c *typedCtrl) Routes(r *Router) {
 	Post(r, "/any", c.anyBody)
 	Get(r, "/colon/:id", c.echo)
 	Get(r, "/mixed/:org/items/{id}", c.echo)
+	Get(r, "/params/{org}/items/{id}", c.params)
 	Get(r, "/out/string", c.outString)
 	Get(r, "/out/bytes", c.outBytes)
 	Get(r, "/out/empty", c.outEmpty)
@@ -132,6 +134,14 @@ func (c *typedCtrl) form(ctx context.Context, req *Req[formIn]) (formOut, error)
 
 func (c *typedCtrl) anyBody(ctx context.Context, req *Req[any]) (struct{ Got any }, error) {
 	return struct{ Got any }{Got: req.Body}, nil
+}
+
+func (c *typedCtrl) params(ctx context.Context, req *Req[struct{}]) (map[string]string, error) {
+	return map[string]string{
+		"org":     req.Params["org"],
+		"id":      req.Params["id"],
+		"missing": req.Params["missing"],
+	}, nil
 }
 
 func (c *typedCtrl) outString(ctx context.Context, _ *Req[struct{}]) (string, error) {
@@ -325,6 +335,47 @@ func TestRouteInfoNormalizesColons(t *testing.T) {
 	}
 	if !found {
 		t.Fatal("RouteInfo.Path should store the normalized {id} form for OpenAPI")
+	}
+}
+
+func TestReqParams(t *testing.T) {
+	app := newStarted(t)
+	rec := do(app, "GET", "/api/params/acme/items/42", "")
+	if rec.Code != 200 {
+		t.Fatalf("status %d: %s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	for _, want := range []string{`"org":"acme"`, `"id":"42"`, `"missing":""`} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("missing %s in %s", want, body)
+		}
+	}
+}
+
+func TestReqParamsEmptyWhenNoSegments(t *testing.T) {
+	req := httptest.NewRequest("GET", "/", nil)
+	r := &Req[struct{}]{Request: req}
+	if r.Params["anything"] != "" {
+		t.Fatalf("nil Params map should read as empty string")
+	}
+}
+
+func TestExtractParamNames(t *testing.T) {
+	for _, c := range []struct {
+		in   string
+		want []string
+	}{
+		{"/users/{id}", []string{"id"}},
+		{"/users/{id}/posts/{slug}", []string{"id", "slug"}},
+		{"/files/{path...}", []string{"path"}},
+		{"/health", nil},
+		{"", nil},
+		{"/orgs/{org_id}/mix/{a}/{b}", []string{"org_id", "a", "b"}},
+	} {
+		got := extractParamNames(c.in)
+		if !reflect.DeepEqual(got, c.want) {
+			t.Fatalf("extractParamNames(%q) = %v, want %v", c.in, got, c.want)
+		}
 	}
 }
 

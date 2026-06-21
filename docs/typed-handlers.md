@@ -83,6 +83,21 @@ tags := req.Query()["tag"]          // []string for ?tag=a&tag=b
 It returns the standard `url.Values`, so anything `url.Values` supports
 works.
 
+### Path parameter shortcut
+
+For ad-hoc path reads (where you don't want a struct field with a
+`path:` tag), `req.Params` exposes the segments declared in the route
+pattern as a `map[string]string`:
+
+```go
+// Route: GET /orgs/{org_id}/users/{id}
+org := req.Params["org_id"]
+id  := req.Params["id"]
+```
+
+Both `{name}` and `:name` forms populate `Params`. An unknown key reads
+as the empty string, like any Go map.
+
 ## Choosing the `In` type
 
 `In` controls how the body is parsed. Four shapes:

@@ -22,11 +22,21 @@ import (
 // *http.Request gives handlers full access to headers, cookies, TLS state,
 // the raw body reader, etc. Body holds the parsed request body — a struct
 // (JSON or form decoded, with path/query/header/form tag binding) or a
-// string (raw body verbatim, useful for non-JSON payloads).
+// string (raw body verbatim, useful for non-JSON payloads). Params holds
+// the URL path parameters declared in the route pattern (e.g. {id} or
+// :id), keyed by name.
 type Req[In any] struct {
 	*http.Request
-	Body In
+	Body   In
+	Params Params
 }
+
+// Params maps URL path parameter names to their values for the current
+// request. Reading an unknown key returns the empty string, like any Go
+// map.
+//
+//	id := req.Params["id"]   // "" if the route has no {id} segment
+type Params map[string]string
 
 // Query returns the parsed query parameters of the request. Shorthand for
 // req.URL.Query().
@@ -95,6 +105,7 @@ func typed[In, Out any](r *Router, method, p string, h func(context.Context, *Re
 	if r.prefix != "" {
 		full = joinPrefix(r.prefix, p)
 	}
+	paramNames := extractParamNames(full)
 	handlerName := runtime.FuncForPC(reflect.ValueOf(h).Pointer()).Name()
 
 	inType := reflect.TypeOf((*In)(nil)).Elem()
@@ -134,6 +145,12 @@ func typed[In, Out any](r *Router, method, p string, h func(context.Context, *Re
 		})
 
 		typedReq := &Req[In]{Request: req}
+		if len(paramNames) > 0 {
+			typedReq.Params = make(Params, len(paramNames))
+			for _, name := range paramNames {
+				typedReq.Params[name] = req.PathValue(name)
+			}
+		}
 		status := http.StatusOK
 		var out Out
 		var handlerErr error

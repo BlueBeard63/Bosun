@@ -164,6 +164,52 @@ import (
 
 ---
 
+## Sub-groups
+
+For controllers that mount several related routes sharing a sub-prefix or
+middleware, `r.Group(prefix, mws...)` returns a child router. Routes
+mounted on the child get the combined prefix and the inherited
+middleware stack plus whatever the group adds.
+
+```go
+func (c *Admin) Routes(r *bosun.Router) {
+    bosun.Get(r, "/ping", c.Ping)   // /admin/ping
+
+    staff := r.Group("/staff", bosun.Use[mw.RequireStaff]())
+    bosun.Get(staff,  "/users", c.ListUsers)  // /admin/staff/users + RequireStaff
+    bosun.Post(staff, "/wipe",  c.Wipe)       // /admin/staff/wipe  + RequireStaff
+
+    // Groups nest. Sub-group routes get all parents' middleware.
+    v2 := staff.Group("/v2")
+    bosun.Get(v2, "/metrics", c.Metrics)      // /admin/staff/v2/metrics + RequireStaff
+}
+```
+
+Both typed (`bosun.Get(staff, ...)`) and raw (`staff.Get(...)`) handlers
+work on a group.
+
+### Middleware-only groups
+
+Pass an empty prefix to apply middleware to a batch of routes without
+adding a path segment:
+
+```go
+guarded := r.Group("", bosun.Use[mw.RequireAuth]())
+bosun.Get(guarded,  "/profile",  c.Profile)
+bosun.Post(guarded, "/settings", c.UpdateSettings)
+```
+
+### Path syntax
+
+Sub-group prefixes accept the same `:name` / `{name}` forms as routes:
+
+```go
+items := r.Group("/items/:id")
+bosun.Get(items, "/show", c.Show)   // /things/items/{id}/show, with path:"id"
+```
+
+---
+
 ## Mounting at runtime
 
 ### Override the prefix from the host

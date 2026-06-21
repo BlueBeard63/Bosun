@@ -71,9 +71,10 @@ func (a *App) Start() error {
 		if p, ok := a.prefixes[c.typ]; ok {
 			prefix = p
 		}
-		router := &Router{app: a, prefix: prefix, base: base}
+		var errs []error
+		router := &Router{app: a, prefix: prefix, base: base, errs: &errs}
 		inst.(BaseController).Routes(router)
-		if err := errors.Join(router.errs...); err != nil {
+		if err := errors.Join(errs...); err != nil {
 			return err
 		}
 	}

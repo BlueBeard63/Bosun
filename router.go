@@ -8,12 +8,53 @@ import (
 
 // --- router ---
 
-// Router mounts routes for one controller.
+// Router mounts routes for one controller. Sub-groups created via Group
+// share the controller's error slice — any registration failure surfaces
+// from app.Start() regardless of which group raised it.
 type Router struct {
 	app    *App
 	prefix string
 	base   []MiddlewareHandler
-	errs   []error
+	errs   *[]error
+}
+
+// Group returns a child router that mounts under prefix (joined onto the
+// parent's prefix) and inherits the parent's middleware stack, appending
+// mws on top. The parent and child can both mount routes — child routes
+// see the combined prefix and middleware.
+//
+//	func (c *Admin) Routes(r *bosun.Router) {
+//	    bosun.Get(r, "/ping", c.Ping)   // /admin/ping
+//
+//	    staff := r.Group("/staff", bosun.Use[mw.RequireStaff]())
+//	    bosun.Get(staff,  "/users",  c.ListUsers)  // /admin/staff/users + RequireStaff
+//	    bosun.Post(staff, "/wipe",   c.Wipe)       // /admin/staff/wipe + RequireStaff
+//
+//	    api := staff.Group("/v2")              // groups nest freely
+//	    bosun.Get(api, "/metrics", c.Metrics)   // /admin/staff/v2/metrics + RequireStaff
+//	}
+//
+// Empty or "/" prefix leaves the parent's prefix unchanged — useful for
+// applying middleware to a group of routes without adding a path segment.
+func (r *Router) Group(prefix string, mws ...MWRef) *Router {
+	sub := &Router{
+		app:    r.app,
+		prefix: r.prefix,
+		base:   append([]MiddlewareHandler{}, r.base...),
+		errs:   r.errs,
+	}
+	if prefix != "" && prefix != "/" {
+		sub.prefix = joinPrefix(sub.prefix, normalizePath(prefix))
+	}
+	if len(mws) > 0 {
+		addl, err := r.app.resolveMWs(mws)
+		if err != nil {
+			*r.errs = append(*r.errs, err)
+			return sub
+		}
+		sub.base = append(sub.base, addl...)
+	}
+	return sub
 }
 
 // Get mounts a raw net/http handler at p — the untyped escape hatch. Use
@@ -45,7 +86,7 @@ func (r *Router) Patch(p string, h http.HandlerFunc, mws ...MWRef) { r.handle("P
 func (r *Router) handle(method, p string, h http.HandlerFunc, refs []MWRef) {
 	routeMWs, err := r.app.resolveMWs(refs)
 	if err != nil {
-		r.errs = append(r.errs, err)
+		*r.errs = append(*r.errs, err)
 		return
 	}
 	var handler http.Handler = h

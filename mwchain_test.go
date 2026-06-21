@@ -206,7 +206,8 @@ func TestUseArgsWrongTypeFailsAtStart(t *testing.T) {
 	app := New()
 	app.Reg.Validate()                       // make sure registry is sound
 	app.Mux = http.NewServeMux()             // fresh mux
-	r := &Router{app: app, prefix: "/wrong"} // synthesize a router
+	var errs []error
+	r := &Router{app: app, prefix: "/wrong", errs: &errs} // synthesize a router
 	Get(r, "/x", tc.echo, Use[hasPermissionMW]("not a string slice"))
 	if err := app.Start(); err == nil {
 		_ = r

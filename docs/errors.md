@@ -2,6 +2,30 @@
 
 Bosun maps handler errors to HTTP status codes and JSON bodies with a two-rule model. Return `bosun.E(status, publicMsg, cause)` for a controlled response, and return any other error to get a `500 "internal server error"` whose original message is captured in the audit event but never sent to the client. This guide shows how to use that model well.
 
+<figure class="diagram">
+<svg viewBox="0 0 660 220" role="img" aria-labelledby="err-title err-desc" xmlns="http://www.w3.org/2000/svg">
+<title id="err-title">Where an error goes</title>
+<desc id="err-desc">bosun.E sends its status and public message to the client, while its cause and origin go only to the audit log.</desc>
+<defs>
+<marker id="err-arw" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="var(--fg-muted)"/></marker>
+</defs>
+<line x1="220" y1="86" x2="376" y2="86" stroke="var(--fg-muted)" stroke-width="1" marker-end="url(#err-arw)"/>
+<line x1="220" y1="154" x2="376" y2="154" stroke="var(--fg-muted)" stroke-width="1" marker-end="url(#err-arw)"/>
+<text x="298" y="78" text-anchor="middle" font-family="'JetBrains Mono',ui-monospace,monospace" font-size="8" letter-spacing="0.06em" fill="var(--fg-muted)">PUBLIC</text>
+<text x="298" y="146" text-anchor="middle" font-family="'JetBrains Mono',ui-monospace,monospace" font-size="8" letter-spacing="0.06em" fill="var(--fg-muted)">INTERNAL</text>
+<rect x="20" y="64" width="200" height="112" rx="6" fill="var(--accent-soft)" stroke="var(--accent)" stroke-width="1"/>
+<text x="120" y="116" text-anchor="middle" font-family="Inter,system-ui,sans-serif" font-size="13" font-weight="600" fill="var(--accent)">bosun.E(...)</text>
+<text x="120" y="134" text-anchor="middle" font-family="'JetBrains Mono',ui-monospace,monospace" font-size="9" fill="var(--fg-muted)">status, msg, cause</text>
+<rect x="380" y="60" width="240" height="52" rx="6" fill="var(--bg)" stroke="var(--fg)" stroke-width="1"/>
+<text x="500" y="82" text-anchor="middle" font-family="Inter,system-ui,sans-serif" font-size="13" font-weight="600" fill="var(--fg)">Client response</text>
+<text x="500" y="100" text-anchor="middle" font-family="'JetBrains Mono',ui-monospace,monospace" font-size="9" fill="var(--fg-muted)">status + public message</text>
+<rect x="380" y="128" width="240" height="52" rx="6" fill="var(--code-bg)" stroke="var(--fg-muted)" stroke-width="1"/>
+<text x="500" y="150" text-anchor="middle" font-family="Inter,system-ui,sans-serif" font-size="13" font-weight="600" fill="var(--fg)">Audit log</text>
+<text x="500" y="168" text-anchor="middle" font-family="'JetBrains Mono',ui-monospace,monospace" font-size="9" fill="var(--fg-muted)">cause + origin (file:line)</text>
+</svg>
+<figcaption>A plain error returned from a handler collapses to a 500; either way the cause reaches the audit log, never the client.</figcaption>
+</figure>
+
 ## The basic pattern
 
 Translate a lower-level error into a status and a public message at the point where you know what it means.

@@ -2,6 +2,32 @@
 
 `bosun.Convert[Dst, Src]` copies fields from one struct into another by name. It is the everyday mapper for turning a database model into an API response. Because it walks the destination's fields, anything not declared on the destination is structurally impossible to leak, which makes the destination type your contract.
 
+<figure class="diagram">
+<svg viewBox="0 0 660 250" role="img" aria-labelledby="cv-title cv-desc" xmlns="http://www.w3.org/2000/svg">
+<title id="cv-title">Convert walks the destination fields</title>
+<desc id="cv-desc">Convert copies matching fields from the source to the destination; the source Password field has no destination field, so it is never copied.</desc>
+<defs>
+<marker id="cv-arw" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="var(--fg-muted)"/></marker>
+</defs>
+<line x1="240" y1="88" x2="416" y2="88" stroke="var(--fg-muted)" stroke-width="1" marker-end="url(#cv-arw)"/>
+<line x1="240" y1="120" x2="416" y2="120" stroke="var(--fg-muted)" stroke-width="1" marker-end="url(#cv-arw)"/>
+<line x1="240" y1="152" x2="416" y2="152" stroke="var(--fg-muted)" stroke-width="1" marker-end="url(#cv-arw)"/>
+<text x="140" y="44" text-anchor="middle" font-family="'JetBrains Mono',ui-monospace,monospace" font-size="8" letter-spacing="0.12em" fill="var(--fg-muted)">SRC: USER</text>
+<text x="520" y="44" text-anchor="middle" font-family="'JetBrains Mono',ui-monospace,monospace" font-size="8" letter-spacing="0.12em" fill="var(--fg-muted)">DST: USERRESPONSE</text>
+<rect x="40" y="52" width="200" height="160" rx="6" fill="var(--bg)" stroke="var(--fg)" stroke-width="1"/>
+<text x="60" y="92" font-family="'JetBrains Mono',ui-monospace,monospace" font-size="11" fill="var(--fg)">ID</text>
+<text x="60" y="124" font-family="'JetBrains Mono',ui-monospace,monospace" font-size="11" fill="var(--fg)">Name</text>
+<text x="60" y="156" font-family="'JetBrains Mono',ui-monospace,monospace" font-size="11" fill="var(--fg)">Email</text>
+<text x="60" y="188" font-family="'JetBrains Mono',ui-monospace,monospace" font-size="11" fill="var(--fg-muted)">Password</text>
+<text x="176" y="188" font-family="'JetBrains Mono',ui-monospace,monospace" font-size="8" fill="var(--fg-muted)">no dst - dropped</text>
+<rect x="420" y="52" width="200" height="128" rx="6" fill="var(--accent-soft)" stroke="var(--accent)" stroke-width="1"/>
+<text x="440" y="92" font-family="'JetBrains Mono',ui-monospace,monospace" font-size="11" fill="var(--fg)">ID</text>
+<text x="440" y="124" font-family="'JetBrains Mono',ui-monospace,monospace" font-size="11" fill="var(--fg)">Name</text>
+<text x="440" y="156" font-family="'JetBrains Mono',ui-monospace,monospace" font-size="11" fill="var(--fg)">Email</text>
+</svg>
+<figcaption>Because Convert copies only fields the destination declares, a secret with no destination field cannot reach the response.</figcaption>
+</figure>
+
 ## The canonical case
 
 A response DTO omits the sensitive fields, and the mapper simply cannot copy what has no destination.

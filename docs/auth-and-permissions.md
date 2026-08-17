@@ -2,6 +2,36 @@
 
 The most common middleware chain in a real application has two steps: one middleware authenticates the request and attaches a typed user, and the next checks whether that user holds the roles a route requires. This guide builds that chain, then shows the two ways to parameterize the permission check per route.
 
+<figure class="diagram">
+<svg viewBox="0 0 720 250" role="img" aria-labelledby="ap-title ap-desc" xmlns="http://www.w3.org/2000/svg">
+<title id="ap-title">Authentication and permission chain</title>
+<desc id="ap-desc">RequireAuth attaches a typed AuthUser to the request context; HasPermission reads it to check roles; the handler reads the same value. The user travels through the context, not through arguments.</desc>
+<defs>
+<marker id="ap-arw" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="var(--fg-muted)"/></marker>
+</defs>
+<line x1="202" y1="62" x2="266" y2="62" stroke="var(--fg-muted)" stroke-width="1" marker-end="url(#ap-arw)"/>
+<line x1="452" y1="62" x2="516" y2="62" stroke="var(--fg-muted)" stroke-width="1" marker-end="url(#ap-arw)"/>
+<line x1="110" y1="94" x2="110" y2="172" stroke="var(--fg-muted)" stroke-width="1" stroke-dasharray="4,3" marker-end="url(#ap-arw)"/>
+<line x1="360" y1="172" x2="360" y2="96" stroke="var(--fg-muted)" stroke-width="1" stroke-dasharray="4,3" marker-end="url(#ap-arw)"/>
+<line x1="610" y1="172" x2="610" y2="96" stroke="var(--fg-muted)" stroke-width="1" stroke-dasharray="4,3" marker-end="url(#ap-arw)"/>
+<text x="118" y="138" font-family="'JetBrains Mono',ui-monospace,monospace" font-size="8" letter-spacing="0.06em" fill="var(--fg-muted)">WRITE</text>
+<text x="368" y="138" font-family="'JetBrains Mono',ui-monospace,monospace" font-size="8" letter-spacing="0.06em" fill="var(--fg-muted)">READ</text>
+<text x="618" y="138" font-family="'JetBrains Mono',ui-monospace,monospace" font-size="8" letter-spacing="0.06em" fill="var(--fg-muted)">READ</text>
+<rect x="20" y="32" width="180" height="60" rx="6" fill="var(--bg)" stroke="var(--fg)" stroke-width="1"/>
+<text x="110" y="58" text-anchor="middle" font-family="Inter,system-ui,sans-serif" font-size="13" font-weight="600" fill="var(--fg)">RequireAuth</text>
+<text x="110" y="76" text-anchor="middle" font-family="'JetBrains Mono',ui-monospace,monospace" font-size="9" fill="var(--fg-muted)">attaches *AuthUser</text>
+<rect x="270" y="32" width="180" height="60" rx="6" fill="var(--bg)" stroke="var(--fg)" stroke-width="1"/>
+<text x="360" y="58" text-anchor="middle" font-family="Inter,system-ui,sans-serif" font-size="13" font-weight="600" fill="var(--fg)">HasPermission</text>
+<text x="360" y="76" text-anchor="middle" font-family="'JetBrains Mono',ui-monospace,monospace" font-size="9" fill="var(--fg-muted)">checks roles</text>
+<rect x="520" y="32" width="180" height="60" rx="6" fill="var(--accent-soft)" stroke="var(--accent)" stroke-width="1"/>
+<text x="610" y="58" text-anchor="middle" font-family="Inter,system-ui,sans-serif" font-size="13" font-weight="600" fill="var(--accent)">Handler</text>
+<text x="610" y="76" text-anchor="middle" font-family="'JetBrains Mono',ui-monospace,monospace" font-size="9" fill="var(--fg-muted)">reads *AuthUser</text>
+<rect x="20" y="172" width="680" height="44" rx="6" fill="var(--code-bg)" stroke="var(--fg-muted)" stroke-width="1" stroke-dasharray="4,3"/>
+<text x="360" y="199" text-anchor="middle" font-family="Inter,system-ui,sans-serif" font-size="12" font-weight="600" fill="var(--fg)">request context: *AuthUser</text>
+</svg>
+<figcaption>RequireAuth must run before HasPermission, because the typed user travels through the request context rather than through arguments.</figcaption>
+</figure>
+
 ## Step 1: authenticate and attach the user
 
 The authentication middleware looks up the caller, rejects unauthenticated requests, and stores a typed `*AuthUser` on the context for everything downstream.

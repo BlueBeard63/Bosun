@@ -2,6 +2,27 @@
 
 Middleware wraps an `http.Handler` to add cross-cutting behavior such as logging, authentication, or rate limiting. In Bosun a middleware is a registered type with optional injected dependencies, referenced at a route with `bosun.Use[T]()`. This guide covers writing middleware, attaching it, passing typed values to handlers, and the built-ins. The full authentication-and-permissions chain has its own page: [auth and permissions](./auth-and-permissions.md).
 
+<figure class="diagram">
+<svg viewBox="0 0 620 300" role="img" aria-labelledby="mw-title mw-desc" xmlns="http://www.w3.org/2000/svg">
+<title id="mw-title">Middleware wraps the handler</title>
+<desc id="mw-desc">Controller middleware wraps route middleware, which wraps the typed adapter, which wraps the handler. The outermost middleware runs first on the way in and last on the way out.</desc>
+<defs>
+<marker id="mw-arw" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="var(--fg-muted)"/></marker>
+</defs>
+<line x1="6" y1="150" x2="36" y2="150" stroke="var(--fg-muted)" stroke-width="1" marker-end="url(#mw-arw)"/>
+<text x="4" y="142" font-family="'JetBrains Mono',ui-monospace,monospace" font-size="8" letter-spacing="0.06em" fill="var(--fg-muted)">REQUEST</text>
+<rect x="40" y="28" width="544" height="240" rx="8" fill="var(--bg)" stroke="var(--fg)" stroke-width="1"/>
+<text x="56" y="49" font-family="'JetBrains Mono',ui-monospace,monospace" font-size="8" letter-spacing="0.12em" fill="var(--fg-muted)">CONTROLLER MIDDLEWARE</text>
+<rect x="92" y="64" width="440" height="168" rx="8" fill="var(--code-bg)" stroke="var(--fg)" stroke-width="1"/>
+<text x="108" y="85" font-family="'JetBrains Mono',ui-monospace,monospace" font-size="8" letter-spacing="0.12em" fill="var(--fg-muted)">ROUTE MIDDLEWARE</text>
+<rect x="144" y="100" width="336" height="96" rx="8" fill="var(--bg)" stroke="var(--fg)" stroke-width="1"/>
+<text x="160" y="121" font-family="'JetBrains Mono',ui-monospace,monospace" font-size="8" letter-spacing="0.12em" fill="var(--fg-muted)">TYPED ADAPTER</text>
+<rect x="250" y="136" width="124" height="48" rx="6" fill="var(--accent-soft)" stroke="var(--accent)" stroke-width="1"/>
+<text x="312" y="164" text-anchor="middle" font-family="Inter,system-ui,sans-serif" font-size="13" font-weight="600" fill="var(--accent)">Handler</text>
+</svg>
+<figcaption>Each layer wraps the next. On the way in, the outermost middleware runs first; on the way out, it runs last.</figcaption>
+</figure>
+
 ## Writing middleware
 
 A middleware is any type that implements `Handle(next http.Handler) http.Handler`.

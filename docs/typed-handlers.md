@@ -2,6 +2,35 @@
 
 This is the reference for the typed registration functions (`bosun.Get`, `Post`, `Put`, `Delete`, `Patch`) and the `Req[In]` request wrapper. It describes the handler shape, how the `In` type controls body parsing, how the `Out` type controls the response, and the tag-binding rules.
 
+<figure class="diagram">
+<svg viewBox="0 0 620 250" role="img" aria-labelledby="th-title th-desc" xmlns="http://www.w3.org/2000/svg">
+<title id="th-title">Binding sources fill Req[In].Body</title>
+<desc id="th-desc">Path, query, header, form, and JSON sources each bind into the corresponding fields of the request body struct through struct tags.</desc>
+<defs>
+<marker id="th-arw" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="var(--fg-muted)"/></marker>
+</defs>
+<line x1="202" y1="40" x2="378" y2="40" stroke="var(--fg-muted)" stroke-width="1" marker-end="url(#th-arw)"/>
+<line x1="202" y1="80" x2="378" y2="80" stroke="var(--fg-muted)" stroke-width="1" marker-end="url(#th-arw)"/>
+<line x1="202" y1="120" x2="378" y2="120" stroke="var(--fg-muted)" stroke-width="1" marker-end="url(#th-arw)"/>
+<line x1="202" y1="160" x2="378" y2="160" stroke="var(--fg-muted)" stroke-width="1" marker-end="url(#th-arw)"/>
+<line x1="202" y1="200" x2="378" y2="200" stroke="var(--fg-muted)" stroke-width="1" marker-end="url(#th-arw)"/>
+<rect x="20" y="24" width="182" height="32" rx="6" fill="var(--code-bg)" stroke="var(--fg-muted)" stroke-width="1"/>
+<text x="34" y="44" font-family="'JetBrains Mono',ui-monospace,monospace" font-size="10" fill="var(--fg)">path:"id"</text>
+<rect x="20" y="64" width="182" height="32" rx="6" fill="var(--code-bg)" stroke="var(--fg-muted)" stroke-width="1"/>
+<text x="34" y="84" font-family="'JetBrains Mono',ui-monospace,monospace" font-size="10" fill="var(--fg)">query:"limit"</text>
+<rect x="20" y="104" width="182" height="32" rx="6" fill="var(--code-bg)" stroke="var(--fg-muted)" stroke-width="1"/>
+<text x="34" y="124" font-family="'JetBrains Mono',ui-monospace,monospace" font-size="10" fill="var(--fg)">header:"X-Trace"</text>
+<rect x="20" y="144" width="182" height="32" rx="6" fill="var(--code-bg)" stroke="var(--fg-muted)" stroke-width="1"/>
+<text x="34" y="164" font-family="'JetBrains Mono',ui-monospace,monospace" font-size="10" fill="var(--fg)">form:"token"</text>
+<rect x="20" y="184" width="182" height="32" rx="6" fill="var(--code-bg)" stroke="var(--fg-muted)" stroke-width="1"/>
+<text x="34" y="204" font-family="'JetBrains Mono',ui-monospace,monospace" font-size="10" fill="var(--fg)">json:"name"</text>
+<rect x="380" y="24" width="200" height="192" rx="6" fill="var(--accent-soft)" stroke="var(--accent)" stroke-width="1"/>
+<text x="480" y="116" text-anchor="middle" font-family="Inter,system-ui,sans-serif" font-size="14" font-weight="600" fill="var(--accent)">Req[In].Body</text>
+<text x="480" y="136" text-anchor="middle" font-family="'JetBrains Mono',ui-monospace,monospace" font-size="9" fill="var(--fg-muted)">your struct</text>
+</svg>
+<figcaption>Each tag names one source; the first non-empty of path, query, header, and form wins per field.</figcaption>
+</figure>
+
 ## Handler shape
 
 Every typed handler has the same signature.

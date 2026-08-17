@@ -73,6 +73,33 @@ rows, err := c.Users.Query().
 
 ## Transactions
 
+<figure class="diagram side">
+<svg viewBox="0 0 360 270" role="img" aria-labelledby="tx-title tx-desc" xmlns="http://www.w3.org/2000/svg">
+<title id="tx-title">Transaction propagation through context</title>
+<desc id="tx-desc">repo.Tx opens a transaction and puts it on the context; every repo called with that context joins the same transaction.</desc>
+<defs>
+<marker id="tx-arw" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="var(--fg-muted)"/></marker>
+</defs>
+<line x1="180" y1="72" x2="180" y2="108" stroke="var(--fg-muted)" stroke-width="1" marker-end="url(#tx-arw)"/>
+<line x1="95" y1="152" x2="95" y2="197" stroke="var(--fg-muted)" stroke-width="1" stroke-dasharray="4,3" marker-end="url(#tx-arw)"/>
+<line x1="265" y1="152" x2="265" y2="197" stroke="var(--fg-muted)" stroke-width="1" stroke-dasharray="4,3" marker-end="url(#tx-arw)"/>
+<text x="188" y="94" font-family="'JetBrains Mono',ui-monospace,monospace" font-size="8" letter-spacing="0.06em" fill="var(--fg-muted)">OPENS</text>
+<text x="55" y="180" font-family="'JetBrains Mono',ui-monospace,monospace" font-size="8" letter-spacing="0.06em" fill="var(--fg-muted)">JOINS</text>
+<text x="272" y="180" font-family="'JetBrains Mono',ui-monospace,monospace" font-size="8" letter-spacing="0.06em" fill="var(--fg-muted)">JOINS</text>
+<rect x="90" y="20" width="180" height="52" rx="6" fill="var(--accent-soft)" stroke="var(--accent)" stroke-width="1"/>
+<text x="180" y="50" text-anchor="middle" font-family="Inter,system-ui,sans-serif" font-size="13" font-weight="600" fill="var(--accent)">repo.Tx(ctx, fn)</text>
+<rect x="40" y="110" width="280" height="42" rx="6" fill="var(--code-bg)" stroke="var(--fg-muted)" stroke-width="1" stroke-dasharray="4,3"/>
+<text x="180" y="136" text-anchor="middle" font-family="Inter,system-ui,sans-serif" font-size="12" font-weight="600" fill="var(--fg)">ctx: transaction</text>
+<rect x="20" y="200" width="150" height="48" rx="6" fill="var(--bg)" stroke="var(--fg)" stroke-width="1"/>
+<text x="95" y="222" text-anchor="middle" font-family="Inter,system-ui,sans-serif" font-size="12" font-weight="600" fill="var(--fg)">Users.Create</text>
+<text x="95" y="238" text-anchor="middle" font-family="'JetBrains Mono',ui-monospace,monospace" font-size="9" fill="var(--fg-muted)">(ctx)</text>
+<rect x="190" y="200" width="150" height="48" rx="6" fill="var(--bg)" stroke="var(--fg)" stroke-width="1"/>
+<text x="265" y="222" text-anchor="middle" font-family="Inter,system-ui,sans-serif" font-size="12" font-weight="600" fill="var(--fg)">Orders.Create</text>
+<text x="265" y="238" text-anchor="middle" font-family="'JetBrains Mono',ui-monospace,monospace" font-size="9" fill="var(--fg-muted)">(ctx)</text>
+</svg>
+<figcaption>The transaction rides on the context, so different repos share one transaction.</figcaption>
+</figure>
+
 `Tx` runs a function inside a transaction. The callback's context carries the active transaction, and any `Repo[T]` method called with that context (including repos for other entity types) joins the same transaction. Returning a non-nil error rolls back, and nested `Tx` calls reuse the outermost transaction.
 
 ```go

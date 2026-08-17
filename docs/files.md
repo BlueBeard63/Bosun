@@ -2,6 +2,30 @@
 
 Bosun adds nothing on top of `net/http` for files: the embedded `*http.Request` in `Req[In]` gives you `FormFile`, `MultipartReader`, and direct body access. This guide shows the standard upload and download patterns and the gotchas around body parsing.
 
+<figure class="diagram">
+<svg viewBox="0 0 700 200" role="img" aria-labelledby="fl-title fl-desc" xmlns="http://www.w3.org/2000/svg">
+<title id="fl-title">Two ways to read an upload</title>
+<desc id="fl-desc">FormFile buffers the whole request in memory or temp files for small uploads; MultipartReader streams each part for large uploads.</desc>
+<defs>
+<marker id="fl-arw" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="var(--fg-muted)"/></marker>
+</defs>
+<line x1="200" y1="76" x2="378" y2="76" stroke="var(--fg-muted)" stroke-width="1" marker-end="url(#fl-arw)"/>
+<line x1="200" y1="124" x2="378" y2="124" stroke="var(--fg-muted)" stroke-width="1" marker-end="url(#fl-arw)"/>
+<text x="289" y="68" text-anchor="middle" font-family="'JetBrains Mono',ui-monospace,monospace" font-size="8" letter-spacing="0.06em" fill="var(--fg-muted)">SMALL</text>
+<text x="289" y="116" text-anchor="middle" font-family="'JetBrains Mono',ui-monospace,monospace" font-size="8" letter-spacing="0.06em" fill="var(--fg-muted)">STREAMING</text>
+<rect x="20" y="48" width="180" height="104" rx="6" fill="var(--code-bg)" stroke="var(--fg-muted)" stroke-width="1"/>
+<text x="110" y="96" text-anchor="middle" font-family="Inter,system-ui,sans-serif" font-size="13" font-weight="600" fill="var(--fg)">Multipart request</text>
+<text x="110" y="114" text-anchor="middle" font-family="'JetBrains Mono',ui-monospace,monospace" font-size="9" fill="var(--fg-muted)">one or more files</text>
+<rect x="380" y="54" width="300" height="44" rx="6" fill="var(--bg)" stroke="var(--fg)" stroke-width="1"/>
+<text x="530" y="76" text-anchor="middle" font-family="Inter,system-ui,sans-serif" font-size="13" font-weight="600" fill="var(--fg)">req.FormFile</text>
+<text x="530" y="92" text-anchor="middle" font-family="'JetBrains Mono',ui-monospace,monospace" font-size="9" fill="var(--fg-muted)">buffered in memory / temp</text>
+<rect x="380" y="102" width="300" height="44" rx="6" fill="var(--accent-soft)" stroke="var(--accent)" stroke-width="1"/>
+<text x="530" y="124" text-anchor="middle" font-family="Inter,system-ui,sans-serif" font-size="13" font-weight="600" fill="var(--accent)">req.MultipartReader</text>
+<text x="530" y="140" text-anchor="middle" font-family="'JetBrains Mono',ui-monospace,monospace" font-size="9" fill="var(--fg-muted)">streamed part by part</text>
+</svg>
+<figcaption>MultipartReader requires an unparsed body, so declare In as struct{} when you stream.</figcaption>
+</figure>
+
 ## Small uploads
 
 For a single file where buffering in memory is acceptable, bind the text fields with `form:` tags and read the file part with `req.FormFile`.

@@ -2,6 +2,32 @@
 
 Bosun decodes form-encoded bodies automatically when the handler's `In` type is a struct, binding each field through its `form:` tag. This applies to both `application/x-www-form-urlencoded` and the text fields of `multipart/form-data`. File payloads are read separately; see the [files guide](./files.md).
 
+<figure class="diagram">
+<svg viewBox="0 0 700 240" role="img" aria-labelledby="fm-title fm-desc" xmlns="http://www.w3.org/2000/svg">
+<title id="fm-title">How the body is decoded</title>
+<desc id="fm-desc">The request content type selects the decoder: JSON bodies are decoded into the struct, form-encoded bodies populate form tags, and other types skip body decoding.</desc>
+<defs>
+<marker id="fm-arw" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="var(--fg-muted)"/></marker>
+</defs>
+<line x1="190" y1="76" x2="368" y2="76" stroke="var(--fg-muted)" stroke-width="1" marker-end="url(#fm-arw)"/>
+<line x1="190" y1="132" x2="368" y2="132" stroke="var(--fg-muted)" stroke-width="1" marker-end="url(#fm-arw)"/>
+<line x1="190" y1="188" x2="368" y2="188" stroke="var(--fg-muted)" stroke-width="1" marker-end="url(#fm-arw)"/>
+<text x="279" y="68" text-anchor="middle" font-family="'JetBrains Mono',ui-monospace,monospace" font-size="8" letter-spacing="0.06em" fill="var(--fg-muted)">JSON / EMPTY</text>
+<text x="279" y="124" text-anchor="middle" font-family="'JetBrains Mono',ui-monospace,monospace" font-size="8" letter-spacing="0.06em" fill="var(--fg-muted)">FORM-ENCODED</text>
+<text x="279" y="180" text-anchor="middle" font-family="'JetBrains Mono',ui-monospace,monospace" font-size="8" letter-spacing="0.06em" fill="var(--fg-muted)">OTHER</text>
+<rect x="20" y="44" width="170" height="152" rx="6" fill="var(--code-bg)" stroke="var(--fg-muted)" stroke-width="1"/>
+<text x="105" y="116" text-anchor="middle" font-family="Inter,system-ui,sans-serif" font-size="13" font-weight="600" fill="var(--fg)">Content-Type</text>
+<text x="105" y="134" text-anchor="middle" font-family="'JetBrains Mono',ui-monospace,monospace" font-size="9" fill="var(--fg-muted)">of the request</text>
+<rect x="370" y="54" width="290" height="44" rx="6" fill="var(--bg)" stroke="var(--fg)" stroke-width="1"/>
+<text x="515" y="81" text-anchor="middle" font-family="Inter,system-ui,sans-serif" font-size="13" font-weight="600" fill="var(--fg)">JSON decode into Body</text>
+<rect x="370" y="110" width="290" height="44" rx="6" fill="var(--accent-soft)" stroke="var(--accent)" stroke-width="1"/>
+<text x="515" y="137" text-anchor="middle" font-family="Inter,system-ui,sans-serif" font-size="13" font-weight="600" fill="var(--accent)">ParseForm, bind form: tags</text>
+<rect x="370" y="166" width="290" height="44" rx="6" fill="var(--bg)" stroke="var(--fg)" stroke-width="1"/>
+<text x="515" y="193" text-anchor="middle" font-family="Inter,system-ui,sans-serif" font-size="13" font-weight="600" fill="var(--fg)">No body decode</text>
+</svg>
+<figcaption>Path, query, and header tags bind on every path; only the body decoding differs by content type.</figcaption>
+</figure>
+
 ## URL-encoded forms
 
 When the request `Content-Type` is `application/x-www-form-urlencoded`, Bosun skips JSON decoding, calls `req.ParseForm()`, and fills every `form:`-tagged field from the parsed body.

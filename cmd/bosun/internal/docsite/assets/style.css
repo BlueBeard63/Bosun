@@ -247,6 +247,16 @@ a.iconbtn:hover { background: var(--surface); }
 .article figure.diagram figcaption {
   margin-top: 12px; font-size: 13px; color: var(--fg-muted); text-align: center;
 }
+/* section-scoped diagram floated beside its text */
+.article figure.diagram.side {
+  float: right; width: 360px; max-width: 46%; margin: 4px 0 16px 24px;
+}
+.article figure.diagram.side svg { max-width: 100%; }
+.article figure.diagram.side figcaption { font-size: 12px; }
+.article h2 { clear: both; } /* keep a floated diagram inside its own section */
+@media (max-width: 900px) {
+  .article figure.diagram.side { float: none; width: 100%; max-width: 100%; margin: 24px 0; }
+}
 
 .article code {
   font: 13.5px/1.5 "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;

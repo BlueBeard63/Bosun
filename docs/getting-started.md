@@ -2,6 +2,32 @@
 
 This tutorial walks you from an empty directory to a running Bosun service that has routing, dependency injection, a database, middleware, and error handling. Follow it top to bottom; by the end you will understand the shape of every Bosun app and be ready to read the how-to guides for each feature.
 
+<figure class="diagram">
+<svg viewBox="0 0 720 170" role="img" aria-labelledby="gs-title gs-desc" xmlns="http://www.w3.org/2000/svg">
+<title id="gs-title">How a Bosun app boots</title>
+<desc id="gs-desc">Package-init declarations are collected by New, validated and wired by Start, and served on the Mux by Run.</desc>
+<defs>
+<marker id="gs-arw" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="var(--fg-muted)"/></marker>
+</defs>
+<line x1="172" y1="64" x2="192" y2="64" stroke="var(--fg-muted)" stroke-width="1" marker-end="url(#gs-arw)"/>
+<line x1="346" y1="64" x2="366" y2="64" stroke="var(--fg-muted)" stroke-width="1" marker-end="url(#gs-arw)"/>
+<line x1="520" y1="64" x2="540" y2="64" stroke="var(--fg-muted)" stroke-width="1" marker-end="url(#gs-arw)"/>
+<rect x="20" y="32" width="150" height="64" rx="6" fill="var(--code-bg)" stroke="var(--fg-muted)" stroke-width="1"/>
+<text x="95" y="60" text-anchor="middle" font-family="Inter,system-ui,sans-serif" font-size="13" font-weight="600" fill="var(--fg)">Registrations</text>
+<text x="95" y="78" text-anchor="middle" font-family="'JetBrains Mono',ui-monospace,monospace" font-size="9" fill="var(--fg-muted)">package-init decls</text>
+<rect x="194" y="32" width="150" height="64" rx="6" fill="var(--bg)" stroke="var(--fg)" stroke-width="1"/>
+<text x="269" y="60" text-anchor="middle" font-family="Inter,system-ui,sans-serif" font-size="13" font-weight="600" fill="var(--fg)">New()</text>
+<text x="269" y="78" text-anchor="middle" font-family="'JetBrains Mono',ui-monospace,monospace" font-size="9" fill="var(--fg-muted)">build registry</text>
+<rect x="368" y="32" width="150" height="64" rx="6" fill="var(--bg)" stroke="var(--fg)" stroke-width="1"/>
+<text x="443" y="60" text-anchor="middle" font-family="Inter,system-ui,sans-serif" font-size="13" font-weight="600" fill="var(--fg)">Start()</text>
+<text x="443" y="78" text-anchor="middle" font-family="'JetBrains Mono',ui-monospace,monospace" font-size="9" fill="var(--fg-muted)">validate + mount</text>
+<rect x="542" y="32" width="150" height="64" rx="6" fill="var(--accent-soft)" stroke="var(--accent)" stroke-width="1"/>
+<text x="617" y="60" text-anchor="middle" font-family="Inter,system-ui,sans-serif" font-size="13" font-weight="600" fill="var(--accent)">Run()</text>
+<text x="617" y="78" text-anchor="middle" font-family="'JetBrains Mono',ui-monospace,monospace" font-size="9" fill="var(--fg-muted)">serve on Mux</text>
+</svg>
+<figcaption>Controllers and services register themselves at package init; New collects them, Start validates and mounts them, and Run serves.</figcaption>
+</figure>
+
 ## Before you start
 
 You need Go 1.22 or newer, because Bosun builds on the pattern-based routing added to the standard library `net/http` in that release.

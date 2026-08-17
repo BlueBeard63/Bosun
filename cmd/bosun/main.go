@@ -23,6 +23,7 @@ func main() {
 	root.AddCommand(
 		docsCmd(),
 		mcpCmd(),
+		manifestCmd(),
 	)
 	if err := root.Execute(); err != nil {
 		os.Exit(1)

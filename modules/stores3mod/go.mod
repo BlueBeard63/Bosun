@@ -3,7 +3,7 @@ module github.com/amberstack/bosun/modules/stores3mod
 go 1.25.0
 
 require (
-	github.com/amberstack/bosun v0.0.0
+	github.com/amberstack/bosun v0.5.1
 	github.com/minio/minio-go/v7 v7.0.80
 )
 
@@ -22,5 +22,3 @@ require (
 	golang.org/x/sys v0.47.0 // indirect
 	golang.org/x/text v0.21.0 // indirect
 )
-
-replace github.com/amberstack/bosun => ../..

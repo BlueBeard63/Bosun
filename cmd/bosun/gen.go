@@ -4,4 +4,4 @@ package main
 //
 //	go generate ./cmd/bosun/...
 //
-//go:generate go run ./internal/docgen -in ../../docs -out ./internal/docsite/dist
+//go:generate go run ./internal/docgen -in ../../docs -out ./internal/docsite/content

@@ -25,6 +25,7 @@ func main() {
 		mcpCmd(),
 		manifestCmd(),
 		genCmd(),
+		newCmd(),
 	)
 	if err := root.Execute(); err != nil {
 		os.Exit(1)

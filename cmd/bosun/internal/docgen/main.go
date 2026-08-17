@@ -36,6 +36,7 @@ type Heading struct {
 type IndexEntry struct {
 	Slug     string    `json:"slug"`
 	Title    string    `json:"title"`
+	Section  string    `json:"section"`
 	Order    int       `json:"order"`
 	Headings []Heading `json:"headings"`
 	Text     string    `json:"text"` // plain-text body for full-text search
@@ -109,10 +110,12 @@ func run(inDir, outDir string) error {
 			return err
 		}
 
+		section, order := placeFor(slug)
 		index = append(index, IndexEntry{
 			Slug:     slug,
 			Title:    title,
-			Order:    orderFor(slug),
+			Section:  section,
+			Order:    order,
 			Headings: headings,
 			Text:     plainText(htmlBuf.String()),
 		})
@@ -220,48 +223,50 @@ func titleize(slug string) string {
 	return strings.Join(parts, " ")
 }
 
-// navOrder pins the reading order of the most important pages; everything else
-// sorts alphabetically after them (order 1000).
-var navOrder = map[string]int{
-	"index":             0,
-	"getting-started":   1,
-	"api-overview":      2,
-	"controllers":       3,
-	"services":          4,
-	"service-options":   5,
-	"middleware":        6,
-	"typed-handlers":    7,
-	"routing-groups":    8,
-	"routing-internals": 9,
-	"errors":            10,
-	"convert":           11,
-	"forms":             12,
-	"files":             13,
-	"repo":              14,
-	"database-gorm":     15,
-	"database-sqlc":     16,
-	"config":            17,
-	"registry":          18,
-	"openapi":           19,
-	"health":            20,
-	"events":            21,
-	"storage":           22,
-	"webhooks-outbox":   23,
-	"tracing":           24,
-	"multitenancy":      25,
-	"manifest":          26,
-	"secrets-infisical": 27,
-	"cli":               28,
-	"mcp":               29,
-	"microservices":     30,
-	"client-gen":        31,
+// sections define the sidebar grouping and reading order (mirrors the docs
+// site design). Each page maps to a section and a global order; unknown pages
+// fall into "More" after everything else.
+var sections = []struct {
+	name  string
+	slugs []string
+}{
+	{"Getting started", []string{"index", "getting-started", "api-overview"}},
+	{"Core concepts", []string{"controllers", "services", "service-options", "middleware", "typed-handlers", "errors", "convert"}},
+	{"Routing", []string{"routing-groups", "routing-internals"}},
+	{"Inputs", []string{"forms", "files"}},
+	{"Data layer", []string{"repo", "database-gorm", "database-sqlc"}},
+	{"Messaging", []string{"events", "webhooks-outbox"}},
+	{"Platform", []string{"storage", "secrets-infisical", "health", "manifest", "multitenancy", "tracing"}},
+	{"CLI & tooling", []string{"cli", "mcp", "client-gen", "microservices"}},
+	{"Operations", []string{"config", "registry", "openapi", "testing"}},
 }
 
-func orderFor(slug string) int {
-	if o, ok := navOrder[slug]; ok {
-		return o
+var placeIndex = func() map[string]struct {
+	section string
+	order   int
+} {
+	m := map[string]struct {
+		section string
+		order   int
+	}{}
+	order := 0
+	for _, sec := range sections {
+		for _, slug := range sec.slugs {
+			m[slug] = struct {
+				section string
+				order   int
+			}{sec.name, order}
+			order++
+		}
 	}
-	return 1000
+	return m
+}()
+
+func placeFor(slug string) (section string, order int) {
+	if p, ok := placeIndex[slug]; ok {
+		return p.section, p.order
+	}
+	return "More", 10000
 }
 
 func copyTree(src, dst string) error {

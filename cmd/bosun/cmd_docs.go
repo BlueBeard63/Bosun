@@ -29,6 +29,7 @@ func docsCmd() *cobra.Command {
 			if err != nil {
 				return fmt.Errorf("loading docs: %w", err)
 			}
+			site.Version = version
 			ln, err := net.Listen("tcp", addr)
 			if err != nil {
 				return fmt.Errorf("listen %s: %w", addr, err)

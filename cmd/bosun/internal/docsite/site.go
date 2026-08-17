@@ -30,6 +30,7 @@ type Heading struct {
 type IndexEntry struct {
 	Slug     string    `json:"slug"`
 	Title    string    `json:"title"`
+	Section  string    `json:"section"`
 	Order    int       `json:"order"`
 	Headings []Heading `json:"headings"`
 	Text     string    `json:"text"`
@@ -39,6 +40,8 @@ type IndexEntry struct {
 type Site struct {
 	entries []IndexEntry
 	dist    fs.FS // pages/, md/, docassets/, index.json
+	// Version labels the docs build (shown in the header pill); optional.
+	Version string
 }
 
 // Load reads the embedded index and returns a ready Site.
@@ -194,6 +197,11 @@ func (s *Site) Handler() http.Handler {
 		}
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write(b)
+	})
+
+	mux.HandleFunc("/meta.json", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]string{"version": s.Version})
 	})
 
 	return mux

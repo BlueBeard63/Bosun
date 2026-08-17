@@ -1,17 +1,34 @@
 # Error handling
 
-Bosun maps handler errors to HTTP status codes and JSON bodies. Two rules
-to remember:
+Bosun maps handler errors to HTTP status codes and JSON bodies with a two-rule model. Return `bosun.E(status, publicMsg, cause)` for a controlled response, and return any other error to get a `500 "internal server error"` whose original message is captured in the audit event but never sent to the client. This guide shows how to use that model well.
 
-1. **`bosun.E(status, publicMsg, cause)`** for controlled responses.
-2. **Any other error** becomes `500 "internal server error"`. The original
-   message is captured in the audit event but never sent to the client.
+<figure class="diagram">
+<svg viewBox="0 0 660 220" role="img" aria-labelledby="err-title err-desc" xmlns="http://www.w3.org/2000/svg">
+<title id="err-title">Where an error goes</title>
+<desc id="err-desc">bosun.E sends its status and public message to the client, while its cause and origin go only to the audit log.</desc>
+<defs>
+<marker id="err-arw" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="var(--fg-muted)"/></marker>
+</defs>
+<line x1="220" y1="86" x2="376" y2="86" stroke="var(--fg-muted)" stroke-width="1" marker-end="url(#err-arw)"/>
+<line x1="220" y1="154" x2="376" y2="154" stroke="var(--fg-muted)" stroke-width="1" marker-end="url(#err-arw)"/>
+<text x="298" y="78" text-anchor="middle" font-family="'JetBrains Mono',ui-monospace,monospace" font-size="8" letter-spacing="0.06em" fill="var(--fg-muted)">PUBLIC</text>
+<text x="298" y="146" text-anchor="middle" font-family="'JetBrains Mono',ui-monospace,monospace" font-size="8" letter-spacing="0.06em" fill="var(--fg-muted)">INTERNAL</text>
+<rect x="20" y="64" width="200" height="112" rx="6" fill="var(--accent-soft)" stroke="var(--accent)" stroke-width="1"/>
+<text x="120" y="116" text-anchor="middle" font-family="Inter,system-ui,sans-serif" font-size="13" font-weight="600" fill="var(--accent)">bosun.E(...)</text>
+<text x="120" y="134" text-anchor="middle" font-family="'JetBrains Mono',ui-monospace,monospace" font-size="9" fill="var(--fg-muted)">status, msg, cause</text>
+<rect x="380" y="60" width="240" height="52" rx="6" fill="var(--bg)" stroke="var(--fg)" stroke-width="1"/>
+<text x="500" y="82" text-anchor="middle" font-family="Inter,system-ui,sans-serif" font-size="13" font-weight="600" fill="var(--fg)">Client response</text>
+<text x="500" y="100" text-anchor="middle" font-family="'JetBrains Mono',ui-monospace,monospace" font-size="9" fill="var(--fg-muted)">status + public message</text>
+<rect x="380" y="128" width="240" height="52" rx="6" fill="var(--code-bg)" stroke="var(--fg-muted)" stroke-width="1"/>
+<text x="500" y="150" text-anchor="middle" font-family="Inter,system-ui,sans-serif" font-size="13" font-weight="600" fill="var(--fg)">Audit log</text>
+<text x="500" y="168" text-anchor="middle" font-family="'JetBrains Mono',ui-monospace,monospace" font-size="9" fill="var(--fg-muted)">cause + origin (file:line)</text>
+</svg>
+<figcaption>A plain error returned from a handler collapses to a 500; either way the cause reaches the audit log, never the client.</figcaption>
+</figure>
 
-That's the whole model. Below: how to use it well.
+## The basic pattern
 
----
-
-## The happy path
+Translate a lower-level error into a status and a public message at the point where you know what it means.
 
 ```go
 func (c *UsersController) Get(ctx context.Context, req *bosun.Req[GetIn]) (UserOut, error) {
@@ -26,89 +43,32 @@ func (c *UsersController) Get(ctx context.Context, req *bosun.Req[GetIn]) (UserO
 }
 ```
 
-The client sees:
+The client receives `404` with `{"error":"user not found"}`. The audit event records the same status, the full error including the cause, and the file and line where `bosun.E` was called.
 
-```http
-HTTP/1.1 404 Not Found
-Content-Type: application/json
+## What bosun.E records
 
-{"error":"user not found"}
-```
+`bosun.E(status, msg, cause)` returns an `*Error` that satisfies the `error` interface. The status is returned to the client, the message becomes the response body `{"error": msg}`, and the cause is recorded for the audit log but never sent to the client (pass `nil` when there is none). `E` also captures the file, line, and function of its own call site, which becomes the `error_origin` in the audit event: exactly the location to look at when triaging a production error.
 
-The audit event records:
-
-```json
-{
-  "status": 404,
-  "error": "user not found: record not found",
-  "error_origin": "users.go:42 (myapp/users.(*UsersController).Get)"
-}
-```
-
-Public message → response. Full cause + origin → audit only.
-
----
-
-## `bosun.E` anatomy
+Because `*Error` is a normal error, it composes with `errors.Is` and `errors.As`, and it can be built deep in a service and returned unchanged through the handler.
 
 ```go
-type Error struct {
-    Status int
-    Msg    string
-    Cause  error
-    // origin is captured automatically (file:line + function)
-}
-
-func E(status int, msg string, cause error) *Error
-```
-
-- `status` — HTTP status returned to the client.
-- `msg` — public message in the response body (`{"error": msg}`).
-- `cause` — the underlying error. Captured in the audit log; never sent
-  to the client. Pass `nil` if there is no cause.
-
-`E()` walks one stack frame up and records the file, line, and function
-where `E()` was called. That's the `error_origin` in the audit event —
-exactly the location to grep for when triaging a production error.
-
----
-
-## Returning structured errors
-
-`*bosun.Error` satisfies `error`, so it composes with `errors.Is` and
-`errors.As`. You can also build errors deeper in the call stack and let
-them propagate:
-
-```go
-// service layer
 func (r *UserRepo) Find(ctx context.Context, id int) (*User, error) {
     var u User
     if err := r.db.WithContext(ctx).First(&u, id).Error; err != nil {
         if errors.Is(err, gorm.ErrRecordNotFound) {
             return nil, bosun.E(http.StatusNotFound, "user not found", err)
         }
-        return nil, err  // bare error → 500
+        return nil, err // a bare error becomes a 500
     }
     return &u, nil
 }
-
-// handler — just return whatever the repo gave you
-func (c *UsersController) Get(ctx context.Context, req *bosun.Req[GetIn]) (UserOut, error) {
-    u, err := c.Repo.Find(ctx, req.Body.ID)
-    if err != nil { return UserOut{}, err }   // 404 if repo built one, 500 otherwise
-    return UserOut{ID: u.ID}, nil
-}
 ```
 
-Note: building `*bosun.Error` deep in your service layer couples it to
-HTTP. For domain-pure services, return sentinel errors (`ErrNotFound`,
-`ErrConflict`) from the service and translate at the handler boundary.
+Building `*bosun.Error` inside a service couples that service to HTTP. For domain-pure services, return sentinel errors and translate them at the handler boundary instead.
 
----
+## Centralizing the mapping
 
-## Error helpers — patterns that scale
-
-### Centralize the mapping
+Most applications grow one function that turns storage errors into HTTP errors, and call it from every handler.
 
 ```go
 func mapDBErr(err error) error {
@@ -117,129 +77,44 @@ func mapDBErr(err error) error {
         return bosun.E(http.StatusNotFound, "not found", err)
     case isUniqueViolation(err):
         return bosun.E(http.StatusConflict, "already exists", err)
-    case errors.Is(err, context.Canceled):
-        return bosun.E(499, "client closed request", err)
     default:
         return bosun.E(http.StatusInternalServerError, "db error", err)
     }
 }
-
-func (c *UsersController) Create(ctx context.Context, req *bosun.Req[CreateUserIn]) (UserOut, error) {
-    u, err := c.Repo.Create(ctx, req.Body)
-    if err != nil { return UserOut{}, mapDBErr(err) }
-    return UserOut{ID: u.ID}, nil
-}
 ```
 
-### Bubble validation errors
+## What never reaches the client
+
+The cause passed to `bosun.E` is captured in the audit event but never in the response. A plain error returned from a handler is collapsed to `"internal server error"`. The intent is that the client-facing response is chosen by the handler author, not determined by wherever in the call stack an error arose.
+
+## Panics
+
+The typed adapter does not call `recover`, so a panic in a handler is logged by `net/http` and served as an empty 500. To guarantee a JSON 500 and capture a stack trace, add a recover middleware and attach it where you want the safety net.
 
 ```go
-type ValidationError struct{ Field, Reason string }
+type Recover struct{}
 
-func (e ValidationError) Error() string { return e.Field + ": " + e.Reason }
-
-func (c *UsersController) Create(ctx context.Context, req *bosun.Req[CreateUserIn]) (UserOut, error) {
-    if req.Body.Email == "" {
-        return UserOut{}, bosun.E(http.StatusUnprocessableEntity, "email is required",
-            ValidationError{Field: "email", Reason: "empty"})
-    }
-    ...
+func (Recover) Handle(next http.Handler) http.Handler {
+    return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+        defer func() {
+            if rv := recover(); rv != nil {
+                log.Printf("panic: %v\n%s", rv, debug.Stack())
+                http.Error(w, `{"error":"internal server error"}`, http.StatusInternalServerError)
+            }
+        }()
+        next.ServeHTTP(w, r)
+    })
 }
+
+var _ = bosun.Middleware[Recover]()
 ```
 
-The audit record sees the typed validation error; the client sees only
-`"email is required"`.
+## Declaring statuses for OpenAPI
 
----
-
-## Status code table
-
-These cover ~99% of usage:
-
-| Status | When to use                                              |
-|--------|----------------------------------------------------------|
-| 400    | Malformed request (bad JSON, invalid path param)         |
-| 401    | Missing or invalid auth credentials                      |
-| 403    | Authenticated but not allowed                            |
-| 404    | Resource doesn't exist                                   |
-| 409    | Conflict (duplicate, optimistic-lock failure)            |
-| 410    | Resource permanently gone                                |
-| 422    | Well-formed but semantically invalid (validation)         |
-| 429    | Rate limited                                              |
-| 500    | Anything you didn't handle — let Bosun produce this      |
-
-For unknown statuses or anything dynamic, the integer works the same way:
-`bosun.E(418, "i'm a teapot", nil)`.
-
----
-
-## Declaring extra statuses for OpenAPI
-
-OpenAPI generation reads `RouteInfo.Declared` for routes whose statuses
-can't be inferred from source. Use `bosun.Errors(...)`:
+OpenAPI generation infers `200` and any statically visible `bosun.E` calls, but it cannot see a status your handler computes at runtime. Declare those with `bosun.Errors` on the route so they appear in the generated spec.
 
 ```go
 bosun.Post(r, "/things", c.Create,
     bosun.Errors(http.StatusConflict, http.StatusGone),
 )
 ```
-
-`200` and any statically-visible `bosun.E(...)` calls are picked up
-automatically; this is for runtime-computed codes.
-
----
-
-## What never leaks to the client
-
-- The `cause` passed to `bosun.E` — captured in audit, never in response.
-- Plain `error` values returned from a handler — collapsed to
-  `"internal server error"`.
-- Panics inside a typed handler — the adapter doesn't recover; configure a
-  recover middleware at the controller or app level if you want one.
-
-The intent is: client responses are determined by the handler author, not
-by where in the call stack an error happened.
-
----
-
-## Auditing errors
-
-If you've registered a `bosun.Auditor`, every typed request emits an
-`AuditEvent`. Errored requests carry:
-
-- `Err` — the full error string (including `cause`).
-- `ErrOrigin` — `file:line (func)` of the `bosun.E(...)` call, when
-  applicable.
-
-That's enough to pinpoint the raising location without log scraping. See
-[`typed-handlers.md`](./typed-handlers.md#auditing).
-
----
-
-## Panics
-
-The typed adapter does not `recover()`. A panic in a handler crashes the
-goroutine handling that request — `net/http` will log it and serve an
-empty `500` to the client.
-
-If you want a guaranteed `500` JSON response and a captured stack trace,
-add a recover middleware at the app or controller level:
-
-```go
-type Recover struct{}
-func (Recover) Handle(next http.Handler) http.Handler {
-    return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-        defer func() {
-            if rv := recover(); rv != nil {
-                log.Printf("panic: %v\n%s", rv, debug.Stack())
-                http.Error(w, `{"error":"internal server error"}`, 500)
-            }
-        }()
-        next.ServeHTTP(w, r)
-    })
-}
-var _ = bosun.Middleware[Recover]()
-```
-
-Attach app-wide via every controller declaration, or only on the
-controllers where you want the safety net.

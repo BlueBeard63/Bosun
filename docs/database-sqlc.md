@@ -1,145 +1,54 @@
 # sqlc integration
 
-sqlc generates type-safe Go from raw SQL. The integration with Bosun is
-the same pattern as GORM: register the connection and the generated
-`*Queries` as instances on the registry, then inject into services.
-
----
+sqlc generates type-safe Go from raw SQL, and it fits Bosun the same way GORM does: register the connection and the generated `*Queries` as instances on the registry, then inject them into services. This guide shows the wiring, transactions, and testing.
 
 ## Setup
 
-### 1. Generate the queries
-
-`sqlc.yaml`:
-
-```yaml
-version: "2"
-sql:
-  - engine: "postgresql"
-    schema: "db/migrations"
-    queries: "db/queries"
-    gen:
-      go:
-        package: "dbq"
-        out: "db/dbq"
-        sql_package: "pgx/v5"
-```
-
-```sql
--- db/queries/users.sql
--- name: GetUser :one
-SELECT id, email, name FROM users WHERE id = $1;
-
--- name: CreateUser :one
-INSERT INTO users (email, name) VALUES ($1, $2) RETURNING id, email, name;
-```
-
-Run `sqlc generate`. You now have `db/dbq/{db.go, querier.go, users.sql.go}`.
-
-### 2. Open a pool + register both
+After running `sqlc generate`, open a connection pool and register both the pool and the generated `*Queries` struct. Register the pool as well as the queries so transactional paths can begin a transaction on it.
 
 ```go
-package main
-
-import (
-    "context"
-    "log"
-    "os"
-
-    "github.com/amberstack/bosun"
-    "github.com/amberstack/bosun/registry"
-    "github.com/jackc/pgx/v5/pgxpool"
-
-    "myapp/db/dbq"
-)
-
 func main() {
     pool, err := pgxpool.New(context.Background(), os.Getenv("DATABASE_URL"))
-    if err != nil { log.Fatal(err) }
-
+    if err != nil {
+        log.Fatal(err)
+    }
     queries := dbq.New(pool)
 
     app := bosun.New()
-    registry.RegisterInstance[*pgxpool.Pool](app.Reg, pool)   // for transactions
-    registry.RegisterInstance[*dbq.Queries](app.Reg, queries) // for plain reads/writes
-
+    registry.RegisterInstance[*pgxpool.Pool](app.Reg, pool)
+    registry.RegisterInstance[*dbq.Queries](app.Reg, queries)
     log.Fatal(app.Run(":8080"))
 }
 ```
 
-### 3. Inject into a repo
+Inject `*dbq.Queries` into a repository just like any other service, and pass the handler's context through so sqlc gets cancellation and deadlines.
 
 ```go
 type UserRepo struct {
-    q *dbq.Queries
+    q *dbq.Queries // injected
 }
 
 func (r *UserRepo) Get(ctx context.Context, id int64) (*dbq.User, error) {
     u, err := r.q.GetUser(ctx, id)
-    if err != nil { return nil, err }
+    if err != nil {
+        return nil, err
+    }
     return &u, nil
 }
 
 var _ = bosun.Service[UserRepo]()
 ```
 
-`*dbq.Queries` is the sqlc-generated struct; Bosun injects the registered
-instance via the field type, just like any other service.
-
----
-
-## Handler glue
-
-```go
-type GetIn struct { ID int64 `path:"id"` }
-type UserOut struct {
-    ID    int64  `json:"id"`
-    Email string `json:"email"`
-    Name  string `json:"name"`
-}
-
-type UsersController struct {
-    Repo *UserRepo
-}
-
-var _ = bosun.Controller[UsersController]("/users")
-
-func (c *UsersController) Routes(r *bosun.Router) {
-    bosun.Get(r, "/:id", c.Get)
-}
-
-func (c *UsersController) Get(ctx context.Context, req *bosun.Req[GetIn]) (UserOut, error) {
-    u, err := c.Repo.Get(ctx, req.Body.ID)
-    if err != nil {
-        if errors.Is(err, pgx.ErrNoRows) {
-            return UserOut{}, bosun.E(http.StatusNotFound, "user not found", err)
-        }
-        return UserOut{}, bosun.E(http.StatusInternalServerError, "lookup failed", err)
-    }
-    return UserOut{ID: u.ID, Email: u.Email, Name: u.Name}, nil
-}
-```
-
-`req.Body.ID` is the bound path parameter; `ctx` flows into sqlc for
-cancellation and deadlines.
-
----
-
 ## Transactions
 
-sqlc's pattern: open a tx on the pool, then `*Queries{}.WithTx(tx)`:
+Follow sqlc's pattern: begin a transaction on the pool, bind the queries to it with `WithTx`, and commit at the end. The injected pool is what makes this possible from a service.
 
 ```go
-type Billing struct {
-    Pool *pgxpool.Pool   // injected
-    Q    *dbq.Queries    // for read-only paths
-}
-
-var _ = bosun.Service[Billing]()
-
 func (b *Billing) Charge(ctx context.Context, userID, cents int64) error {
     tx, err := b.Pool.Begin(ctx)
-    if err != nil { return err }
+    if err != nil {
+        return err
+    }
     defer tx.Rollback(ctx)
 
     q := b.Q.WithTx(tx)
@@ -153,37 +62,22 @@ func (b *Billing) Charge(ctx context.Context, userID, cents int64) error {
 }
 ```
 
----
-
 ## Hiding sqlc behind an interface
 
-Services that care about behavior, not the SQL implementation, depend on
-an interface. Tests swap a fake; sqlc is just one implementation:
+Depend on an interface where business code cares about behavior rather than the SQL implementation, and bind the sqlc implementation with `bosun.DefaultBind`. Tests then swap a fake with `registry.RegisterInstance`.
 
 ```go
-// repo.go
 type Users interface {
     Get(ctx context.Context, id int64) (*User, error)
-    Create(ctx context.Context, in CreateUserIn) (*User, error)
 }
-
-// repo_sqlc.go
-type SqlcUsers struct{ q *dbq.Queries }
-func (r *SqlcUsers) Get(...) ...
-func (r *SqlcUsers) Create(...) ...
 
 var _ = bosun.Service[SqlcUsers]()
 var _ = bosun.DefaultBind[Users, SqlcUsers]()
 ```
 
-Now any service with a `Users` field gets `*SqlcUsers`; tests can override
-with `registry.RegisterInstance[Users](app.Reg, &stubUsers{})`.
-
----
-
 ## Mapping errors
 
-Catalogue the sqlc/pgx errors you care about and translate to `bosun.E`:
+Catalogue the pgx and sqlc errors you care about and translate them at the handler boundary so internal causes never reach the client. The [errors guide](./errors.md) covers this in general.
 
 ```go
 func mapErr(err error) error {
@@ -198,57 +92,18 @@ func mapErr(err error) error {
 }
 ```
 
-Use it at the handler boundary so internal causes never leak to clients.
+## Migrations and shutdown
 
----
-
-## Graceful shutdown
+sqlc does not apply migrations, so pair it with a tool such as goose or golang-migrate and run migrations as a pre-start step in `main`; a failed migration should crash the process rather than start the server. For shutdown, register a small closer that calls `pool.Close()`, and `app.Shutdown()` will invoke it in reverse dependency order.
 
 ```go
 type PoolCloser struct{ p *pgxpool.Pool }
+
 func (c *PoolCloser) Close() error { c.p.Close(); return nil }
 
 registry.RegisterInstance[*PoolCloser](app.Reg, &PoolCloser{p: pool})
 ```
 
-`app.Shutdown()` calls `Close()` on every registered `io.Closer` in reverse
-dependency order.
-
----
-
-## Migrations
-
-sqlc doesn't apply migrations — pair it with `goose`, `golang-migrate`, or
-`atlas`. Run migrations as a pre-start step in `main`:
-
-```go
-if err := goose.Up(stdDB, "db/migrations"); err != nil { log.Fatal(err) }
-```
-
-Then start the app. Failed migrations should crash the process, not run
-the server.
-
----
-
 ## Testing
 
-Spin up `pgx`/`pgxpool` against a test database (or use `pgxmock`), build
-`*dbq.Queries` against it, and register both as instances on a fresh
-`App`:
-
-```go
-func TestUsersGet(t *testing.T) {
-    pool := testPool(t)
-    q := dbq.New(pool)
-
-    app := bosun.New()
-    registry.RegisterInstance[*pgxpool.Pool](app.Reg, pool)
-    registry.RegisterInstance[*dbq.Queries](app.Reg, q)
-    if err := app.Start(); err != nil { t.Fatal(err) }
-
-    rec := httptest.NewRecorder()
-    req := httptest.NewRequest("GET", "/users/1", nil)
-    app.Mux.ServeHTTP(rec, req)
-    // assert rec.Code / rec.Body
-}
-```
+Build `*dbq.Queries` against a test pool (or a mock), register both instances on a fresh `App`, and drive `app.Mux` with `httptest`, exactly as in the [testing guide](./testing.md).

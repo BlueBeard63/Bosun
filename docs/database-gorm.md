@@ -1,184 +1,43 @@
 # GORM integration
 
-> Looking for a generic `Repo[T]` with CRUD, a chainable query builder, and
-> cross-repo transactions? See the [repo module](./repo.md). The page below
-> covers the bare-metal pattern of injecting `*gorm.DB` directly and writing
-> per-domain repo structs by hand.
-
-Bosun has no opinions about your data layer. You register `*gorm.DB` as an
-instance on the registry; services that need it declare a `*gorm.DB` field
-and the framework wires it.
-
----
+Bosun has no opinion about your data layer. You register `*gorm.DB` as an instance on the registry, and any service that declares a `*gorm.DB` field receives it. This guide covers the bare-metal pattern of injecting GORM directly and writing per-domain repository structs by hand. If you would rather have a generic `Repo[T]` with CRUD, a chainable query builder, and cross-repo transactions, use the [repo module](./repo.md) instead.
 
 ## Setup
 
-### 1. Open the DB and register it
+Open the database and register the handle in `main`; that single line makes `*gorm.DB` available everywhere. Then inject it into a repository service, and inject that service into a controller.
 
 ```go
-package main
-
-import (
-    "log"
-
-    "github.com/amberstack/bosun"
-    "github.com/amberstack/bosun/registry"
-    "gorm.io/driver/postgres"
-    "gorm.io/gorm"
-)
-
 func main() {
     db, err := gorm.Open(postgres.Open("host=localhost user=app dbname=app sslmode=disable"))
-    if err != nil { log.Fatal(err) }
-
+    if err != nil {
+        log.Fatal(err)
+    }
     app := bosun.New()
     registry.RegisterInstance[*gorm.DB](app.Reg, db)
-
     log.Fatal(app.Run(":8080"))
 }
 ```
 
-That single `RegisterInstance` line makes `*gorm.DB` available everywhere.
-
-### 2. Inject into services
-
 ```go
 type UserRepo struct {
-    db *gorm.DB    // injected
+    db *gorm.DB // injected
 }
 
-func (r *UserRepo) Find(id int) (*User, error) {
-    var u User
-    if err := r.db.First(&u, id).Error; err != nil { return nil, err }
-    return &u, nil
-}
-
-var _ = bosun.Service[UserRepo]()
-```
-
-### 3. Inject into the controller
-
-```go
-type UsersController struct {
-    Repo *UserRepo
-}
-
-var _ = bosun.Controller[UsersController]("/users")
-
-func (c *UsersController) Routes(r *bosun.Router) {
-    bosun.Get(r, "/:id", c.Get)
-}
-
-func (c *UsersController) Get(ctx context.Context, req *bosun.Req[GetIn]) (UserOut, error) {
-    u, err := c.Repo.Find(req.Body.ID)
-    if err != nil {
-        if errors.Is(err, gorm.ErrRecordNotFound) {
-            return UserOut{}, bosun.E(http.StatusNotFound, "user not found", err)
-        }
-        return UserOut{}, bosun.E(http.StatusInternalServerError, "lookup failed", err)
-    }
-    return UserOut{ID: u.ID, Name: u.Name}, nil
-}
-```
-
----
-
-## Models
-
-Standard GORM. Nothing Bosun-specific:
-
-```go
-type User struct {
-    ID        uint      `gorm:"primaryKey"`
-    Email     string    `gorm:"uniqueIndex;not null"`
-    Name      string
-    CreatedAt time.Time
-}
-```
-
-Auto-migrate on startup:
-
-```go
-db.AutoMigrate(&User{}, &Org{})
-```
-
----
-
-## Putting it together: typed in/out + GORM
-
-```go
-type CreateUserIn struct {
-    Email string `json:"email"`
-    Name  string `json:"name"`
-}
-
-type UserOut struct {
-    ID    uint   `json:"id"`
-    Email string `json:"email"`
-    Name  string `json:"name"`
-}
-
-type UserRepo struct {
-    db *gorm.DB
-}
-
-func (r *UserRepo) Create(in CreateUserIn) (*User, error) {
-    u := &User{Email: in.Email, Name: in.Name}
-    return u, r.db.Create(u).Error
-}
-
-var _ = bosun.Service[UserRepo]()
-
-type UsersController struct {
-    Repo *UserRepo
-}
-
-var _ = bosun.Controller[UsersController]("/users")
-
-func (c *UsersController) Routes(r *bosun.Router) {
-    bosun.Post(r, "/", c.Create)
-}
-
-func (c *UsersController) Create(ctx context.Context, req *bosun.Req[CreateUserIn]) (UserOut, error) {
-    u, err := c.Repo.Create(req.Body)
-    if err != nil {
-        if isUniqueViolation(err) {
-            return UserOut{}, bosun.E(http.StatusConflict, "email already in use", err)
-        }
-        return UserOut{}, bosun.E(http.StatusInternalServerError, "create failed", err)
-    }
-    return UserOut{ID: u.ID, Email: u.Email, Name: u.Name}, nil
-}
-```
-
----
-
-## Request-scoped DB sessions
-
-GORM's `db.WithContext(ctx)` carries the request context into queries (for
-deadlines, cancellation, tracing). Make it a habit at the repo boundary:
-
-```go
 func (r *UserRepo) Find(ctx context.Context, id int) (*User, error) {
     var u User
     return &u, r.db.WithContext(ctx).First(&u, id).Error
 }
+
+var _ = bosun.Service[UserRepo]()
 ```
 
-Pass `ctx` from your handler:
+## Request-scoped sessions
 
-```go
-func (c *UsersController) Get(ctx context.Context, req *bosun.Req[GetIn]) (UserOut, error) {
-    u, err := c.Repo.Find(ctx, req.Body.ID)
-    ...
-}
-```
-
----
+Carry the request context into every query with `db.WithContext(ctx)`, so deadlines, cancellation, and tracing propagate. Make it a habit at the repository boundary and pass the handler's `ctx` down to it.
 
 ## Transactions
 
-GORM's `db.Transaction(func(tx *gorm.DB) error { ... })` works as usual:
+GORM's `db.Transaction` works as usual. Return an error to roll back, and let Bosun map the error at the handler boundary: `bosun.E(http.StatusConflict, ...)` for a known business error, or a plain error for a 500.
 
 ```go
 func (s *Billing) Charge(ctx context.Context, userID uint, cents int) error {
@@ -192,68 +51,45 @@ func (s *Billing) Charge(ctx context.Context, userID uint, cents int) error {
 }
 ```
 
-Return errors and Bosun maps them: `bosun.E(http.StatusConflict, ...)` for
-known business errors, plain errors for `500`s.
+## Hiding GORM behind an interface
 
----
-
-## Tip: hide GORM behind a repo interface
-
-If you might swap GORM later (sqlc, sqlx, raw `database/sql`), depend on
-an interface in business code and inject the GORM implementation:
+If you might swap the data layer later, depend on an interface in business code and bind the GORM implementation with `bosun.DefaultBind`. Services then depend on the interface, and tests swap in a stub with `registry.RegisterInstance`.
 
 ```go
 type Users interface {
     Find(ctx context.Context, id int) (*User, error)
-    Create(ctx context.Context, in CreateUserIn) (*User, error)
 }
-
-// repo_gorm.go
-type GormUsers struct{ db *gorm.DB }
-func (r *GormUsers) Find(...) ...
-func (r *GormUsers) Create(...) ...
 
 var _ = bosun.Service[GormUsers]()
 var _ = bosun.DefaultBind[Users, GormUsers]()
 ```
 
-Services depend on the `Users` interface; tests swap in a stub via
-`registry.RegisterInstance[Users](app.Reg, stub)`.
-
----
-
 ## Graceful shutdown
 
-GORM doesn't expose `Close()` on `*gorm.DB`; grab the underlying
-`*sql.DB`:
+`*gorm.DB` has no `Close`, so wrap the underlying `*sql.DB` in a small closer and register it. `app.Shutdown()` calls `Close` on every registered `io.Closer` in reverse dependency order.
 
 ```go
 type GormCloser struct{ db *gorm.DB }
+
 func (c *GormCloser) Close() error {
     sqlDB, err := c.db.DB()
-    if err != nil { return err }
+    if err != nil {
+        return err
+    }
     return sqlDB.Close()
 }
 
 registry.RegisterInstance[*GormCloser](app.Reg, &GormCloser{db: db})
 ```
 
-`app.Shutdown()` calls `Close()` on every registered service implementing
-`io.Closer`, in reverse dependency order.
+## Audit redaction with models
 
----
-
-## Audit redaction with GORM models
-
-GORM models often have fields like `PasswordHash` or `APIKey`. Bosun's
-audit redactor walks `req.Body` and the response value — if you return a
-model directly, those fields get redacted by name (`password`/`apikey`
-matches). For other sensitive fields tag explicitly:
+The audit redactor walks `req.Body` and the response value, so a model field named `password` or `apikey` is redacted automatically when you return the model. Tag any other sensitive field with `audit:"-"`.
 
 ```go
 type User struct {
-    ID       uint
-    Email    string
-    Secret   string `audit:"-"`
+    ID     uint
+    Email  string
+    Secret string `audit:"-"`
 }
 ```

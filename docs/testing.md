@@ -1,99 +1,51 @@
 # Testing
 
-You can drive a Bosun app from a Go test by constructing the `App`,
-registering stubs, calling `Start()`, and then hitting `app.Mux` through
-`httptest`. No process boundary, no network.
+You drive a Bosun app from a Go test by constructing the `App`, registering stubs, calling `Start()`, and hitting `app.Mux` through `httptest`. There is no process boundary and no network. This works because `registry.RegisterInstance[T]` beats any `bosun.Service[T]` or `bosun.Default[T]` declaration, so a stub registered first always wins, and `app.Mux` is a plain `*http.ServeMux` that `httptest` drives directly.
 
----
-
-## A handler test, end to end
+## A handler test end to end
 
 ```go
-package users_test
-
-import (
-    "net/http"
-    "net/http/httptest"
-    "strings"
-    "testing"
-
-    "github.com/amberstack/bosun"
-    "github.com/amberstack/bosun/registry"
-
-    "myapp/users"
-)
-
-type stubRepo struct{}
-func (*stubRepo) Find(id int) (*users.User, error) {
-    return &users.User{ID: id, Name: "Jack"}, nil
-}
-
 func TestUsersGet(t *testing.T) {
     app := bosun.New()
-
-    // override the real repo with a stub
-    registry.RegisterInstance[users.Repo](app.Reg, &stubRepo{})
-
-    if err := app.Start(); err != nil { t.Fatal(err) }
+    registry.RegisterInstance[users.Repo](app.Reg, &stubRepo{}) // override the real repo
+    if err := app.Start(); err != nil {
+        t.Fatal(err)
+    }
 
     rec := httptest.NewRecorder()
-    req := httptest.NewRequest(http.MethodGet, "/users/1", nil)
-    app.Mux.ServeHTTP(rec, req)
+    app.Mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/users/1", nil))
 
-    if rec.Code != 200 { t.Fatalf("status %d: %s", rec.Code, rec.Body) }
+    if rec.Code != 200 {
+        t.Fatalf("status %d: %s", rec.Code, rec.Body)
+    }
     if !strings.Contains(rec.Body.String(), `"id":1`) {
         t.Fatalf("body = %s", rec.Body)
     }
 }
 ```
 
-Key points:
-
-- `registry.RegisterInstance[T]` wins over any `bosun.Service[T]` /
-  `bosun.Default[T]` declaration. Stubs go in first.
-- `app.Mux` is a plain `*http.ServeMux` — `httptest` drives it directly,
-  no listener needed.
-
----
-
-## Tightening the registry: depend on interfaces
-
-If `UsersController` injects a `Repo` interface (not `*GormRepo`), the
-stub above is trivial. Pattern:
+The stub is trivial to write when a controller depends on an interface rather than a concrete type. Have the production code bind the real implementation with `bosun.DefaultBind`, and let the test register the stub.
 
 ```go
-// repo.go
 type Repo interface {
     Find(id int) (*User, error)
-    Create(in CreateUserIn) (*User, error)
 }
-
-// repo_gorm.go
-type GormRepo struct{ db *gorm.DB }
-func (r *GormRepo) Find(id int) (*User, error) { ... }
-func (r *GormRepo) Create(in CreateUserIn) (*User, error) { ... }
 
 var _ = bosun.Service[GormRepo]()
 var _ = bosun.DefaultBind[Repo, GormRepo]()
 ```
 
-Production: `Repo` resolves to `*GormRepo`. Tests register a stub:
-
 ```go
 registry.RegisterInstance[Repo](app.Reg, &stubRepo{})
 ```
 
----
+## Asserting on audit events
 
-## Capturing audit events in tests
-
-If your code path triggers `bosun.E(...)`, register a capturing
-auditor and assert against the events:
+To test behavior that is not visible in the response (the cause of an error, or its origin), register a capturing auditor and assert on the events it collects. The audit event carries the full cause and the `bosun.E` origin.
 
 ```go
-type capAuditor struct {
-    events []bosun.AuditEvent
-}
+type capAuditor struct{ events []bosun.AuditEvent }
+
 func (a *capAuditor) Audit(ctx context.Context, ev bosun.AuditEvent) {
     a.events = append(a.events, ev)
 }
@@ -104,58 +56,18 @@ func TestUnauthorizedAudit(t *testing.T) {
     registry.RegisterInstance[bosun.Auditor](app.Reg, aud)
     app.Start()
 
-    rec := httptest.NewRecorder()
-    req := httptest.NewRequest("POST", "/login", strings.NewReader(`{"email":"x","password":"bad"}`))
-    req.Header.Set("Content-Type", "application/json")
-    app.Mux.ServeHTTP(rec, req)
+    // ...drive a request that fails auth...
 
     last := aud.events[len(aud.events)-1]
-    if last.Status != 401 { t.Fatalf("audit status = %d", last.Status) }
-    if !strings.Contains(last.ErrOrigin, "auth.go") {
-        t.Fatalf("origin = %q", last.ErrOrigin)
+    if last.Status != 401 {
+        t.Fatalf("audit status = %d", last.Status)
     }
 }
 ```
 
-The audit event carries the full cause + the `bosun.E(...)` origin —
-useful for asserting on internals that aren't visible in the response.
+## Testing middleware in isolation
 
----
-
-## Middleware tests
-
-Middleware is just a registered type. Wrap a simple sink:
-
-```go
-func TestRequireAuthBlocksUnauthenticated(t *testing.T) {
-    app := bosun.New()
-    registry.RegisterInstance[*Sessions](app.Reg, &emptySessions{})
-    app.Start()
-
-    mw, err := registry.Resolve[*RequireAuth](app.Reg)
-    if err != nil { t.Fatal(err) }
-
-    h := mw.Handle(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-        t.Fatal("should not reach handler")
-    }))
-
-    rec := httptest.NewRecorder()
-    req := httptest.NewRequest("GET", "/", nil)
-    h.ServeHTTP(rec, req)
-
-    if rec.Code != 403 { t.Fatalf("status = %d", rec.Code) }
-}
-```
-
-Or, drive it through the full app and assert on the response.
-
----
-
-## Testing typed context values
-
-If your middleware attaches `bosun.WithValue(ctx, user)`, downstream
-handlers retrieve it via `bosun.Value[User](ctx)`. To unit-test a
-middleware in isolation, install a verification handler:
+Middleware is a registered type, so resolve it from the registry, wrap a verification handler, and drive it directly. This is how you assert both that a middleware blocks a request and that it attaches the expected typed context value.
 
 ```go
 func TestRequireAuthAttachesUser(t *testing.T) {
@@ -174,54 +86,24 @@ func TestRequireAuthAttachesUser(t *testing.T) {
     req.Header.Set("Authorization", "Bearer ok")
     h.ServeHTTP(httptest.NewRecorder(), req)
 
-    if seen == nil || seen.ID != 1 { t.Fatalf("user not attached: %+v", seen) }
+    if seen == nil || seen.ID != 1 {
+        t.Fatalf("user not attached: %+v", seen)
+    }
 }
 ```
 
----
-
 ## Database tests
 
-Two common patterns:
+Two patterns cover most cases. For a repository package, prefer a real database (a containerized Postgres or an in-memory SQLite) migrated in setup, so the SQL is exercised for real. For a controller or service test where the SQL does not matter, stub the repo interface, which is fast and isolated. Pick per package.
 
-### Real DB (preferred for repo tests)
+## Cleanup and shutdown
 
-Use a containerized Postgres (`testcontainers-go`) or a local test DB.
-Migrate on `t.Setup`, register the real `*gorm.DB` / `*pgxpool.Pool`, and
-run handlers end-to-end. Slow but high-fidelity.
-
-### In-memory stub
-
-For controller-level tests where you don't care about the SQL, stub the
-repo interface as shown above. Fast and isolated.
-
-Pick per package: repo packages get real-DB tests, handlers and services
-get stubs.
-
----
-
-## Goroutine leaks and shutdown
-
-If your service spins a background goroutine in `Init()` (e.g. the config
-watcher), call `app.Shutdown()` in `t.Cleanup` so it doesn't leak into
-subsequent tests:
+If a service starts a background goroutine in `Init()` (the config watcher, an event consumer, an outbox relay), call `app.Shutdown()` in `t.Cleanup` so it does not leak into later tests. `Shutdown` closes every registered `io.Closer` in reverse dependency order.
 
 ```go
 t.Cleanup(func() { _ = app.Shutdown() })
 ```
 
-`Shutdown` calls `Close()` on every registered `io.Closer` in reverse
-dependency order.
+## A note on shared state
 
----
-
-## Parallel tests
-
-Bosun maintains some package-level state (the route index, pending service
-registrations) that lives across tests. Within one process they're
-append-only and safe to share; just be aware that `bosun.TypedRoutes()`
-returns the cumulative list, not per-app.
-
-If you need fully isolated apps, run each test in its own process (or
-just don't share `App` instances — each `New()` is independent for
-runtime state).
+Bosun keeps some package-level state across tests, notably the route index and the pending registrations. Within one process these are append-only and safe to share, but `bosun.TypedRoutes()` returns the cumulative list rather than a per-app one. Each `bosun.New()` is independent for runtime state, so avoid sharing a single `App` between tests that need isolation.

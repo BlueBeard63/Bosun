@@ -1,26 +1,42 @@
 # Form handling
 
-Bosun decodes form-encoded bodies (`application/x-www-form-urlencoded` and
-`multipart/form-data`) automatically when the handler's `In` type is a
-struct. Per-field binding uses the `form:` tag.
+Bosun decodes form-encoded bodies automatically when the handler's `In` type is a struct, binding each field through its `form:` tag. This applies to both `application/x-www-form-urlencoded` and the text fields of `multipart/form-data`. File payloads are read separately; see the [files guide](./files.md).
 
----
+<figure class="diagram">
+<svg viewBox="0 0 700 240" role="img" aria-labelledby="fm-title fm-desc" xmlns="http://www.w3.org/2000/svg">
+<title id="fm-title">How the body is decoded</title>
+<desc id="fm-desc">The request content type selects the decoder: JSON bodies are decoded into the struct, form-encoded bodies populate form tags, and other types skip body decoding.</desc>
+<defs>
+<marker id="fm-arw" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="var(--fg-muted)"/></marker>
+</defs>
+<line x1="190" y1="76" x2="368" y2="76" stroke="var(--fg-muted)" stroke-width="1" marker-end="url(#fm-arw)"/>
+<line x1="190" y1="132" x2="368" y2="132" stroke="var(--fg-muted)" stroke-width="1" marker-end="url(#fm-arw)"/>
+<line x1="190" y1="188" x2="368" y2="188" stroke="var(--fg-muted)" stroke-width="1" marker-end="url(#fm-arw)"/>
+<text x="279" y="68" text-anchor="middle" font-family="'JetBrains Mono',ui-monospace,monospace" font-size="8" letter-spacing="0.06em" fill="var(--fg-muted)">JSON / EMPTY</text>
+<text x="279" y="124" text-anchor="middle" font-family="'JetBrains Mono',ui-monospace,monospace" font-size="8" letter-spacing="0.06em" fill="var(--fg-muted)">FORM-ENCODED</text>
+<text x="279" y="180" text-anchor="middle" font-family="'JetBrains Mono',ui-monospace,monospace" font-size="8" letter-spacing="0.06em" fill="var(--fg-muted)">OTHER</text>
+<rect x="20" y="44" width="170" height="152" rx="6" fill="var(--code-bg)" stroke="var(--fg-muted)" stroke-width="1"/>
+<text x="105" y="116" text-anchor="middle" font-family="Inter,system-ui,sans-serif" font-size="13" font-weight="600" fill="var(--fg)">Content-Type</text>
+<text x="105" y="134" text-anchor="middle" font-family="'JetBrains Mono',ui-monospace,monospace" font-size="9" fill="var(--fg-muted)">of the request</text>
+<rect x="370" y="54" width="290" height="44" rx="6" fill="var(--bg)" stroke="var(--fg)" stroke-width="1"/>
+<text x="515" y="81" text-anchor="middle" font-family="Inter,system-ui,sans-serif" font-size="13" font-weight="600" fill="var(--fg)">JSON decode into Body</text>
+<rect x="370" y="110" width="290" height="44" rx="6" fill="var(--accent-soft)" stroke="var(--accent)" stroke-width="1"/>
+<text x="515" y="137" text-anchor="middle" font-family="Inter,system-ui,sans-serif" font-size="13" font-weight="600" fill="var(--accent)">ParseForm, bind form: tags</text>
+<rect x="370" y="166" width="290" height="44" rx="6" fill="var(--bg)" stroke="var(--fg)" stroke-width="1"/>
+<text x="515" y="193" text-anchor="middle" font-family="Inter,system-ui,sans-serif" font-size="13" font-weight="600" fill="var(--fg)">No body decode</text>
+</svg>
+<figcaption>Path, query, and header tags bind on every path; only the body decoding differs by content type.</figcaption>
+</figure>
 
-## `application/x-www-form-urlencoded`
+## URL-encoded forms
 
-The classic HTML form / URL-encoded body.
-
-### Handler
+When the request `Content-Type` is `application/x-www-form-urlencoded`, Bosun skips JSON decoding, calls `req.ParseForm()`, and fills every `form:`-tagged field from the parsed body.
 
 ```go
 type LoginIn struct {
     Email    string `form:"email"`
     Password string `form:"password"`
     Remember bool   `form:"remember"`
-}
-
-type LoginOut struct {
-    Token string `json:"token"`
 }
 
 func (c *Auth) Login(ctx context.Context, req *bosun.Req[LoginIn]) (LoginOut, error) {
@@ -30,31 +46,13 @@ func (c *Auth) Login(ctx context.Context, req *bosun.Req[LoginIn]) (LoginOut, er
     }
     return LoginOut{Token: "..."}, nil
 }
-
-bosun.Post(r, "/login", c.Login)
 ```
 
-### Client
+The `form:` tag supports the same scalar kinds as the other binding tags: `string`, the signed integers, `bool`, and the floats.
 
-```
-POST /login HTTP/1.1
-Content-Type: application/x-www-form-urlencoded
+## Multipart form fields
 
-email=jack%40x.dev&password=hunter2&remember=true
-```
-
-When `Content-Type` starts with `application/x-www-form-urlencoded`, Bosun:
-- skips JSON decoding entirely;
-- calls `req.ParseForm()`;
-- fills every `form:"name"`-tagged field via `req.PostForm.Get("name")`.
-
-Supported scalar kinds for `form:`: `string`, `int*`, `bool`, `float32/64`.
-
----
-
-## `multipart/form-data` — fields
-
-The same `form:` tags work for the text fields of a multipart form:
+The same `form:` tags bind the text fields of a multipart form. The file parts are read directly from the embedded request with `req.FormFile(...)` or `req.MultipartReader()`, which the [files guide](./files.md) covers.
 
 ```go
 type UploadIn struct {
@@ -63,118 +61,46 @@ type UploadIn struct {
 }
 ```
 
-For the actual file payload, you reach for `req.MultipartReader()` or
-`req.FormFile(...)` directly on the embedded `*http.Request`. See
-[`files.md`](./files.md) for upload patterns.
+## Combining sources
 
----
-
-## Mixing form fields with other sources
-
-The same struct can pull from any source via tags. Order: `path` → `query`
-→ `header` → `form`. First non-empty tag wins per field:
+One struct can pull from several places at once. When a field carries more than one tag, the first non-empty source wins in the order path, query, header, form. On a form route the JSON branch never runs, so a field that carries only a `json:` tag is left at zero; use `form:` for every field on a form route.
 
 ```go
 type SignupIn struct {
-    InviteCode string `path:"code"`       // from /signup/{code}
-    Source     string `query:"src"`       // ?src=email
-    Captcha    string `form:"captcha"`    // from form body
+    InviteCode string `path:"code"`   // from /signup/{code}
+    Source     string `query:"src"`   // ?src=email
+    Captcha    string `form:"captcha"`
     Email      string `form:"email"`
     Password   string `form:"password"`
 }
-
-bosun.Post(r, "/signup/:code", c.Signup)
 ```
-
-A field with no binding tag (only `json:`) is filled by JSON decode only —
-but for form-encoded routes, the JSON branch never runs, so a `json:` tag
-alone gets left zero. Use `form:` for everything on form routes.
-
----
 
 ## Validation
 
-Bosun doesn't ship a validator — handle it in the handler:
+Bosun does not ship a validator, so validate in the handler and translate failures into `bosun.E` calls. If you prefer declarative validation, use a library such as `go-playground/validator` inside the handler and map its errors to statuses.
 
 ```go
-func (c *Auth) Login(ctx context.Context, req *bosun.Req[LoginIn]) (LoginOut, error) {
-    in := req.Body
-    if in.Email == "" {
-        return LoginOut{}, bosun.E(http.StatusUnprocessableEntity, "email required", nil)
-    }
-    if !strings.Contains(in.Email, "@") {
-        return LoginOut{}, bosun.E(http.StatusUnprocessableEntity, "bad email", nil)
-    }
-    ...
+if in.Email == "" {
+    return LoginOut{}, bosun.E(http.StatusUnprocessableEntity, "email required", nil)
 }
 ```
 
-If you want declarative validation, drop in `go-playground/validator` in
-your handler and translate failures to `bosun.E(...)` calls.
+## Auditing form fields
 
----
-
-## Forms and audit
-
-Form fields land in `req.Body`, which is what the audit redactor walks.
-Fields named `password`, `secret`, `token`, `apikey`, `authorization`
-(case-insensitive) are auto-redacted. Tag with `audit:"-"` to force
-redaction of anything else:
+Form fields land in `req.Body`, which is what the audit redactor walks, so a field named `password`, `secret`, `token`, or `authorization` is redacted automatically. Tag any other sensitive field with `audit:"-"`.
 
 ```go
 type LoginIn struct {
     Email    string `form:"email"`
-    Password string `form:"password"`              // auto-redacted (name)
-    OTP      string `form:"otp" audit:"-"`         // explicit
+    Password string `form:"password"`      // auto-redacted by name
+    OTP      string `form:"otp" audit:"-"` // explicit
 }
 ```
 
----
+## Repeated fields and edge cases
 
-## Advanced
-
-### Multiple values for one field
-
-`req.PostForm` is a `url.Values` (`map[string][]string`). The binder uses
-`Get`, which returns only the first value. For checkbox lists or repeated
-fields, take the slice as `string` and split yourself, or reach for the
-underlying form in the handler:
+The binder reads the first value of each field. For checkbox lists or repeated fields, read the underlying `req.PostForm` (a `url.Values`) in the handler. A single Bosun route decodes either JSON or a form based on the content type, not both, so use separate routes for separate content types, or take `In` as `string` or `any` and decode by hand.
 
 ```go
-type FilterIn struct{}  // no binding fields
-
-func (c *Search) Filter(ctx context.Context, req *bosun.Req[FilterIn]) (Out, error) {
-    _ = req.ParseForm()  // safe — already parsed by Bosun, but it's a no-op the 2nd time
-    tags := req.PostForm["tag"]   // []string{"go", "web"} from ?tag=go&tag=web
-    ...
-}
+tags := req.PostForm["tag"] // []string from ?tag=go&tag=web
 ```
-
-### Form route with no body fields, just files
-
-If every input is a file, use `In = struct{}` and read files directly:
-
-```go
-type Files struct{}
-func (c *Files) Upload(ctx context.Context, req *bosun.Req[struct{}]) (Out, error) {
-    f, hdr, err := req.FormFile("file")
-    if err != nil { return Out{}, bosun.E(400, "missing file", err) }
-    defer f.Close()
-    ...
-}
-```
-
-But check [`files.md`](./files.md) — for big uploads you usually want
-`MultipartReader()` instead of `FormFile()`.
-
-### Mixing JSON and forms on the same route
-
-You can't, on the same Bosun route — body decode is one or the other based
-on `Content-Type`. Use separate routes for separate content types, or
-take `In = string` / `In = any` and decode by hand.
-
-### Disabling form parsing
-
-There is no opt-out at the route level. If you don't want auto-parse, use
-`In = string` (raw body) or `In = any` (loose JSON), or use the untyped
-escape hatch (`r.Post(...)`).

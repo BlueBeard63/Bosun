@@ -13,6 +13,7 @@
 *.out
 coverage.out
 *.html
+!cmd/bosun/internal/docsite/assets/index.html
 
 # Go workspace file
 go.work

@@ -13,6 +13,7 @@ require (
 	github.com/dlclark/regexp2 v1.7.0 // indirect
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect
 	github.com/spf13/pflag v1.0.9 // indirect
+	github.com/stretchr/testify v1.11.1 // indirect
 )
 
 // The core module is developed in-tree; resolve it locally (the repo go.work

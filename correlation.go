@@ -34,6 +34,21 @@ func CorrelationID(ctx context.Context) string {
 	return v
 }
 
+type traceparentCtxKey struct{}
+
+// WithTraceparent returns a copy of ctx carrying a raw W3C traceparent string.
+// Tracing drivers use it to continue a remote trace across HTTP and the event
+// bus without core Bosun depending on any tracing library.
+func WithTraceparent(ctx context.Context, tp string) context.Context {
+	return context.WithValue(ctx, traceparentCtxKey{}, tp)
+}
+
+// Traceparent returns the raw W3C traceparent attached to ctx, or "".
+func Traceparent(ctx context.Context) string {
+	v, _ := ctx.Value(traceparentCtxKey{}).(string)
+	return v
+}
+
 // NewCorrelationID returns a fresh random 128-bit id as 32 hex chars.
 func NewCorrelationID() string {
 	var b [16]byte

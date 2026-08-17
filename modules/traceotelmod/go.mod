@@ -3,7 +3,7 @@ module github.com/amberstack/bosun/modules/traceotelmod
 go 1.25.0
 
 require (
-	github.com/amberstack/bosun v0.5.0
+	github.com/amberstack/bosun v0.5.1
 	go.opentelemetry.io/otel v1.45.0
 	go.opentelemetry.io/otel/sdk v1.45.0
 	go.opentelemetry.io/otel/trace v1.45.0

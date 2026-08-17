@@ -21,8 +21,8 @@ func docsCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "docs",
 		Short: "Serve the searchable Bosun documentation and open it in your browser",
-		Long: "Starts a local web server hosting the Bosun documentation — fully " +
-			"searchable across page titles, headings and body text — and opens it in " +
+		Long: "Starts a local web server hosting the Bosun documentation (fully " +
+			"searchable across page titles, headings and body text) and opens it in " +
 			"your default browser. The site is embedded in the binary and works offline.",
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			site, err := docsite.Load()
@@ -51,7 +51,7 @@ func docsCmd() *cobra.Command {
 
 			shutdownCtx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 			defer cancel()
-			fmt.Println("\nshutting down…")
+			fmt.Println("\nshutting down...")
 			return srv.Shutdown(shutdownCtx)
 		},
 	}

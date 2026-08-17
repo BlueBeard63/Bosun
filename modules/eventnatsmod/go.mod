@@ -3,7 +3,7 @@ module github.com/amberstack/bosun/modules/eventnatsmod
 go 1.25.0
 
 require (
-	github.com/amberstack/bosun v0.5.1
+	github.com/amberstack/bosun v0.5.0
 	github.com/nats-io/nats.go v1.38.0
 )
 

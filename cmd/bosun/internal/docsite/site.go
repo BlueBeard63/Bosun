@@ -1,7 +1,9 @@
 // Package docsite serves the embedded Bosun documentation site and provides the
-// search + page-fetch primitives the MCP server reuses. All content is embedded
-// (go:embed) at build time by cmd/bosun/internal/docgen, so the binary is fully
-// self-contained and works offline.
+// search + page-fetch primitives the MCP server reuses. The Markdown sources and
+// search index are embedded (go:embed) from internal/docsite/content, prepared by
+// cmd/bosun/internal/docgen. Pages are rendered to HTML at request time (and
+// cached), so the binary is fully self-contained and works offline while shipping
+// only the raw Markdown, never generated HTML.
 package docsite
 
 import (
@@ -11,10 +13,15 @@ import (
 	"net/http"
 	"sort"
 	"strings"
+	"sync"
+
+	"github.com/yuin/goldmark"
+
+	"github.com/amberstack/bosun/cmd/bosun/internal/docrender"
 )
 
-//go:embed dist
-var distFS embed.FS
+//go:embed content
+var contentFS embed.FS
 
 //go:embed assets
 var assetsFS embed.FS
@@ -40,18 +47,24 @@ type IndexEntry struct {
 // Site is the loaded documentation set.
 type Site struct {
 	entries []IndexEntry
-	dist    fs.FS // pages/, md/, docassets/, index.json
+	valid   map[string]bool // known slugs, guards against path traversal
+	content fs.FS           // *.md, docassets/, index.json
+	md      goldmark.Markdown
+
+	mu    sync.RWMutex
+	cache map[string]string // slug -> rendered HTML
+
 	// Version labels the docs build (shown in the header pill); optional.
 	Version string
 }
 
 // Load reads the embedded index and returns a ready Site.
 func Load() (*Site, error) {
-	dist, err := fs.Sub(distFS, "dist")
+	content, err := fs.Sub(contentFS, "content")
 	if err != nil {
 		return nil, err
 	}
-	raw, err := fs.ReadFile(dist, "index.json")
+	raw, err := fs.ReadFile(content, "index.json")
 	if err != nil {
 		return nil, err
 	}
@@ -59,7 +72,17 @@ func Load() (*Site, error) {
 	if err := json.Unmarshal(raw, &entries); err != nil {
 		return nil, err
 	}
-	return &Site{entries: entries, dist: dist}, nil
+	valid := make(map[string]bool, len(entries))
+	for _, e := range entries {
+		valid[e.Slug] = true
+	}
+	return &Site{
+		entries: entries,
+		valid:   valid,
+		content: content,
+		md:      docrender.New(),
+		cache:   map[string]string{},
+	}, nil
 }
 
 // Entries returns the page index in reading order.
@@ -84,19 +107,42 @@ func (s *Site) Title(slug string) string {
 	return ""
 }
 
-// Page returns the rendered HTML fragment for a slug.
+// Page returns the rendered HTML fragment for a slug, rendering the Markdown on
+// first request and caching the result.
 func (s *Site) Page(slug string) (string, bool) {
-	b, err := fs.ReadFile(s.dist, "pages/"+slug+".html")
+	if !s.valid[slug] {
+		return "", false
+	}
+	s.mu.RLock()
+	if h, ok := s.cache[slug]; ok {
+		s.mu.RUnlock()
+		return h, true
+	}
+	s.mu.RUnlock()
+
+	src, err := fs.ReadFile(s.content, slug+".md")
 	if err != nil {
 		return "", false
 	}
-	return string(b), true
+	var buf strings.Builder
+	if err := s.md.Convert(src, &buf); err != nil {
+		return "", false
+	}
+	out := buf.String()
+
+	s.mu.Lock()
+	s.cache[slug] = out
+	s.mu.Unlock()
+	return out, true
 }
 
 // Markdown returns the raw Markdown source for a slug — the AI-friendly form the
 // MCP get_doc tool returns.
 func (s *Site) Markdown(slug string) (string, bool) {
-	b, err := fs.ReadFile(s.dist, "md/"+slug+".md")
+	if !s.valid[slug] {
+		return "", false
+	}
+	b, err := fs.ReadFile(s.content, slug+".md")
 	if err != nil {
 		return "", false
 	}
@@ -172,7 +218,7 @@ func snippet(text string, terms []string) string {
 }
 
 // Handler serves the documentation website: the SPA shell at /, static assets,
-// rendered page fragments, doc images, and the search index JSON.
+// page fragments rendered on demand, doc images, and the search index JSON.
 func (s *Site) Handler() http.Handler {
 	mux := http.NewServeMux()
 
@@ -187,11 +233,22 @@ func (s *Site) Handler() http.Handler {
 	})
 
 	mux.Handle("/assets/", http.FileServer(http.FS(assetsFS)))
-	mux.Handle("/pages/", http.FileServer(http.FS(s.dist)))
-	mux.Handle("/docassets/", http.FileServer(http.FS(s.dist)))
+	mux.Handle("/docassets/", http.FileServer(http.FS(s.content)))
+
+	// Page fragments are rendered from Markdown on request (cached in Page).
+	mux.HandleFunc("/pages/", func(w http.ResponseWriter, r *http.Request) {
+		slug := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/pages/"), ".html")
+		htmlFrag, ok := s.Page(slug)
+		if !ok {
+			http.NotFound(w, r)
+			return
+		}
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		_, _ = w.Write([]byte(htmlFrag))
+	})
 
 	mux.HandleFunc("/search-index.json", func(w http.ResponseWriter, r *http.Request) {
-		b, err := fs.ReadFile(s.dist, "index.json")
+		b, err := fs.ReadFile(s.content, "index.json")
 		if err != nil {
 			http.Error(w, "no index", http.StatusInternalServerError)
 			return

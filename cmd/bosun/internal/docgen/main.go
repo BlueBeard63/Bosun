@@ -1,9 +1,9 @@
-// Command docgen renders the hand-written Markdown in docs/ into the embedded
-// docs site: an HTML fragment per page, a copy of each Markdown source (for the
-// MCP/AI reader), and a JSON search index covering page title, headings, and
-// body text. It is a build-time tool with the only goldmark dependency in the
-// repo — run via `go generate ./...` in cmd/bosun; the rendered output under
-// internal/docsite/dist is embedded into the binary.
+// Command docgen prepares the embedded docs content from the hand-written
+// Markdown in docs/: an ASCII-normalized copy of each Markdown source and a JSON
+// search index covering page title, headings, and body text. The docs site
+// renders the Markdown to HTML at request time (see internal/docsite), so no HTML
+// is generated or committed here. Run via `go generate ./...` in cmd/bosun; the
+// output under internal/docsite/content is embedded into the binary.
 package main
 
 import (
@@ -17,14 +17,10 @@ import (
 	"sort"
 	"strings"
 
-	chromahtml "github.com/alecthomas/chroma/v2/formatters/html"
-	"github.com/yuin/goldmark"
 	"github.com/yuin/goldmark/ast"
-	"github.com/yuin/goldmark/extension"
-	highlighting "github.com/yuin/goldmark-highlighting/v2"
-	"github.com/yuin/goldmark/parser"
-	gmhtml "github.com/yuin/goldmark/renderer/html"
 	"github.com/yuin/goldmark/text"
+
+	"github.com/amberstack/bosun/cmd/bosun/internal/docrender"
 )
 
 // Heading is one heading in a page, for the table of contents and search.
@@ -47,7 +43,7 @@ type IndexEntry struct {
 
 func main() {
 	in := flag.String("in", "../../docs", "docs markdown directory")
-	out := flag.String("out", "./internal/docsite/dist", "output dist directory")
+	out := flag.String("out", "./internal/docsite/content", "output content directory")
 	flag.Parse()
 
 	if err := run(*in, *out); err != nil {
@@ -57,30 +53,14 @@ func main() {
 }
 
 func run(inDir, outDir string) error {
-	md := goldmark.New(
-		goldmark.WithExtensions(
-			extension.GFM,
-			// Build-time syntax highlighting. Class-based output (no inline
-			// colors) so light/dark theming is driven by our CSS token vars.
-			highlighting.NewHighlighting(
-				highlighting.WithFormatOptions(chromahtml.WithClasses(true)),
-			),
-		),
-		goldmark.WithParserOptions(parser.WithAutoHeadingID()),
-		goldmark.WithRendererOptions(gmhtml.WithUnsafe()), // trusted, in-repo docs
-	)
+	md := docrender.New()
 
 	entries, err := os.ReadDir(inDir)
 	if err != nil {
 		return err
 	}
-
-	pagesDir := filepath.Join(outDir, "pages")
-	mdDir := filepath.Join(outDir, "md")
-	for _, d := range []string{pagesDir, mdDir} {
-		if err := os.MkdirAll(d, 0o755); err != nil {
-			return err
-		}
+	if err := os.MkdirAll(outDir, 0o755); err != nil {
+		return err
 	}
 
 	var index []IndexEntry
@@ -100,7 +80,7 @@ func run(inDir, outDir string) error {
 		if err != nil {
 			return err
 		}
-		src := []byte(asciiNormalize(string(raw)))
+		src := []byte(docrender.ASCIINormalize(string(raw)))
 		slug := slugForFile(e.Name())
 
 		doc := md.Parser().Parse(text.NewReader(src))
@@ -109,15 +89,15 @@ func run(inDir, outDir string) error {
 			title = titleize(slug)
 		}
 
+		// Write the ASCII-normalized Markdown source. The site renders it to HTML
+		// on request; the MCP/AI reader serves it verbatim.
+		if err := os.WriteFile(filepath.Join(outDir, slug+".md"), src, 0o644); err != nil {
+			return err
+		}
+
+		// Render once here only to derive the plain-text body for the search index.
 		var htmlBuf strings.Builder
 		if err := md.Renderer().Render(&htmlBuf, src, doc); err != nil {
-			return err
-		}
-		if err := os.WriteFile(filepath.Join(pagesDir, slug+".html"), []byte(htmlBuf.String()), 0o644); err != nil {
-			return err
-		}
-		// Copy the raw markdown for the MCP/AI reader.
-		if err := os.WriteFile(filepath.Join(mdDir, slug+".md"), src, 0o644); err != nil {
 			return err
 		}
 
@@ -150,7 +130,7 @@ func run(inDir, outDir string) error {
 	if err := enc.Encode(index); err != nil {
 		return err
 	}
-	fmt.Printf("docgen: rendered %d pages -> %s\n", len(index), outDir)
+	fmt.Printf("docgen: prepared %d pages -> %s\n", len(index), outDir)
 	return nil
 }
 
@@ -215,30 +195,6 @@ func plainText(h string) string {
 	s = wsRE.ReplaceAllString(s, " ")
 	return strings.TrimSpace(s)
 }
-
-// asciiNormalize replaces the non-ASCII typographic characters that creep into
-// prose (em/en dashes, smart quotes, ellipsis, arrows, non-breaking spaces)
-// with plain ASCII equivalents. Bosun's code samples are Go/shell and never
-// contain these glyphs, so normalizing the whole source is safe and keeps every
-// rendered title, heading, and paragraph ASCII-clean.
-var asciiReplacer = strings.NewReplacer(
-	"—", "-", // em dash
-	"–", "-", // en dash
-	"―", "-", // horizontal bar
-	"…", "...", // ellipsis
-	"→", "->", // rightwards arrow
-	"←", "<-", // leftwards arrow
-	"⇒", "=>", // rightwards double arrow
-	"“", "\"", // left double quote
-	"”", "\"", // right double quote
-	"‘", "'", // left single quote
-	"’", "'", // right single quote
-	"•", "-", // bullet
-	"·", "-", // middle dot
-	" ", " ", // non-breaking space
-)
-
-func asciiNormalize(s string) string { return asciiReplacer.Replace(s) }
 
 func slugForFile(name string) string {
 	base := strings.TrimSuffix(name, ".md")

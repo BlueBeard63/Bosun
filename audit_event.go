@@ -23,6 +23,9 @@ type AuditEvent struct {
 	Response   any           `json:"response,omitempty"` // redacted
 	Err        string        `json:"error,omitempty"`
 	ErrOrigin  string        `json:"error_origin,omitempty"`
+	// Correlation is the request's correlation id (see mw.Correlation), empty
+	// when no correlation middleware ran.
+	Correlation string `json:"correlation,omitempty"`
 }
 
 // Auditor receives audit events. Enable auditing by registering an

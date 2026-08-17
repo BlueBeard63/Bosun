@@ -190,14 +190,15 @@ func typed[In, Out any](r *Router, method, p string, h func(context.Context, *Re
 
 		if auditor != nil {
 			ev := AuditEvent{
-				Time:       start,
-				Method:     method,
-				Path:       full,
-				Route:      handlerName,
-				Status:     status,
-				RemoteAddr: req.RemoteAddr,
-				Duration:   time.Since(start),
-				Request:    Redact(typedReq.Body),
+				Time:        start,
+				Method:      method,
+				Path:        full,
+				Route:       handlerName,
+				Status:      status,
+				RemoteAddr:  req.RemoteAddr,
+				Duration:    time.Since(start),
+				Request:     Redact(typedReq.Body),
+				Correlation: CorrelationID(req.Context()),
 			}
 			if handlerErr == nil {
 				ev.Response = Redact(out)

@@ -27,6 +27,13 @@ type RouteAdvert struct {
 	Path      string `json:"path"`
 	Operation string `json:"operation"`
 	Statuses  []int  `json:"statuses,omitempty"`
+	// In and Out are the Go types of the request body and response, as
+	// "pkg.Type" strings; InImport and OutImport are their import paths.
+	// These let `bosun gen client` generate a typed client.
+	In        string `json:"in,omitempty"`
+	Out       string `json:"out,omitempty"`
+	InImport  string `json:"in_import,omitempty"`
+	OutImport string `json:"out_import,omitempty"`
 }
 
 // QueueAdvert describes an event subject the service produces or consumes.
@@ -103,7 +110,16 @@ func Build(info Info) Manifest {
 	}
 	for _, ri := range bosun.TypedRoutes() {
 		statuses := append([]int{http.StatusOK}, ri.Declared...)
-		m.Routes = append(m.Routes, RouteAdvert{Method: ri.Method, Path: ri.Path, Operation: ri.Handler, Statuses: statuses})
+		ra := RouteAdvert{Method: ri.Method, Path: ri.Path, Operation: ri.Handler, Statuses: statuses}
+		if ri.In != nil {
+			ra.In = ri.In.String()
+			ra.InImport = ri.In.PkgPath()
+		}
+		if ri.Out != nil {
+			ra.Out = ri.Out.String()
+			ra.OutImport = ri.Out.PkgPath()
+		}
+		m.Routes = append(m.Routes, ra)
 	}
 	sort.Slice(m.Routes, func(i, j int) bool {
 		if m.Routes[i].Path != m.Routes[j].Path {

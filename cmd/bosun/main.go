@@ -24,6 +24,7 @@ func main() {
 		docsCmd(),
 		mcpCmd(),
 		manifestCmd(),
+		genCmd(),
 	)
 	if err := root.Execute(); err != nil {
 		os.Exit(1)

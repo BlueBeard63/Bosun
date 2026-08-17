@@ -288,7 +288,7 @@ var sections = []struct {
 	}},
 	{"Messaging", []navGroup{
 		{"Events", []string{"events", "event-backends", "event-rpc"}},
-		{"", []string{"webhooks-outbox"}},
+		{"", []string{"webhooks", "outbox"}},
 	}},
 	{"Platform", []navGroup{{"", []string{"storage", "secrets-infisical", "health", "manifest", "multitenancy", "tracing"}}}},
 	{"CLI & tooling", []navGroup{{"", []string{"cli", "mcp", "client-gen", "microservices"}}}},

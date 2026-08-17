@@ -2,6 +2,35 @@
 
 A service is any Go type you register with Bosun so that its dependencies are injected automatically and other code can depend on it. Most of your application lives in services: business logic, repositories, and clients to external systems. This guide covers how to declare services, how injection and lifecycle work, and the advanced patterns for defaults, interfaces, and hot reload.
 
+<figure class="diagram">
+<svg viewBox="0 0 640 320" role="img" aria-labelledby="di-title di-desc" xmlns="http://www.w3.org/2000/svg">
+<title id="di-title">Dependency injection in Bosun</title>
+<desc id="di-desc">A controller injects a service, which injects a Repo interface; DefaultBind binds that interface to the GORM repository implementation unless the host registers its own.</desc>
+<defs>
+<marker id="di-arw" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="var(--fg-muted)"/></marker>
+</defs>
+<line x1="230" y1="82" x2="230" y2="130" stroke="var(--fg-muted)" stroke-width="1" marker-end="url(#di-arw)"/>
+<line x1="230" y1="190" x2="230" y2="238" stroke="var(--fg-muted)" stroke-width="1" marker-end="url(#di-arw)"/>
+<line x1="322" y1="268" x2="398" y2="268" stroke="var(--fg-muted)" stroke-width="1" stroke-dasharray="4,3" marker-end="url(#di-arw)"/>
+<text x="242" y="110" font-family="'JetBrains Mono',ui-monospace,monospace" font-size="8" letter-spacing="0.06em" fill="var(--fg-muted)">INJECTS</text>
+<text x="242" y="218" font-family="'JetBrains Mono',ui-monospace,monospace" font-size="8" letter-spacing="0.06em" fill="var(--fg-muted)">INJECTS</text>
+<text x="360" y="258" text-anchor="middle" font-family="'JetBrains Mono',ui-monospace,monospace" font-size="8" letter-spacing="0.06em" fill="var(--fg-muted)">DEFAULTBIND</text>
+<rect x="140" y="24" width="180" height="56" rx="6" fill="var(--bg)" stroke="var(--fg)" stroke-width="1"/>
+<text x="230" y="48" text-anchor="middle" font-family="Inter,system-ui,sans-serif" font-size="13" font-weight="600" fill="var(--fg)">Controller</text>
+<text x="230" y="65" text-anchor="middle" font-family="'JetBrains Mono',ui-monospace,monospace" font-size="9" fill="var(--fg-muted)">injected fields</text>
+<rect x="140" y="132" width="180" height="56" rx="6" fill="var(--bg)" stroke="var(--fg)" stroke-width="1"/>
+<text x="230" y="156" text-anchor="middle" font-family="Inter,system-ui,sans-serif" font-size="13" font-weight="600" fill="var(--fg)">Service</text>
+<text x="230" y="173" text-anchor="middle" font-family="'JetBrains Mono',ui-monospace,monospace" font-size="9" fill="var(--fg-muted)">one singleton</text>
+<rect x="140" y="240" width="180" height="56" rx="6" fill="var(--accent-soft)" stroke="var(--accent)" stroke-width="1"/>
+<text x="230" y="264" text-anchor="middle" font-family="Inter,system-ui,sans-serif" font-size="13" font-weight="600" fill="var(--accent)">Repo[T]</text>
+<text x="230" y="281" text-anchor="middle" font-family="'JetBrains Mono',ui-monospace,monospace" font-size="9" fill="var(--fg-muted)">interface</text>
+<rect x="400" y="240" width="180" height="56" rx="6" fill="var(--bg)" stroke="var(--fg)" stroke-width="1"/>
+<text x="490" y="264" text-anchor="middle" font-family="Inter,system-ui,sans-serif" font-size="13" font-weight="600" fill="var(--fg)">GormRepo[T]</text>
+<text x="490" y="281" text-anchor="middle" font-family="'JetBrains Mono',ui-monospace,monospace" font-size="9" fill="var(--fg-muted)">driver impl</text>
+</svg>
+<figcaption>The registry resolves each field by its Go type. DefaultBind wires the interface to a driver implementation unless the host registers its own first.</figcaption>
+</figure>
+
 ## Declaring a service
 
 Register a type with `bosun.Service` and the framework takes over its construction.

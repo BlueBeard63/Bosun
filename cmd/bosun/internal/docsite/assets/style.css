@@ -238,6 +238,16 @@ a.iconbtn:hover { background: var(--surface); }
 .article img, .article svg { max-width: 100%; height: auto; }
 .article hr { border: none; border-top: 1px solid var(--border); margin: 32px 0; }
 
+/* diagram figures (inline, theme-aware SVG bound to the docs tokens) */
+.article figure.diagram {
+  margin: 24px 0; padding: 20px 16px; border: 1px solid var(--border);
+  border-radius: 10px; background: var(--surface); text-align: center;
+}
+.article figure.diagram svg { display: block; margin: 0 auto; width: 100%; max-width: 860px; height: auto; }
+.article figure.diagram figcaption {
+  margin-top: 12px; font-size: 13px; color: var(--fg-muted); text-align: center;
+}
+
 .article code {
   font: 13.5px/1.5 "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   background: var(--code-bg); padding: 2px 6px; border-radius: 5px;

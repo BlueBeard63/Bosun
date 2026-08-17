@@ -31,6 +31,7 @@ type IndexEntry struct {
 	Slug     string    `json:"slug"`
 	Title    string    `json:"title"`
 	Section  string    `json:"section"`
+	Group    string    `json:"group,omitempty"`
 	Order    int       `json:"order"`
 	Headings []Heading `json:"headings"`
 	Text     string    `json:"text"`
@@ -154,7 +155,7 @@ func snippet(text string, terms []string) string {
 	}
 	if idx < 0 {
 		if len(text) > 160 {
-			return text[:160] + "…"
+			return text[:160] + "..."
 		}
 		return text
 	}
@@ -162,10 +163,10 @@ func snippet(text string, terms []string) string {
 	end := min(len(text), idx+100)
 	prefix, suffix := "", ""
 	if start > 0 {
-		prefix = "…"
+		prefix = "..."
 	}
 	if end < len(text) {
-		suffix = "…"
+		suffix = "..."
 	}
 	return prefix + strings.TrimSpace(text[start:end]) + suffix
 }

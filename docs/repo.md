@@ -1,35 +1,17 @@
 # Repo module
 
-The `repomod` + `gormrepomod` modules give you a generic, injectable
-`Repo[T]` for each entity — CRUD, a chainable query builder, and
-transactions that span multiple repos. The interface is database-agnostic;
-the bundled driver wraps GORM.
-
-If you'd rather hand-roll a per-domain repo struct (the older pattern in
-[`database-gorm.md`](./database-gorm.md)), you still can — this module
-just productizes that pattern.
-
----
+The `repomod` and `gormrepomod` modules provide a generic, injectable `Repo[T]` for each entity, with CRUD, a chainable query builder, and transactions that span several repos. The interface is database-agnostic, and the bundled driver wraps GORM. If you prefer a hand-rolled repository per domain, the pattern in the [GORM guide](./database-gorm.md) still works; this module simply packages it.
 
 ## Setup
 
-### 1. Open the DB and register it
+Open the database and register the handle, then declare each entity's repo, then inject the interface where you need it.
 
 ```go
-package main
-
-import (
-    "log"
-
-    "github.com/amberstack/bosun"
-    "github.com/amberstack/bosun/registry"
-    "gorm.io/driver/postgres"
-    "gorm.io/gorm"
-)
-
 func main() {
     db, err := gorm.Open(postgres.Open("host=localhost user=app dbname=app sslmode=disable"))
-    if err != nil { log.Fatal(err) }
+    if err != nil {
+        log.Fatal(err)
+    }
     db.AutoMigrate(&User{})
 
     app := bosun.New()
@@ -37,8 +19,6 @@ func main() {
     log.Fatal(app.Run(":8080"))
 }
 ```
-
-### 2. Declare an entity and register its Repo
 
 ```go
 import "github.com/amberstack/bosun/modules/gormrepomod"
@@ -52,33 +32,17 @@ type User struct {
 var _ = gormrepomod.For[User]()
 ```
 
-`For[User]()` registers `*GormRepo[User]` as a service and binds
-`repomod.Repo[User]` to it via `DefaultBind`. The host wins: if you
-register your own `repomod.Repo[User]` before `app.Start()` (e.g. a
-stub in tests, or a custom repo with hand-rolled SQL), the default is
-skipped.
-
-### 3. Inject the Repo into controllers/services
+`For[User]()` registers `*GormRepo[User]` as a service and binds `repomod.Repo[User]` to it. The host wins, so if you register your own `repomod.Repo[User]` before `app.Start()` (a stub in a test, or a custom repo with hand-written SQL), the default is skipped.
 
 ```go
 import "github.com/amberstack/bosun/modules/repomod"
 
 type UsersController struct {
-    Users repomod.Repo[User]  // injected
-}
-var _ = bosun.Controller[UsersController]("/users")
-
-func (c *UsersController) Routes(r *bosun.Router) {
-    bosun.Post(r, "/",     c.Create)
-    bosun.Get (r, "/{id}", c.Get)
+    Users repomod.Repo[User] // injected
 }
 ```
 
-Depend on the **interface** (`repomod.Repo[User]`), not the concrete
-`*gormrepomod.GormRepo[User]` — that's what lets tests swap in fakes
-without touching GORM.
-
----
+Depend on the interface `repomod.Repo[User]`, not the concrete `*gormrepomod.GormRepo[User]`, because that is what lets tests swap in a fake without touching GORM.
 
 ## The Repo interface
 
@@ -93,12 +57,11 @@ type Repo[T any] interface {
 }
 ```
 
-`Get` and `Query.One` return `repomod.ErrNotFound` (not the driver's
-sentinel) when no row matches; check with `errors.Is`.
-
----
+`Get` and `Query().One` return the portable `repomod.ErrNotFound` (not the driver's own sentinel) when no row matches, so check with `errors.Is`.
 
 ## Querying
+
+The query builder is immutable: each call returns a new query, so a base query is safe to share. For anything beyond `Where`, `Order`, `Limit`, and `Offset` (joins, raw SQL, GORM preloads), inject `*gorm.DB` alongside the repo and use it directly.
 
 ```go
 rows, err := c.Users.Query().
@@ -106,120 +69,47 @@ rows, err := c.Users.Query().
     Order("created_at desc").
     Limit(20).
     All(ctx)
-
-count, _ := c.Users.Query().Where("active = ?", true).Count(ctx)
-
-one, err := c.Users.Query().Where("email = ?", email).One(ctx)
 ```
-
-The query builder is immutable — every chain call returns a new query, so
-you can share base queries safely.
-
-For anything beyond Where/Order/Limit/Offset (joins, raw SQL, GORM
-preloads), inject `*gorm.DB` alongside the repo and use it directly:
-
-```go
-type UsersController struct {
-    Users repomod.Repo[User]
-    DB    *gorm.DB  // escape hatch
-}
-```
-
----
 
 ## Transactions
 
+`Tx` runs a function inside a transaction. The callback's context carries the active transaction, and any `Repo[T]` method called with that context (including repos for other entity types) joins the same transaction. Returning a non-nil error rolls back, and nested `Tx` calls reuse the outermost transaction.
+
 ```go
 err := c.Users.Tx(ctx, func(ctx context.Context) error {
-    u := &User{Email: in.Email, Name: in.Name}
-    if err := c.Users.Create(ctx, u); err != nil { return err }
-    return c.Orders.Create(ctx, &Order{UserID: u.ID, Total: 100})
+    if err := c.Users.Create(ctx, u); err != nil {
+        return err
+    }
+    return c.Orders.Create(ctx, &Order{UserID: u.ID})
 })
 ```
 
-The callback's `ctx` carries the active transaction. Any `Repo[T]` method
-called with that ctx — including repos for other entity types — joins the
-same transaction. Return a non-nil error to roll back; return nil to
-commit. Nested `Tx` calls reuse the outermost transaction.
-
----
-
 ## Multiple databases
 
-When you need different repos backed by different databases, define a
-distinct named pointer type per DB and use `Named[T, DB]`:
+To back different repos with different databases, define a distinct named pointer type per database that exposes `Unwrap`, register each one, and bind repos with `Named[T, DB]`.
 
 ```go
 type PrimaryDB struct{ *gorm.DB }
 func (p *PrimaryDB) Unwrap() *gorm.DB { return p.DB }
 
-type AnalyticsDB struct{ *gorm.DB }
-func (a *AnalyticsDB) Unwrap() *gorm.DB { return a.DB }
-
-var _ = gormrepomod.Named[User,  *PrimaryDB]()
-var _ = gormrepomod.Named[Event, *AnalyticsDB]()
+var _ = gormrepomod.Named[User, *PrimaryDB]()
 ```
 
-Register each named DB in `main`:
-
-```go
-registry.RegisterInstance[*PrimaryDB]  (app.Reg, &PrimaryDB{DB: pdb})
-registry.RegisterInstance[*AnalyticsDB](app.Reg, &AnalyticsDB{DB: adb})
-```
-
-A regular Go type alias (`type X = *gorm.DB`) won't work — it shares the
-underlying `reflect.Type` with `*gorm.DB`, so the registry can't
-distinguish it. A named struct wrapper is required.
-
-`For[T]` and `Named[T, DB]` both bind `repomod.Repo[T]`, so only declare
-one per entity type.
-
----
+A plain Go type alias does not work, because it shares the underlying `reflect.Type` with `*gorm.DB` and the registry cannot tell them apart; a named struct wrapper is required. Declare only one of `For[T]` or `Named[T, DB]` per entity, since both bind `repomod.Repo[T]`.
 
 ## Testing
 
-For unit tests of services that depend on `Repo[T]`, register a stub
-before `app.Start()`:
+For a service that depends on `Repo[T]`, register a stub before `app.Start()`; because the binding yields to the host, the stub wins.
 
 ```go
-type stubUsers struct {
-    repomod.Repo[User] // optional: embed for unused methods
-}
-func (s *stubUsers) Get(ctx context.Context, id any) (*User, error) {
-    return &User{ID: 1, Email: "alice@example.com"}, nil
-}
-
-app := bosun.New()
 registry.RegisterInstance[repomod.Repo[User]](app.Reg, &stubUsers{})
-app.Start()
 ```
 
-`DefaultBind` checks the registry first, so the stub wins.
-
-For integration tests of the GORM driver itself, an in-memory SQLite
-gets you a real DB without spinning up infrastructure:
+For integration tests of the driver itself, an in-memory SQLite gives you a real database without infrastructure. The module's own suite in `modules/gormrepomod/gormrepomod_test.go` is a working reference covering CRUD, queries, single- and cross-repo transactions, host overrides, and named-database isolation.
 
 ```go
-import "gorm.io/driver/sqlite"
-
 db, _ := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 db.AutoMigrate(&User{})
 ```
 
-The module's own test suite in
-[`modules/gormrepomod/gormrepomod_test.go`](../modules/gormrepomod/gormrepomod_test.go)
-is a working reference covering CRUD, queries, single- and cross-repo
-transactions, host overrides, and named-DB isolation.
-
----
-
-## End-to-end example
-
-Runnable demo: [`examples/repo/main.go`](../examples/repo/main.go).
-
-```
-go run ./examples/repo
-curl -X POST localhost:8090/users -d '{"email":"alice@example.com"}'
-curl localhost:8090/users/1
-curl 'localhost:8090/users?q=example'
-```
+A runnable end-to-end demo lives in `examples/repo/main.go`.

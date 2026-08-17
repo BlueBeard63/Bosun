@@ -17,9 +17,11 @@ import (
 	"sort"
 	"strings"
 
+	chromahtml "github.com/alecthomas/chroma/v2/formatters/html"
 	"github.com/yuin/goldmark"
 	"github.com/yuin/goldmark/ast"
 	"github.com/yuin/goldmark/extension"
+	highlighting "github.com/yuin/goldmark-highlighting/v2"
 	"github.com/yuin/goldmark/parser"
 	gmhtml "github.com/yuin/goldmark/renderer/html"
 	"github.com/yuin/goldmark/text"
@@ -37,6 +39,7 @@ type IndexEntry struct {
 	Slug     string    `json:"slug"`
 	Title    string    `json:"title"`
 	Section  string    `json:"section"`
+	Group    string    `json:"group,omitempty"`
 	Order    int       `json:"order"`
 	Headings []Heading `json:"headings"`
 	Text     string    `json:"text"` // plain-text body for full-text search
@@ -55,7 +58,14 @@ func main() {
 
 func run(inDir, outDir string) error {
 	md := goldmark.New(
-		goldmark.WithExtensions(extension.GFM),
+		goldmark.WithExtensions(
+			extension.GFM,
+			// Build-time syntax highlighting. Class-based output (no inline
+			// colors) so light/dark theming is driven by our CSS token vars.
+			highlighting.NewHighlighting(
+				highlighting.WithFormatOptions(chromahtml.WithClasses(true)),
+			),
+		),
 		goldmark.WithParserOptions(parser.WithAutoHeadingID()),
 		goldmark.WithRendererOptions(gmhtml.WithUnsafe()), // trusted, in-repo docs
 	)
@@ -86,10 +96,11 @@ func run(inDir, outDir string) error {
 		if !strings.HasSuffix(e.Name(), ".md") {
 			continue
 		}
-		src, err := os.ReadFile(filepath.Join(inDir, e.Name()))
+		raw, err := os.ReadFile(filepath.Join(inDir, e.Name()))
 		if err != nil {
 			return err
 		}
+		src := []byte(asciiNormalize(string(raw)))
 		slug := slugForFile(e.Name())
 
 		doc := md.Parser().Parse(text.NewReader(src))
@@ -110,11 +121,12 @@ func run(inDir, outDir string) error {
 			return err
 		}
 
-		section, order := placeFor(slug)
+		section, group, order := placeFor(slug)
 		index = append(index, IndexEntry{
 			Slug:     slug,
 			Title:    title,
 			Section:  section,
+			Group:    group,
 			Order:    order,
 			Headings: headings,
 			Text:     plainText(htmlBuf.String()),
@@ -204,6 +216,30 @@ func plainText(h string) string {
 	return strings.TrimSpace(s)
 }
 
+// asciiNormalize replaces the non-ASCII typographic characters that creep into
+// prose (em/en dashes, smart quotes, ellipsis, arrows, non-breaking spaces)
+// with plain ASCII equivalents. Bosun's code samples are Go/shell and never
+// contain these glyphs, so normalizing the whole source is safe and keeps every
+// rendered title, heading, and paragraph ASCII-clean.
+var asciiReplacer = strings.NewReplacer(
+	"—", "-", // em dash
+	"–", "-", // en dash
+	"―", "-", // horizontal bar
+	"…", "...", // ellipsis
+	"→", "->", // rightwards arrow
+	"←", "<-", // leftwards arrow
+	"⇒", "=>", // rightwards double arrow
+	"“", "\"", // left double quote
+	"”", "\"", // right double quote
+	"‘", "'", // left single quote
+	"’", "'", // right single quote
+	"•", "-", // bullet
+	"·", "-", // middle dot
+	" ", " ", // non-breaking space
+)
+
+func asciiNormalize(s string) string { return asciiReplacer.Replace(s) }
+
 func slugForFile(name string) string {
 	base := strings.TrimSuffix(name, ".md")
 	if strings.EqualFold(base, "README") {
@@ -223,50 +259,64 @@ func titleize(slug string) string {
 	return strings.Join(parts, " ")
 }
 
-// sections define the sidebar grouping and reading order (mirrors the docs
-// site design). Each page maps to a section and a global order; unknown pages
-// fall into "More" after everything else.
-var sections = []struct {
+// navGroup is a run of pages inside a section. An empty name means the pages
+// sit directly under the section; a non-empty name renders them as a
+// collapsible sub-group (mirrors the "SubCategory" component in the docs
+// site design).
+type navGroup struct {
 	name  string
 	slugs []string
-}{
-	{"Getting started", []string{"index", "getting-started", "api-overview"}},
-	{"Core concepts", []string{"controllers", "services", "service-options", "middleware", "typed-handlers", "errors", "convert"}},
-	{"Routing", []string{"routing-groups", "routing-internals"}},
-	{"Inputs", []string{"forms", "files"}},
-	{"Data layer", []string{"repo", "database-gorm", "database-sqlc"}},
-	{"Messaging", []string{"events", "webhooks-outbox"}},
-	{"Platform", []string{"storage", "secrets-infisical", "health", "manifest", "multitenancy", "tracing"}},
-	{"CLI & tooling", []string{"cli", "mcp", "client-gen", "microservices"}},
-	{"Operations", []string{"config", "registry", "openapi", "testing"}},
 }
 
-var placeIndex = func() map[string]struct {
+// sections define the sidebar grouping and reading order. Unknown pages fall
+// into "More" after everything else.
+var sections = []struct {
+	name   string
+	groups []navGroup
+}{
+	{"Getting started", []navGroup{{"", []string{"index", "getting-started", "api-overview"}}}},
+	{"Core concepts", []navGroup{
+		{"", []string{"controllers", "services", "service-options"}},
+		{"Middleware", []string{"middleware", "auth-and-permissions"}},
+		{"", []string{"typed-handlers", "errors", "convert"}},
+	}},
+	{"Routing", []navGroup{{"", []string{"routing-groups", "routing-internals"}}}},
+	{"Inputs", []navGroup{{"", []string{"forms", "files"}}}},
+	{"Data layer", []navGroup{
+		{"", []string{"repo"}},
+		{"Databases", []string{"database-gorm", "database-sqlc"}},
+	}},
+	{"Messaging", []navGroup{{"", []string{"events", "webhooks-outbox"}}}},
+	{"Platform", []navGroup{{"", []string{"storage", "secrets-infisical", "health", "manifest", "multitenancy", "tracing"}}}},
+	{"CLI & tooling", []navGroup{{"", []string{"cli", "mcp", "client-gen", "microservices"}}}},
+	{"Operations", []navGroup{{"", []string{"config", "registry", "openapi", "testing"}}}},
+}
+
+type place struct {
 	section string
+	group   string
 	order   int
-} {
-	m := map[string]struct {
-		section string
-		order   int
-	}{}
+}
+
+var placeIndex = func() map[string]place {
+	m := map[string]place{}
 	order := 0
 	for _, sec := range sections {
-		for _, slug := range sec.slugs {
-			m[slug] = struct {
-				section string
-				order   int
-			}{sec.name, order}
-			order++
+		for _, g := range sec.groups {
+			for _, slug := range g.slugs {
+				m[slug] = place{section: sec.name, group: g.name, order: order}
+				order++
+			}
 		}
 	}
 	return m
 }()
 
-func placeFor(slug string) (section string, order int) {
+func placeFor(slug string) (section, group string, order int) {
 	if p, ok := placeIndex[slug]; ok {
-		return p.section, p.order
+		return p.section, p.group, p.order
 	}
-	return "More", 10000
+	return "More", "", 10000
 }
 
 func copyTree(src, dst string) error {

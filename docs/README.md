@@ -1,148 +1,27 @@
 # Bosun docs
 
-Short, focused pages — start at the top, jump to whatever you need.
+Bosun is a dependency-light Go web framework built on the Go 1.22 `net/http` router. It gives you typed handlers, a dependency-injection registry, and a set of optional modules, without codegen or a heavy runtime. Start with the tutorial, then jump to the guide for whatever you are building.
 
 ## Start here
 
-- [**Getting started**](./getting-started.md) — smallest end-to-end app, line by line.
-- [**API overview**](./api-overview.md) — tour of every public symbol you'll call.
+The [getting started](./getting-started.md) tutorial takes you from an empty directory to a running service with routing, injection, a database, middleware, and errors. The [API overview](./api-overview.md) is the reference for every public symbol.
 
 ## Core concepts
 
-- [**Controllers**](./controllers.md) — registering routes; basic → advanced.
-- [**Services**](./services.md) — DI, lifecycle, hot reload; basic → advanced.
-- [**Service options**](./service-options.md) — defining a config value once (salt rounds, JWT secret, etc.) and injecting it everywhere.
-- [**Middleware**](./middleware.md) — including auth + typed context values; basic → advanced.
-- [**Typed handlers**](./typed-handlers.md) — `Req[In]`, body parsing, response shapes, tag binding.
-- [**Errors**](./errors.md) — `bosun.E`, status mapping, public vs internal messages.
-- [**Convert**](./convert.md) — `bosun.Convert[Dst, Src]` for DB-model ↔ API-DTO mapping.
+[Controllers](./controllers.md) own groups of routes. [Services](./services.md) hold your logic and are wired by dependency injection, and [service options](./service-options.md) define a configuration value once and inject it everywhere. [Middleware](./middleware.md) wraps handlers, and the [auth and permissions](./auth-and-permissions.md) guide builds the common authentication and role-check chain. [Typed handlers](./typed-handlers.md) explain request binding and response encoding, [errors](./errors.md) cover status mapping, and [convert](./convert.md) maps a model to a response DTO.
+
+## Routing
+
+[Route groups](./routing-groups.md) share a prefix and middleware across related routes, and [routing internals](./routing-internals.md) explain path syntax, wildcards, middleware ordering, and route inspection.
 
 ## Inputs
 
-- [**Forms**](./forms.md) — URL-encoded and multipart-form fields.
-- [**Files**](./files.md) — uploads (small + streaming), downloads.
-- Query params — see `query:` tag in [`typed-handlers.md`](./typed-handlers.md#tag-binding-reference).
+[Forms](./forms.md) covers URL-encoded and multipart fields, and [files](./files.md) covers uploads, streaming, and downloads.
 
 ## Data layer
 
-- [**Repo module**](./repo.md) — generic `Repo[T]` interface + GORM driver with multi-DB and transaction support.
-- [**GORM**](./database-gorm.md) — typical Bosun + GORM setup (hand-rolled repo pattern).
-- [**sqlc**](./database-sqlc.md) — typical Bosun + sqlc setup.
+The [repo module](./repo.md) provides a generic `Repo[T]` with a query builder and transactions. The [GORM](./database-gorm.md) and [sqlc](./database-sqlc.md) guides show the hand-rolled patterns for each.
 
-## Ops & operations
+## Operations
 
-- [**Config & hot reload**](./config.md) — `Dynamic[T]`, file/env/DB sources, live reload.
-- [**Testing**](./testing.md) — driving the app from Go tests with stubs.
-
-## Quick reference
-
-### Route registration
-
-```go
-// Typed (99% of routes):
-bosun.Get(r,    "/things/:id", c.Get)
-bosun.Post(r,   "/things",     c.Create)
-bosun.Put(r,    "/things/:id", c.Update)
-bosun.Delete(r, "/things/:id", c.Delete)
-bosun.Patch(r,  "/things/:id", c.Patch)
-
-// Untyped escape hatch (streaming/hijack/file downloads):
-r.Get("/stream", c.Stream)
-```
-
-Path syntax: `:id` and `{id}` both work.
-
-### Handler shape
-
-```go
-func(ctx context.Context, req *bosun.Req[In]) (Out, error)
-```
-
-`In` controls body parsing: struct (typed + binding), `string` (raw),
-`struct{}` (none), `any` (loose JSON).
-
-`Out` controls response encoding: struct (JSON), `string` (text/plain),
-`[]byte` (octet-stream), `struct{}` (no body).
-
-### Tag binding
-
-```go
-type Example struct {
-    UserID  int    `path:"user_id"`    // from /users/{user_id} or /users/:user_id
-    Limit   int    `query:"limit"`     // from ?limit=50
-    Trace   string `header:"X-Trace"`  // from request header
-    Token   string `form:"token"`      // from x-www-form-urlencoded body
-    Name    string `json:"name"`       // from JSON body field
-}
-```
-
-### Registration declarations
-
-```go
-var _ = bosun.Service[T]()                       // injectable singleton
-var _ = bosun.Middleware[T]()                    // service + Handle check
-var _ = bosun.Controller[T]("/prefix")           // service + Routes mount
-var _ = bosun.Default[T](buildFn)                // overridable default provider
-var _ = bosun.DefaultBind[Iface, Impl]()         // bind interface to impl
-var _ = bosun.DefaultDynamic[T](buildFn)         // hot-reloadable default
-var _ = config.Bind[T]("key")                    // JSON key → *Dynamic[T]
-```
-
-### Errors
-
-```go
-return Out{}, bosun.E(http.StatusNotFound, "user not found", causeErr)
-```
-
-`status` + `publicMsg` go to the client. `cause` goes to the audit log
-only (with file:line origin).
-
-### Struct mapping
-
-```go
-type User struct { ID, Name, Email, Password string }
-type UserOut struct { ID, Name, Email string }
-
-out, _ := bosun.Convert[UserOut](user)   // Password isn't on UserOut → can't leak
-```
-
-Match by exact name; override with `convert:"Other"`; skip with `convert:"-"`.
-
-### Parameterized middleware
-
-```go
-type HasPermissionMiddleware struct{}
-func (m *HasPermissionMiddleware) Handle(next http.Handler) http.Handler        { ... }
-func (m *HasPermissionMiddleware) Configure(roles []string) bosun.MiddlewareHandler {
-    return bosun.MiddlewareFunc(func(next http.Handler) http.Handler { ... })
-}
-var _ = bosun.Middleware[HasPermissionMiddleware]()
-
-bosun.Get(r, "/admin", c.Admin,
-    bosun.Use[RequireAuth](),
-    bosun.Use[HasPermissionMiddleware]([]string{"admin"}),
-)
-```
-
-`Use[T](args...)` calls `T.Configure(args...)` at app start.
-
-### Typed context values
-
-```go
-// In middleware:
-ctx := bosun.WithValue(r.Context(), user)   // user is *AuthUser
-next.ServeHTTP(w, r.WithContext(ctx))
-
-// In handler:
-u := bosun.Value[AuthUser](ctx)   // *AuthUser
-```
-
-Type is the key — no string slots, no collisions.
-
----
-
-## Where to look next
-
-- The kitchen-sink example app: [`examples/kitchen-sink/main.go`](../examples/kitchen-sink/main.go) — covers auditor + encrypted config + typed routes + rate limiting.
-- The built-in middleware: [`mw/`](../mw/).
-- The bundled modules: [`modules/`](../modules/).
+[Config and hot reload](./config.md) binds typed options to files, environment, and databases. [Testing](./testing.md) drives an app from a Go test with stubs.

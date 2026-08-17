@@ -1,7 +1,7 @@
-// Bosun docs — vanilla JS, no dependencies. Design ported from the AmberStack
+// Bosun docs - vanilla JS, no dependencies. Design ported from the AmberStack
 // "Gantry" docs system. Handles sectioned navigation, page rendering, an
 // "on this page" table of contents with scroll-spy, prev/next, a light/dark
-// theme toggle, and a ⌘K command-palette search over the build-time index.
+// theme toggle, and a Cmd+K command-palette search over the build-time index.
 (function () {
   "use strict";
 
@@ -23,9 +23,9 @@
   var current = "";
   var spyTargets = [];
 
-  // ---------- theme ----------
-  var SUN = '<svg viewBox="0 0 18 18" width="18" height="18" fill="none"><circle cx="9" cy="9" r="3.6" stroke="currentColor" stroke-width="1.5"/><path d="M9 1v2M9 15v2M1 9h2M15 9h2M3.3 3.3l1.4 1.4M13.3 13.3l1.4 1.4M14.7 3.3l-1.4 1.4M4.7 13.3l-1.4 1.4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>';
-  var MOON = '<svg viewBox="0 0 18 18" width="18" height="18" fill="none"><path d="M15 10.5A6.5 6.5 0 0 1 7.5 3a6.5 6.5 0 1 0 7.5 7.5Z" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/></svg>';
+  // ---------- theme (Lucide sun / moon icons) ----------
+  var SUN = '<svg class="lucide" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2"/><path d="M12 20v2"/><path d="m4.93 4.93 1.41 1.41"/><path d="m17.66 17.66 1.41 1.41"/><path d="M2 12h2"/><path d="M20 12h2"/><path d="m6.34 17.66-1.41 1.41"/><path d="m19.07 4.93-1.41 1.41"/></svg>';
+  var MOON = '<svg class="lucide" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"/></svg>';
 
   function currentTheme() {
     var t = localStorage.getItem("bosun-theme");
@@ -44,7 +44,18 @@
   applyTheme();
 
   var isMac = /Mac|iPhone|iPad/.test(navigator.platform);
-  els.searchKbd.textContent = isMac ? "⌘ K" : "Ctrl K";
+  els.searchKbd.textContent = isMac ? "Cmd K" : "Ctrl K";
+
+  // Lucide icon helper (stroke-based; inherits currentColor).
+  function lucide(inner, size) {
+    size = size || 14;
+    return '<svg class="lucide" viewBox="0 0 24 24" width="' + size + '" height="' + size +
+      '" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">' + inner + "</svg>";
+  }
+  var ICON = {
+    left: '<path d="m12 19-7-7 7-7"/><path d="M19 12H5"/>',
+    right: '<path d="M5 12h14"/><path d="m12 5 7 7-7 7"/>',
+  };
 
   // ---------- helpers ----------
   function escapeHtml(s) {
@@ -62,9 +73,27 @@
   }
 
   // ---------- sidebar ----------
+  var CHEVRON = '<svg class="lucide chev" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"/></svg>';
+
+  function collapsedSet() {
+    try { return new Set(JSON.parse(localStorage.getItem("bosun-collapsed") || "[]")); }
+    catch (e) { return new Set(); }
+  }
+  function saveCollapsed(set) {
+    localStorage.setItem("bosun-collapsed", JSON.stringify([].slice.call(set)));
+  }
+  function appendItem(parent, e, active) {
+    var a = document.createElement("a");
+    a.className = "nav-item" + (e.slug === active ? " active" : "");
+    a.href = "#" + e.slug;
+    a.textContent = e.title;
+    parent.appendChild(a);
+  }
+
   function renderNav(active) {
     els.nav.innerHTML = "";
-    var lastSection = null;
+    var collapsed = collapsedSet();
+    var lastSection = null, lastGroup = null, rail = null;
     index.forEach(function (e) {
       if (e.section !== lastSection) {
         var label = document.createElement("div");
@@ -72,12 +101,44 @@
         label.textContent = e.section || "More";
         els.nav.appendChild(label);
         lastSection = e.section;
+        lastGroup = null;
+        rail = null;
       }
-      var a = document.createElement("a");
-      a.className = "nav-item" + (e.slug === active ? " active" : "");
-      a.href = "#" + e.slug;
-      a.textContent = e.title;
-      els.nav.appendChild(a);
+      if (e.group) {
+        if (e.group !== lastGroup) {
+          lastGroup = e.group;
+          var key = (e.section || "") + "/" + e.group;
+          var wrap = document.createElement("div");
+          wrap.className = "subcat";
+          var header = document.createElement("button");
+          header.type = "button";
+          header.className = "subcat-header";
+          header.innerHTML = CHEVRON + "<span>" + escapeHtml(e.group) + "</span>";
+          rail = document.createElement("div");
+          rail.className = "subcat-rail";
+          var hasActive = index.some(function (x) {
+            return x.section === e.section && x.group === e.group && x.slug === active;
+          });
+          if (collapsed.has(key) && !hasActive) wrap.classList.add("collapsed");
+          header.addEventListener("click", (function (k, w) {
+            return function () {
+              w.classList.toggle("collapsed");
+              var set = collapsedSet();
+              if (w.classList.contains("collapsed")) set.add(k);
+              else set.delete(k);
+              saveCollapsed(set);
+            };
+          })(key, wrap));
+          wrap.appendChild(header);
+          wrap.appendChild(rail);
+          els.nav.appendChild(wrap);
+        }
+        appendItem(rail, e, active);
+      } else {
+        lastGroup = null;
+        rail = null;
+        appendItem(els.nav, e, active);
+      }
     });
   }
 
@@ -125,14 +186,17 @@
     els.prevnext.innerHTML = "";
     var i = index.findIndex(function (e) { return e.slug === slug; });
     if (i < 0) return;
-    if (i > 0) els.prevnext.appendChild(pnCard(index[i - 1], "prev", "← Previous"));
+    if (i > 0) els.prevnext.appendChild(pnCard(index[i - 1], "prev"));
     else els.prevnext.appendChild(document.createElement("div"));
-    if (i < index.length - 1) els.prevnext.appendChild(pnCard(index[i + 1], "next", "Next →"));
+    if (i < index.length - 1) els.prevnext.appendChild(pnCard(index[i + 1], "next"));
   }
-  function pnCard(e, cls, label) {
+  function pnCard(e, cls) {
     var a = document.createElement("a");
     a.className = cls;
     a.href = "#" + e.slug;
+    var label = cls === "prev"
+      ? lucide(ICON.left) + " Previous"
+      : "Next " + lucide(ICON.right);
     a.innerHTML = '<span class="pn-label">' + label + '</span><span class="pn-title">' + escapeHtml(e.title) + "</span>";
     return a;
   }
@@ -146,7 +210,7 @@
         var e = byslug[slug];
         var crumb = e ? '<div class="breadcrumb">' + escapeHtml(e.section || "Docs") + "  /  " + escapeHtml(e.title) + "</div>" : "";
         els.article.innerHTML = crumb + html;
-        document.title = (e ? e.title + " · " : "") + "Bosun docs";
+        document.title = (e ? e.title + " - " : "") + "Bosun docs";
         renderNav(slug);
         renderPrevNext(slug);
         renderToc();
@@ -215,7 +279,7 @@
     palSel = 0;
     els.presults.innerHTML = "";
     if (!palHits.length) {
-      els.presults.innerHTML = '<div class="empty">No matches for “' + escapeHtml(query) + '”</div>';
+      els.presults.innerHTML = '<div class="empty">No matches for "' + escapeHtml(query) + '"</div>';
       return;
     }
     var lastSection = null;

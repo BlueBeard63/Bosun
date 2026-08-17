@@ -26,14 +26,20 @@ import (
 // Bus is the in-memory eventmod.Bus. The zero value is usable after Init (called
 // automatically by the DI container) or via New.
 type Bus struct {
-	mu     sync.Mutex
-	subs   []*subscription
-	rr     map[string]int // group key -> round-robin cursor
-	closed bool
-	nextID uint64
+	mu         sync.Mutex
+	subs       []*subscription
+	responders []*responder
+	rr         map[string]int // group key -> round-robin cursor
+	respRR     map[string]int // subject -> RPC round-robin cursor
+	closed     bool
+	nextID     uint64
 }
 
-var _ eventmod.Bus = (*Bus)(nil)
+var (
+	_ eventmod.Bus       = (*Bus)(nil)
+	_ eventmod.Requester = (*Bus)(nil)
+	_ eventmod.Responder = (*Bus)(nil)
+)
 
 // New returns a ready in-memory bus (for tests and manual wiring).
 func New() *Bus { return &Bus{rr: map[string]int{}} }
@@ -49,6 +55,9 @@ func (b *Bus) Init() error {
 func (b *Bus) ensureLocked() {
 	if b.rr == nil {
 		b.rr = map[string]int{}
+	}
+	if b.respRR == nil {
+		b.respRR = map[string]int{}
 	}
 }
 
@@ -308,5 +317,7 @@ func Default() struct{} {
 	bosun.DefaultBind[eventmod.Bus, Bus]()
 	bosun.DefaultBind[eventmod.Publisher, Bus]()
 	bosun.DefaultBind[eventmod.Subscriber, Bus]()
+	bosun.DefaultBind[eventmod.Requester, Bus]()
+	bosun.DefaultBind[eventmod.Responder, Bus]()
 	return struct{}{}
 }

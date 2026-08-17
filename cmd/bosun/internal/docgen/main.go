@@ -286,7 +286,10 @@ var sections = []struct {
 		{"", []string{"repo"}},
 		{"Databases", []string{"database-gorm", "database-sqlc"}},
 	}},
-	{"Messaging", []navGroup{{"", []string{"events", "webhooks-outbox"}}}},
+	{"Messaging", []navGroup{
+		{"Events", []string{"events", "event-backends", "event-rpc"}},
+		{"", []string{"webhooks-outbox"}},
+	}},
 	{"Platform", []navGroup{{"", []string{"storage", "secrets-infisical", "health", "manifest", "multitenancy", "tracing"}}}},
 	{"CLI & tooling", []navGroup{{"", []string{"cli", "mcp", "client-gen", "microservices"}}}},
 	{"Operations", []navGroup{{"", []string{"config", "registry", "openapi", "testing"}}}},

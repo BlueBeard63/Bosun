@@ -14,9 +14,11 @@ package eventamqpmod
 
 import (
 	"context"
+	"log"
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/amberstack/bosun"
 	"github.com/amberstack/bosun/modules/eventmod"
@@ -50,18 +52,28 @@ func (o *Options) kind() string {
 type Bus struct {
 	Opts *Options // injected
 
-	mu     sync.Mutex
-	conn   *amqp.Connection
-	pubCh  *amqp.Channel
-	pubMu  sync.Mutex // amqp channels are not safe for concurrent publish
-	subs   []*subscription
-	closed bool
+	mu      sync.Mutex
+	conn    *amqp.Connection
+	pubCh   *amqp.Channel
+	pubMu   sync.Mutex    // amqp channels are not safe for concurrent publish
+	subs    []*subscription
+	closed  bool
+	closeCh chan struct{} // closed on Close, to stop the reconnect supervisor
 }
 
 var _ eventmod.Bus = (*Bus)(nil)
 
-// Init dials the broker, opens a publish channel, and declares the exchange.
+// Init dials the broker, opens a publish channel, declares the exchange, and
+// starts a supervisor that reconnects if the connection later drops.
 func (b *Bus) Init() error {
+	b.closeCh = make(chan struct{})
+	return b.connect()
+}
+
+// connect dials the broker, (re)opens the publish channel + exchange, and starts
+// a supervisor watching this connection for an unexpected close. Called once at
+// Init and again on every reconnect.
+func (b *Bus) connect() error {
 	conn, err := amqp.Dial(b.Opts.URL)
 	if err != nil {
 		return err
@@ -75,9 +87,70 @@ func (b *Bus) Init() error {
 		_ = conn.Close()
 		return err
 	}
+	b.mu.Lock()
 	b.conn = conn
 	b.pubCh = ch
+	b.mu.Unlock()
+	go b.supervise(conn)
 	return nil
+}
+
+// supervise blocks until conn closes. On an UNEXPECTED close (not Bus.Close), it
+// redials with backoff and re-establishes the publish channel + every
+// subscription — so a broker blip doesn't permanently kill publishers or silently
+// leave consumers dead. Without this, the consumer goroutines' `range deliveries`
+// simply ends when the channel drops and never resumes.
+func (b *Bus) supervise(conn *amqp.Connection) {
+	errCh := conn.NotifyClose(make(chan *amqp.Error, 1))
+	select {
+	case <-b.closeCh:
+		return
+	case reason := <-errCh:
+		if b.isClosed() {
+			return
+		}
+		log.Printf("eventamqpmod: broker connection lost (%v) — reconnecting", reason)
+	}
+	for attempt := 0; ; attempt++ {
+		select {
+		case <-b.closeCh:
+			return
+		case <-time.After(backoff(attempt)):
+		}
+		if err := b.connect(); err != nil { // connect() starts a fresh supervisor on success
+			continue
+		}
+		b.reestablish()
+		log.Printf("eventamqpmod: reconnected to broker; subscriptions re-established")
+		return
+	}
+}
+
+// reestablish re-creates every recorded subscription on the current connection.
+func (b *Bus) reestablish() {
+	b.mu.Lock()
+	subs := make([]*subscription, len(b.subs))
+	copy(subs, b.subs)
+	b.mu.Unlock()
+	for _, s := range subs {
+		if err := b.establish(s); err != nil {
+			log.Printf("eventamqpmod: re-subscribe %q failed: %v (will retry on next drop)", s.subject, err)
+		}
+	}
+}
+
+func (b *Bus) isClosed() bool {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.closed
+}
+
+// backoff caps the redial delay at ~3.2s (200ms, 400ms, … doubling).
+func backoff(attempt int) time.Duration {
+	if attempt > 4 {
+		attempt = 4
+	}
+	return (200 * time.Millisecond) << attempt
 }
 
 // Close tears down consumer channels and the connection.
@@ -88,6 +161,9 @@ func (b *Bus) Close() error {
 		return nil
 	}
 	b.closed = true
+	if b.closeCh != nil {
+		close(b.closeCh) // stop the reconnect supervisor
+	}
 	subs := b.subs
 	b.subs = nil
 	conn := b.conn
@@ -95,7 +171,9 @@ func (b *Bus) Close() error {
 	b.mu.Unlock()
 
 	for _, s := range subs {
-		_ = s.ch.Close() // ends the delivery range, stopping the goroutine
+		if s.ch != nil {
+			_ = s.ch.Close() // ends the delivery range, stopping the goroutine
+		}
 	}
 	if pubCh != nil {
 		_ = pubCh.Close()
@@ -134,29 +212,52 @@ func (b *Bus) Publish(ctx context.Context, subject string, data []byte, opts ...
 }
 
 type subscription struct {
-	ch  *amqp.Channel
-	bus *Bus
+	bus     *Bus
+	subject string
+	handler eventmod.Handler
+	opts    []eventmod.SubOption
+	ch      *amqp.Channel // current consumer channel; replaced on reconnect
 }
 
-// Subscribe binds a queue to the exchange and consumes it.
+// Subscribe records the subscription and establishes it on the current
+// connection. The recorded params let the supervisor re-establish it verbatim
+// after a reconnect.
 func (b *Bus) Subscribe(ctx context.Context, subject string, h eventmod.Handler, opts ...eventmod.SubOption) (eventmod.Subscription, error) {
-	cfg := eventmod.ResolveSub(opts)
-	b.mu.Lock()
-	if b.closed {
-		b.mu.Unlock()
+	if b.isClosed() {
 		return nil, eventmod.ErrClosed
 	}
-	conn := b.conn
+	s := &subscription{bus: b, subject: subject, handler: h, opts: opts}
+	if err := b.establish(s); err != nil {
+		return nil, err
+	}
+	b.mu.Lock()
+	b.subs = append(b.subs, s)
 	b.mu.Unlock()
+	return &subHandle{bus: b, sub: s}, nil
+}
+
+// establish (re)opens s's channel, declares + binds its queue, starts consuming,
+// and runs the delivery loop. Idempotent per call — used by Subscribe and by the
+// supervisor on reconnect. The delivery goroutine ends when the channel drops; a
+// reconnect calls establish again to start a fresh one.
+func (b *Bus) establish(s *subscription) error {
+	b.mu.Lock()
+	conn := b.conn
+	closed := b.closed
+	b.mu.Unlock()
+	if closed {
+		return eventmod.ErrClosed
+	}
+	cfg := eventmod.ResolveSub(s.opts)
 
 	ch, err := conn.Channel()
 	if err != nil {
-		return nil, err
+		return err
 	}
 	if b.Opts.Prefetch > 0 {
 		if err := ch.Qos(b.Opts.Prefetch, 0, false); err != nil {
 			_ = ch.Close()
-			return nil, err
+			return err
 		}
 	}
 
@@ -165,39 +266,38 @@ func (b *Bus) Subscribe(ctx context.Context, subject string, h eventmod.Handler,
 		q, err := ch.QueueDeclare(cfg.Group, true, false, false, false, nil) // durable, shared
 		if err != nil {
 			_ = ch.Close()
-			return nil, err
+			return err
 		}
 		qname = q.Name
 	} else {
 		q, err := ch.QueueDeclare("", false, true, true, false, nil) // exclusive, auto-delete
 		if err != nil {
 			_ = ch.Close()
-			return nil, err
+			return err
 		}
 		qname = q.Name
 	}
-	if err := ch.QueueBind(qname, translateKey(subject), b.Opts.Exchange, false, nil); err != nil {
+	if err := ch.QueueBind(qname, translateKey(s.subject), b.Opts.Exchange, false, nil); err != nil {
 		_ = ch.Close()
-		return nil, err
+		return err
 	}
 	deliveries, err := ch.Consume(qname, "", false, false, false, false, nil) // manual ack
 	if err != nil {
 		_ = ch.Close()
-		return nil, err
+		return err
 	}
 
-	s := &subscription{ch: ch, bus: b}
 	b.mu.Lock()
-	b.subs = append(b.subs, s)
+	s.ch = ch
 	b.mu.Unlock()
 
 	go func() {
 		for m := range deliveries {
-			d := &delivery{bus: b, subject: subject, amqpDel: m, msg: toMessage(subject, m)}
-			_ = h(context.Background(), d)
+			d := &delivery{bus: b, subject: s.subject, amqpDel: m, msg: toMessage(s.subject, m)}
+			_ = s.handler(context.Background(), d)
 		}
 	}()
-	return &subHandle{bus: b, sub: s}, nil
+	return nil
 }
 
 func toMessage(subject string, m amqp.Delivery) eventmod.Message {
@@ -259,8 +359,12 @@ func (h *subHandle) Unsubscribe() error {
 			break
 		}
 	}
+	ch := h.sub.ch
 	h.bus.mu.Unlock()
-	return h.sub.ch.Close()
+	if ch != nil {
+		return ch.Close()
+	}
+	return nil
 }
 
 // translateKey converts an eventmod subject into an AMQP topic routing key: the

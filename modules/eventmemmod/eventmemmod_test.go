@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/amberstack/bosun/modules/eventmod"
-	"github.com/amberstack/bosun/modules/eventmemmod"
+	"github.com/bluebeard63/bosun/modules/eventmod"
+	"github.com/bluebeard63/bosun/modules/eventmemmod"
 )
 
 // waitFor polls cond up to a deadline so tests don't sleep for fixed periods.

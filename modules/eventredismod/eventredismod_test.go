@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/amberstack/bosun/modules/eventmod"
-	"github.com/amberstack/bosun/modules/eventredismod"
+	"github.com/bluebeard63/bosun/modules/eventmod"
+	"github.com/bluebeard63/bosun/modules/eventredismod"
 )
 
 // Integration tests run only when BOSUN_REDIS_ADDR points at a Redis server,

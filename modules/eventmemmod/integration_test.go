@@ -5,10 +5,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/amberstack/bosun"
-	"github.com/amberstack/bosun/modules/eventmemmod"
-	"github.com/amberstack/bosun/modules/eventmod"
-	"github.com/amberstack/bosun/registry"
+	"github.com/bluebeard63/bosun"
+	"github.com/bluebeard63/bosun/modules/eventmemmod"
+	"github.com/bluebeard63/bosun/modules/eventmod"
+	"github.com/bluebeard63/bosun/registry"
 )
 
 // TestDIIntegration boots a real bosun app with the in-memory bus registered as

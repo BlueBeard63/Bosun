@@ -1,7 +1,7 @@
 package eventmod
 
 // Direction records whether a service produces or consumes a subject, for the
-// deploy manifest (github.com/amberstack/bosun/modules/manifestmod).
+// deploy manifest (github.com/bluebeard63/bosun/modules/manifestmod).
 type Direction string
 
 const (

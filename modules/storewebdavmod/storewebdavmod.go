@@ -19,8 +19,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/amberstack/bosun"
-	"github.com/amberstack/bosun/modules/storemod"
+	"github.com/bluebeard63/bosun"
+	"github.com/bluebeard63/bosun/modules/storemod"
 )
 
 // Options configures the WebDAV endpoint.

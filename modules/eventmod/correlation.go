@@ -3,7 +3,7 @@ package eventmod
 import (
 	"context"
 
-	"github.com/amberstack/bosun"
+	"github.com/bluebeard63/bosun"
 )
 
 // correlationCarrier propagates the request correlation id (and, when present,

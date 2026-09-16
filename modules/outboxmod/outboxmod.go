@@ -24,10 +24,10 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/amberstack/bosun"
-	"github.com/amberstack/bosun/modules/eventmod"
-	"github.com/amberstack/bosun/modules/gormrepomod"
-	"github.com/amberstack/bosun/modules/repomod"
+	"github.com/bluebeard63/bosun"
+	"github.com/bluebeard63/bosun/modules/eventmod"
+	"github.com/bluebeard63/bosun/modules/gormrepomod"
+	"github.com/bluebeard63/bosun/modules/repomod"
 )
 
 // HeaderID is the message header carrying the outbox row id, for consumer dedupe.

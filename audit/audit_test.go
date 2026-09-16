@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/amberstack/bosun"
+	"github.com/bluebeard63/bosun"
 )
 
 func TestSlogAuditor(t *testing.T) {

@@ -7,7 +7,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/amberstack/bosun/modules/infisicalmod"
+	"github.com/bluebeard63/bosun/modules/infisicalmod"
 )
 
 func TestLoad(t *testing.T) {

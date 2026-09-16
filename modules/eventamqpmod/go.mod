@@ -1,8 +1,8 @@
-module github.com/amberstack/bosun/modules/eventamqpmod
+module github.com/bluebeard63/bosun/modules/eventamqpmod
 
 go 1.22
 
 require (
-	github.com/amberstack/bosun v0.5.1
+	github.com/bluebeard63/bosun v0.6.0
 	github.com/rabbitmq/amqp091-go v1.10.0
 )

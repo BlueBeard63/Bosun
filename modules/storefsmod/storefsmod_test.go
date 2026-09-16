@@ -8,9 +8,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/amberstack/bosun/modules/storefsmod"
-	"github.com/amberstack/bosun/modules/storemod"
-	"github.com/amberstack/bosun/modules/storemod/storemodtest"
+	"github.com/bluebeard63/bosun/modules/storefsmod"
+	"github.com/bluebeard63/bosun/modules/storemod"
+	"github.com/bluebeard63/bosun/modules/storemod/storemodtest"
 )
 
 func newStore(t *testing.T, opts *storefsmod.Options) *storefsmod.FSStore {

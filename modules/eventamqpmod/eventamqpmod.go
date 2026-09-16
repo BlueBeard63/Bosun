@@ -5,7 +5,7 @@
 // auto-delete queue so it receives every message (fan-out). Delivery is manual
 // ack; a handler error re-publishes with an incremented attempt (at-least-once).
 //
-//	import _ "github.com/amberstack/bosun/modules/eventamqpmod"
+//	import _ "github.com/bluebeard63/bosun/modules/eventamqpmod"
 //	var _ = eventamqpmod.Use()
 //
 // eventmod's `>` tail wildcard is translated to AMQP's `#`; `*` is the same in
@@ -20,8 +20,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/amberstack/bosun"
-	"github.com/amberstack/bosun/modules/eventmod"
+	"github.com/bluebeard63/bosun"
+	"github.com/bluebeard63/bosun/modules/eventmod"
 	amqp "github.com/rabbitmq/amqp091-go"
 )
 

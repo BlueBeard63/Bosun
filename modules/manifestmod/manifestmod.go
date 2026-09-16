@@ -17,8 +17,8 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/amberstack/bosun"
-	"github.com/amberstack/bosun/modules/eventmod"
+	"github.com/bluebeard63/bosun"
+	"github.com/bluebeard63/bosun/modules/eventmod"
 )
 
 // RouteAdvert describes one route in the manifest.

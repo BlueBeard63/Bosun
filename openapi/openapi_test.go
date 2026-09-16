@@ -10,7 +10,7 @@ import (
 	"testing/fstest"
 	"time"
 
-	"github.com/amberstack/bosun"
+	"github.com/bluebeard63/bosun"
 )
 
 // --- fixture controller exercised through a real app ---

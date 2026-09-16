@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/amberstack/bosun/cmd/bosun/internal/scaffold"
+	"github.com/bluebeard63/bosun/cmd/bosun/internal/scaffold"
 )
 
 func mustParse(t *testing.T, path string) {
@@ -52,7 +52,7 @@ func TestWriteService(t *testing.T) {
 	if strings.Contains(string(gomod), "v0.0.0") {
 		t.Fatalf("go.mod pins placeholder bosun version:\n%s", gomod)
 	}
-	if !strings.Contains(string(gomod), "require github.com/amberstack/bosun v") {
+	if !strings.Contains(string(gomod), "require github.com/bluebeard63/bosun v") {
 		t.Fatalf("go.mod missing bosun require with a real version:\n%s", gomod)
 	}
 }

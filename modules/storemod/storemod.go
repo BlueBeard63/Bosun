@@ -4,8 +4,8 @@
 // concrete implementation. Hosts swap drivers without touching application code,
 // the same way the repo module swaps databases.
 //
-//	import "github.com/amberstack/bosun/modules/storemod"
-//	import "github.com/amberstack/bosun/modules/storefsmod"
+//	import "github.com/bluebeard63/bosun/modules/storemod"
+//	import "github.com/bluebeard63/bosun/modules/storefsmod"
 //
 //	var _ = storefsmod.For()
 //

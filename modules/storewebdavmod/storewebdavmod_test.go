@@ -5,7 +5,7 @@ import (
 	"os"
 	"testing"
 
-	"github.com/amberstack/bosun/modules/storemod/storemodtest"
+	"github.com/bluebeard63/bosun/modules/storemod/storemodtest"
 )
 
 func TestParseMultistatus(t *testing.T) {

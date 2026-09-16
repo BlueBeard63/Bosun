@@ -20,7 +20,7 @@ import (
 	"github.com/yuin/goldmark/ast"
 	"github.com/yuin/goldmark/text"
 
-	"github.com/amberstack/bosun/cmd/bosun/internal/docrender"
+	"github.com/bluebeard63/bosun/cmd/bosun/internal/docrender"
 )
 
 // Heading is one heading in a page, for the table of contents and search.

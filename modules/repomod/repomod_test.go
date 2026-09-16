@@ -5,7 +5,7 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/amberstack/bosun/modules/repomod"
+	"github.com/bluebeard63/bosun/modules/repomod"
 )
 
 // stubRepo is a hand-written test fake; the existence of this file

@@ -4,7 +4,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/amberstack/bosun"
+	"github.com/bluebeard63/bosun"
 )
 
 func TestHealthRoutes(t *testing.T) {

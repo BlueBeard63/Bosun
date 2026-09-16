@@ -1,7 +1,7 @@
 // Package authmod is an installable bosun module. Importing it mounts
 // login routes into the host app:
 //
-//	import _ "github.com/amberstack/bosun/modules/authmod"
+//	import _ "github.com/bluebeard63/bosun/modules/authmod"
 //
 // Hosts can override Options (register your own *authmod.Options instance),
 // replace the UserStore extension point (register your own implementation
@@ -13,7 +13,7 @@ import (
 	"fmt"
 	"net/http"
 
-	"github.com/amberstack/bosun"
+	"github.com/bluebeard63/bosun"
 )
 
 // --- extension point: the host provides real user storage ---

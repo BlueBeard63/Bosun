@@ -9,14 +9,14 @@ The core framework is built on `net/http` (Go 1.22+ routing) with no external de
 Bosun is a private module, so set `GOPRIVATE` first, then add it to your app.
 
 ```sh
-go env -w GOPRIVATE=github.com/amberstack/*
-go get github.com/amberstack/bosun
+go env -w GOPRIVATE=github.com/bluebeard63/*
+go get github.com/bluebeard63/bosun
 ```
 
 Install the CLI the same way:
 
 ```sh
-go install github.com/amberstack/bosun/cmd/bosun@latest
+go install github.com/bluebeard63/bosun/cmd/bosun@latest
 ```
 
 ## Quickstart
@@ -28,8 +28,8 @@ import (
 	"context"
 	"log"
 
-	"github.com/amberstack/bosun"
-	"github.com/amberstack/bosun/mw"
+	"github.com/bluebeard63/bosun"
+	"github.com/bluebeard63/bosun/mw"
 )
 
 type GreetService struct{}
@@ -108,22 +108,22 @@ Run `bosun <command> --help` for options, or see the [CLI reference](./docs/cli.
 
 ## Repository layout
 
-The core module is `github.com/amberstack/bosun` (root package plus `registry/`, `config/`, `mw/`, `audit/`, `openapi/`, and the dependency-light modules under `modules/`). Drivers with heavy dependencies (`modules/eventamqpmod`, `eventnatsmod`, `eventredismod`, `stores3mod`, `traceotelmod`) and the CLI (`cmd/bosun`) are nested modules, tied together for local development by the top-level `go.work`.
+The core module is `github.com/bluebeard63/bosun` (root package plus `registry/`, `config/`, `mw/`, `audit/`, `openapi/`, and the dependency-light modules under `modules/`). Drivers with heavy dependencies (`modules/eventamqpmod`, `eventnatsmod`, `eventredismod`, `stores3mod`, `traceotelmod`) and the CLI (`cmd/bosun`) are nested modules, tied together for local development by the top-level `go.work`.
 
 ## Installing privately
 
 `GOPRIVATE` keeps the module off the public proxy; point Git at your credentials to fetch it.
 
 ```sh
-go env -w GOPRIVATE=github.com/amberstack/*
+go env -w GOPRIVATE=github.com/bluebeard63/*
 git config --global url."git@github.com:".insteadOf "https://github.com/"   # or a token in CI
-go get github.com/amberstack/bosun@vX.Y.Z
+go get github.com/bluebeard63/bosun@vX.Y.Z
 ```
 
 During development alongside an app, skip publishing with a replace directive in the app's `go.mod` or a `go.work` file:
 
 ```
-replace github.com/amberstack/bosun => ../bosun
+replace github.com/bluebeard63/bosun => ../bosun
 ```
 
 ## Tests

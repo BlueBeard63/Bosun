@@ -10,7 +10,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/amberstack/bosun/modules/manifestmod"
+	"github.com/bluebeard63/bosun/modules/manifestmod"
 )
 
 func manifestCmd() *cobra.Command {

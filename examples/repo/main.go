@@ -12,10 +12,10 @@ import (
 	"log"
 	"net/http"
 
-	"github.com/amberstack/bosun"
-	"github.com/amberstack/bosun/modules/gormrepomod"
-	"github.com/amberstack/bosun/modules/repomod"
-	"github.com/amberstack/bosun/registry"
+	"github.com/bluebeard63/bosun"
+	"github.com/bluebeard63/bosun/modules/gormrepomod"
+	"github.com/bluebeard63/bosun/modules/repomod"
+	"github.com/bluebeard63/bosun/registry"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 )

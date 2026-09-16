@@ -113,7 +113,7 @@ An app can override where an imported controller mounts, or disable an entire pa
 ```go
 app := bosun.New(
     bosun.OverridePrefix[users.UsersController]("/v2/users"),
-    bosun.Disable("github.com/amberstack/bosun/audit"),
+    bosun.Disable("github.com/bluebeard63/bosun/audit"),
 )
 ```
 

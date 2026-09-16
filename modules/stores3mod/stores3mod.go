@@ -19,8 +19,8 @@ import (
 	"net/url"
 	"time"
 
-	"github.com/amberstack/bosun"
-	"github.com/amberstack/bosun/modules/storemod"
+	"github.com/bluebeard63/bosun"
+	"github.com/bluebeard63/bosun/modules/storemod"
 	"github.com/minio/minio-go/v7"
 	"github.com/minio/minio-go/v7/pkg/credentials"
 )

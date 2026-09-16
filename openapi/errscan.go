@@ -12,7 +12,7 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/amberstack/bosun"
+	"github.com/bluebeard63/bosun"
 )
 
 // ScanOptions configures source scanning for error responses. The scanner

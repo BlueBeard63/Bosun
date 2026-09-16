@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/amberstack/bosun/cmd/bosun/internal/clientgen"
+	"github.com/bluebeard63/bosun/cmd/bosun/internal/clientgen"
 )
 
 func TestGenerate(t *testing.T) {

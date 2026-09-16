@@ -5,8 +5,8 @@ import (
 	"log"
 	"net/http"
 
-	"github.com/amberstack/bosun"
-	"github.com/amberstack/bosun/registry"
+	"github.com/bluebeard63/bosun"
+	"github.com/bluebeard63/bosun/registry"
 )
 
 // --- external resource, gorm.DB stand-in ---

@@ -10,14 +10,14 @@
 // MODULES: a module is just a Go package full of these declarations.
 // Importing the package installs it — controllers, routes, services and all:
 //
-//	import _ "github.com/amberstack/bosun-modules/auth"
+//	import _ "github.com/bluebeard63/bosun-modules/auth"
 //
 // A module's identity is its import path (derived automatically from its
 // types). Hosts stay in control:
 //
 //	app := bosun.New(
 //		bosun.OverridePrefix[authmod.LoginController]("/account"), // remap routes
-//		bosun.Disable("github.com/amberstack/bosun-modules/metrics"),
+//		bosun.Disable("github.com/bluebeard63/bosun-modules/metrics"),
 //	)
 //
 // Modules ship overridable defaults and declare extension points as

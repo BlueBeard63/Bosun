@@ -7,12 +7,12 @@ import (
 	"testing"
 	"time"
 
-	"github.com/amberstack/bosun"
-	"github.com/amberstack/bosun/modules/eventmemmod"
-	"github.com/amberstack/bosun/modules/eventmod"
-	"github.com/amberstack/bosun/modules/outboxmod"
-	"github.com/amberstack/bosun/modules/repomod"
-	"github.com/amberstack/bosun/registry"
+	"github.com/bluebeard63/bosun"
+	"github.com/bluebeard63/bosun/modules/eventmemmod"
+	"github.com/bluebeard63/bosun/modules/eventmod"
+	"github.com/bluebeard63/bosun/modules/outboxmod"
+	"github.com/bluebeard63/bosun/modules/repomod"
+	"github.com/bluebeard63/bosun/registry"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 )

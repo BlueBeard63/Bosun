@@ -21,7 +21,7 @@ func main() {
 ```
 
 ```go
-import "github.com/amberstack/bosun/modules/gormrepomod"
+import "github.com/bluebeard63/bosun/modules/gormrepomod"
 
 type User struct {
     ID    uint   `gorm:"primaryKey"`
@@ -35,7 +35,7 @@ var _ = gormrepomod.For[User]()
 `For[User]()` registers `*GormRepo[User]` as a service and binds `repomod.Repo[User]` to it. The host wins, so if you register your own `repomod.Repo[User]` before `app.Start()` (a stub in a test, or a custom repo with hand-written SQL), the default is skipped.
 
 ```go
-import "github.com/amberstack/bosun/modules/repomod"
+import "github.com/bluebeard63/bosun/modules/repomod"
 
 type UsersController struct {
     Users repomod.Repo[User] // injected

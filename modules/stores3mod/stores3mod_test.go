@@ -5,8 +5,8 @@ import (
 	"os"
 	"testing"
 
-	"github.com/amberstack/bosun/modules/storemod/storemodtest"
-	"github.com/amberstack/bosun/modules/stores3mod"
+	"github.com/bluebeard63/bosun/modules/storemod/storemodtest"
+	"github.com/bluebeard63/bosun/modules/stores3mod"
 	"github.com/minio/minio-go/v7"
 	"github.com/minio/minio-go/v7/pkg/credentials"
 )

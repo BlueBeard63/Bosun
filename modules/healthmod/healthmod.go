@@ -24,8 +24,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/amberstack/bosun"
-	"github.com/amberstack/bosun/registry"
+	"github.com/bluebeard63/bosun"
+	"github.com/bluebeard63/bosun/registry"
 )
 
 // Probe is a readiness check contributed to /health/ready.

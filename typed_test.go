@@ -10,7 +10,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/amberstack/bosun/registry"
+	"github.com/bluebeard63/bosun/registry"
 )
 
 // --- typed fixtures ---

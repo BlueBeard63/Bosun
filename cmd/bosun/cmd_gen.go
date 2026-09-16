@@ -11,8 +11,8 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/amberstack/bosun/cmd/bosun/internal/clientgen"
-	"github.com/amberstack/bosun/modules/manifestmod"
+	"github.com/bluebeard63/bosun/cmd/bosun/internal/clientgen"
+	"github.com/bluebeard63/bosun/modules/manifestmod"
 )
 
 func genCmd() *cobra.Command {

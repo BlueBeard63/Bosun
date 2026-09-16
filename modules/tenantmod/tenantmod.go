@@ -16,10 +16,10 @@ import (
 	"reflect"
 	"strings"
 
-	"github.com/amberstack/bosun"
-	"github.com/amberstack/bosun/modules/eventmod"
-	"github.com/amberstack/bosun/modules/repomod"
-	"github.com/amberstack/bosun/registry"
+	"github.com/bluebeard63/bosun"
+	"github.com/bluebeard63/bosun/modules/eventmod"
+	"github.com/bluebeard63/bosun/modules/repomod"
+	"github.com/bluebeard63/bosun/registry"
 )
 
 // Header is the default request header carrying the tenant id.

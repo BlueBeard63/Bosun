@@ -4,10 +4,10 @@ import (
 	"fmt"
 	"log"
 
-	"github.com/amberstack/bosun"
-	"github.com/amberstack/bosun/modules/authmod"
-	"github.com/amberstack/bosun/modules/healthmod"
-	"github.com/amberstack/bosun/registry"
+	"github.com/bluebeard63/bosun"
+	"github.com/bluebeard63/bosun/modules/authmod"
+	"github.com/bluebeard63/bosun/modules/healthmod"
+	"github.com/bluebeard63/bosun/registry"
 )
 
 // The host replaces the auth module's UserStore extension point with its own

@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/amberstack/bosun/cmd/bosun/internal/docsite"
+	"github.com/bluebeard63/bosun/cmd/bosun/internal/docsite"
 )
 
 // drive feeds newline-delimited JSON-RPC requests through Serve and returns the

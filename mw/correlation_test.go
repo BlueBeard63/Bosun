@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/amberstack/bosun"
+	"github.com/bluebeard63/bosun"
 )
 
 func runCorrelation(t *testing.T, req *http.Request) (seen string, rec *httptest.ResponseRecorder) {

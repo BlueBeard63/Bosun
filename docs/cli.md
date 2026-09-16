@@ -7,8 +7,8 @@ The `bosun` command is the framework's tooling: it serves the documentation, exp
 Install the binary with `go install`. Because Bosun is a private module, set `GOPRIVATE` first.
 
 ```bash
-export GOPRIVATE=github.com/amberstack/*
-go install github.com/amberstack/bosun/cmd/bosun@latest
+export GOPRIVATE=github.com/bluebeard63/*
+go install github.com/bluebeard63/bosun/cmd/bosun@latest
 ```
 
 `bosun --version` prints the build version, and `bosun help <command>` prints a command's usage. Every command also accepts `--help`.

@@ -19,7 +19,7 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/amberstack/bosun"
+	"github.com/bluebeard63/bosun"
 )
 
 const maxBody = 1 << 20 // 1 MiB

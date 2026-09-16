@@ -3,13 +3,13 @@
 //
 // Services depend on eventmod.Publisher, eventmod.Subscriber, or eventmod.Bus;
 // a driver module registers the concrete implementation. The in-memory driver
-// (github.com/amberstack/bosun/modules/eventmemmod) is the default when no
+// (github.com/bluebeard63/bosun/modules/eventmemmod) is the default when no
 // broker driver is imported; broker drivers (eventamqpmod, eventnatsmod,
 // eventredismod) bind the same interfaces via bosun.DefaultBind, so a host
 // swaps backends by importing a different driver — no application code changes.
 //
-//	import "github.com/amberstack/bosun/modules/eventmod"
-//	import _ "github.com/amberstack/bosun/modules/eventmemmod" // default bus
+//	import "github.com/bluebeard63/bosun/modules/eventmod"
+//	import _ "github.com/bluebeard63/bosun/modules/eventmemmod" // default bus
 //
 //	type Publisher struct {
 //	    Bus eventmod.Publisher // injected

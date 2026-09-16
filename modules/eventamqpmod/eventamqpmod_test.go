@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/amberstack/bosun/modules/eventamqpmod"
-	"github.com/amberstack/bosun/modules/eventmod"
+	"github.com/bluebeard63/bosun/modules/eventamqpmod"
+	"github.com/bluebeard63/bosun/modules/eventmod"
 )
 
 // Integration tests run only when BOSUN_AMQP_URL points at a RabbitMQ server,

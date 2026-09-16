@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"reflect"
 
-	"github.com/amberstack/bosun/registry"
+	"github.com/bluebeard63/bosun/registry"
 )
 
 // Source produces configuration as bind-key -> JSON document. Implementations

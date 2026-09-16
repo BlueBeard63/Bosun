@@ -15,16 +15,16 @@ package traceotelmod
 import (
 	"context"
 
-	"github.com/amberstack/bosun"
-	"github.com/amberstack/bosun/modules/tracemod"
-	"github.com/amberstack/bosun/registry"
+	"github.com/bluebeard63/bosun"
+	"github.com/bluebeard63/bosun/modules/tracemod"
+	"github.com/bluebeard63/bosun/registry"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/propagation"
 	"go.opentelemetry.io/otel/trace"
 )
 
-const scope = "github.com/amberstack/bosun"
+const scope = "github.com/bluebeard63/bosun"
 
 type otelTracer struct {
 	tr   trace.Tracer

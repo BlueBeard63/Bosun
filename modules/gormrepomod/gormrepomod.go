@@ -24,8 +24,8 @@ import (
 	"context"
 	"errors"
 
-	"github.com/amberstack/bosun"
-	"github.com/amberstack/bosun/modules/repomod"
+	"github.com/bluebeard63/bosun"
+	"github.com/bluebeard63/bosun/modules/repomod"
 	"gorm.io/gorm"
 )
 

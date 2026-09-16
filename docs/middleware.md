@@ -117,7 +117,7 @@ Because each type gets its own slot, `bosun.Value[AuthUser]` and `bosun.Value[Or
 The `mw` package ships ready-to-use middleware.
 
 ```go
-import "github.com/amberstack/bosun/mw"
+import "github.com/bluebeard63/bosun/mw"
 
 bosun.Use[mw.Logging]()      // slog-based request logger
 bosun.Use[mw.RateLimit]()    // per-IP limit, hot-reloadable

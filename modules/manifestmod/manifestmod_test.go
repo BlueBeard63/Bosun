@@ -8,10 +8,10 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/amberstack/bosun"
-	"github.com/amberstack/bosun/modules/eventmod"
-	"github.com/amberstack/bosun/modules/manifestmod"
-	"github.com/amberstack/bosun/registry"
+	"github.com/bluebeard63/bosun"
+	"github.com/bluebeard63/bosun/modules/eventmod"
+	"github.com/bluebeard63/bosun/modules/manifestmod"
+	"github.com/bluebeard63/bosun/registry"
 )
 
 type sampleController struct{}

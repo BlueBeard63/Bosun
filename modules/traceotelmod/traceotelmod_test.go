@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/amberstack/bosun"
+	"github.com/bluebeard63/bosun"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/codes"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"

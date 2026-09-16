@@ -34,7 +34,7 @@ The event API is driver-agnostic: producers and consumers depend on the `eventmo
 Import the driver package for its registration side effect and call `Use()` at init. To point it at your server, register its options.
 
 ```go
-import _ "github.com/amberstack/bosun/modules/eventamqpmod"
+import _ "github.com/bluebeard63/bosun/modules/eventamqpmod"
 
 var _ = eventamqpmod.Use()
 ```

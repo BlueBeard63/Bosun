@@ -2,11 +2,11 @@
 // and the event bus start spans through the tracemod.Tracer interface; the
 // default binding is a no-op, so tracing code paths are identical whether or
 // not a real tracer is installed. Import a driver (e.g.
-// github.com/amberstack/bosun/modules/traceotelmod) to send spans to
+// github.com/bluebeard63/bosun/modules/traceotelmod) to send spans to
 // OpenTelemetry — the heavy OTel dependency lives only in that driver module,
 // never in core.
 //
-//	import _ "github.com/amberstack/bosun/modules/traceotelmod"
+//	import _ "github.com/bluebeard63/bosun/modules/traceotelmod"
 //	var _ = traceotelmod.Use()
 //
 // A service that wants spans injects a tracemod.Tracer:
@@ -22,7 +22,7 @@ package tracemod
 import (
 	"context"
 
-	"github.com/amberstack/bosun"
+	"github.com/bluebeard63/bosun"
 )
 
 // Span is an in-progress unit of work. End finishes it; SetError records a

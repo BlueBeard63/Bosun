@@ -6,7 +6,7 @@ import (
 	"encoding/hex"
 	"errors"
 
-	"github.com/amberstack/bosun/modules/eventmod"
+	"github.com/bluebeard63/bosun/modules/eventmod"
 	amqp "github.com/rabbitmq/amqp091-go"
 )
 

@@ -7,9 +7,9 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/amberstack/bosun/modules/gormrepomod"
-	"github.com/amberstack/bosun/modules/repomod"
-	"github.com/amberstack/bosun/modules/tenantmod"
+	"github.com/bluebeard63/bosun/modules/gormrepomod"
+	"github.com/bluebeard63/bosun/modules/repomod"
+	"github.com/bluebeard63/bosun/modules/tenantmod"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 )

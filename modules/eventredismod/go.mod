@@ -1,9 +1,9 @@
-module github.com/amberstack/bosun/modules/eventredismod
+module github.com/bluebeard63/bosun/modules/eventredismod
 
 go 1.22
 
 require (
-	github.com/amberstack/bosun v0.5.1
+	github.com/bluebeard63/bosun v0.6.0
 	github.com/redis/go-redis/v9 v9.7.0
 )
 

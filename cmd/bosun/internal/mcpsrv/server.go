@@ -16,7 +16,7 @@ import (
 	"io"
 	"strings"
 
-	"github.com/amberstack/bosun/cmd/bosun/internal/docsite"
+	"github.com/bluebeard63/bosun/cmd/bosun/internal/docsite"
 )
 
 const protocolVersion = "2024-11-05"

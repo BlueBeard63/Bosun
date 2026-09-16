@@ -11,9 +11,9 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/amberstack/bosun"
-	"github.com/amberstack/bosun/modules/webhookmod"
-	"github.com/amberstack/bosun/registry"
+	"github.com/bluebeard63/bosun"
+	"github.com/bluebeard63/bosun/modules/webhookmod"
+	"github.com/bluebeard63/bosun/registry"
 )
 
 func ghSign(secret string, body []byte) string {

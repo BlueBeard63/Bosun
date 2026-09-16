@@ -13,11 +13,11 @@ import (
 	"sync"
 	"time"
 
-	"github.com/amberstack/bosun"
-	"github.com/amberstack/bosun/config"
-	"github.com/amberstack/bosun/mw"
-	"github.com/amberstack/bosun/openapi"
-	"github.com/amberstack/bosun/registry"
+	"github.com/bluebeard63/bosun"
+	"github.com/bluebeard63/bosun/config"
+	"github.com/bluebeard63/bosun/mw"
+	"github.com/bluebeard63/bosun/openapi"
+	"github.com/bluebeard63/bosun/registry"
 )
 
 // Embed this package's source so OpenAPI error scanning works at runtime in

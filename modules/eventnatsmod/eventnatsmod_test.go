@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/amberstack/bosun/modules/eventmod"
-	"github.com/amberstack/bosun/modules/eventnatsmod"
+	"github.com/bluebeard63/bosun/modules/eventmod"
+	"github.com/bluebeard63/bosun/modules/eventnatsmod"
 )
 
 // Integration tests run only when BOSUN_NATS_URL points at a NATS server,

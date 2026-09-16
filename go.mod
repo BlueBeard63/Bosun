@@ -1,4 +1,4 @@
-module github.com/amberstack/bosun
+module github.com/bluebeard63/bosun
 
 go 1.22
 

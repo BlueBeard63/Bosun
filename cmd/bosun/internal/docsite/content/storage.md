@@ -57,7 +57,7 @@ func (d *Documents) Save(ctx context.Context, id string, r io.Reader) error {
 Import a driver and call its `For()` at init. The local filesystem driver is the natural default for development and tests.
 
 ```go
-import _ "github.com/amberstack/bosun/modules/storefsmod"
+import _ "github.com/bluebeard63/bosun/modules/storefsmod"
 
 var _ = storefsmod.For()
 ```

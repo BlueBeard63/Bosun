@@ -5,8 +5,8 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/amberstack/bosun/modules/eventmemmod"
-	"github.com/amberstack/bosun/modules/eventmod"
+	"github.com/bluebeard63/bosun/modules/eventmemmod"
+	"github.com/bluebeard63/bosun/modules/eventmod"
 )
 
 func TestRPCRoundTrip(t *testing.T) {

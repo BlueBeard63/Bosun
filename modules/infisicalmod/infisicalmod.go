@@ -24,7 +24,7 @@ import (
 	"net/url"
 	"strings"
 
-	"github.com/amberstack/bosun/config"
+	"github.com/bluebeard63/bosun/config"
 )
 
 // Source loads secrets from Infisical. It implements config.Source.

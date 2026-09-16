@@ -10,7 +10,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/amberstack/bosun"
+	"github.com/bluebeard63/bosun"
 )
 
 type SpecController struct {

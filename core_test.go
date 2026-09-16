@@ -10,7 +10,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/amberstack/bosun/registry"
+	"github.com/bluebeard63/bosun/registry"
 )
 
 // --- shared fixtures (registrations are package-global, declared once) ---
@@ -188,7 +188,7 @@ func TestDefaultBindHostWins(t *testing.T) {
 // --- app options ---
 
 func TestDisable(t *testing.T) {
-	app := New(Disable("github.com/amberstack/bosun"))
+	app := New(Disable("github.com/bluebeard63/bosun"))
 	if app.Reg.Has(reflect.TypeOf((*tSvcA)(nil))) {
 		t.Fatal("disabled package's services should not register")
 	}

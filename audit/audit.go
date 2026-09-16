@@ -8,7 +8,7 @@ import (
 	"context"
 	"log/slog"
 
-	"github.com/amberstack/bosun"
+	"github.com/bluebeard63/bosun"
 )
 
 // SlogAuditor writes audit events as structured logs.

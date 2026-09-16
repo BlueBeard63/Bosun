@@ -5,7 +5,7 @@
 // at-least-once delivery, Nack-requeue redelivery, named consumer groups
 // (competing consumers), and graceful drain on shutdown.
 //
-//	import _ "github.com/amberstack/bosun/modules/eventmemmod"
+//	import _ "github.com/bluebeard63/bosun/modules/eventmemmod"
 //	var _ = eventmemmod.Default()
 //
 // Messages live only in memory: anything queued-but-undelivered is lost on
@@ -19,8 +19,8 @@ import (
 	"sync"
 	"sync/atomic"
 
-	"github.com/amberstack/bosun"
-	"github.com/amberstack/bosun/modules/eventmod"
+	"github.com/bluebeard63/bosun"
+	"github.com/bluebeard63/bosun/modules/eventmod"
 )
 
 // Bus is the in-memory eventmod.Bus. The zero value is usable after Init (called

@@ -36,7 +36,7 @@ Install the framework into a new module:
 
 ```bash
 go mod init example.com/hello
-go get github.com/amberstack/bosun
+go get github.com/bluebeard63/bosun
 ```
 
 ## Step 1: your first route
@@ -50,7 +50,7 @@ import (
     "context"
     "log"
 
-    "github.com/amberstack/bosun"
+    "github.com/bluebeard63/bosun"
 )
 
 type HealthController struct{}
@@ -133,7 +133,7 @@ External dependencies that you construct yourself (database handles, third-party
 
 ```go
 import (
-    "github.com/amberstack/bosun/registry"
+    "github.com/bluebeard63/bosun/registry"
     "gorm.io/driver/sqlite"
     "gorm.io/gorm"
 )
@@ -155,7 +155,7 @@ Any service with a `*gorm.DB` field now receives the live handle. The full data-
 Middleware wraps handlers to add cross-cutting behavior. Attach a built-in like request logging to a single route:
 
 ```go
-import "github.com/amberstack/bosun/mw"
+import "github.com/bluebeard63/bosun/mw"
 
 func (c *HelloController) Routes(r *bosun.Router) {
     bosun.Get(r, "/:name", c.Hello, bosun.Use[mw.Logging]())

@@ -4,7 +4,7 @@ import (
 	"context"
 	"errors"
 
-	"github.com/amberstack/bosun/modules/eventmod"
+	"github.com/bluebeard63/bosun/modules/eventmod"
 	"github.com/nats-io/nats.go"
 )
 

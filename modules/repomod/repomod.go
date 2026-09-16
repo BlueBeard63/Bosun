@@ -2,13 +2,13 @@
 // pattern on top of Bosun.
 //
 // Services depend on repomod.Repo[T] for an entity type; a driver module
-// (e.g. github.com/amberstack/bosun/modules/gormrepomod) registers the
+// (e.g. github.com/bluebeard63/bosun/modules/gormrepomod) registers the
 // concrete implementation. Hosts can swap implementations per entity by
 // registering their own Repo[T] before app.Start() — DefaultBind in the
 // driver yields to host registrations.
 //
-//	import "github.com/amberstack/bosun/modules/repomod"
-//	import "github.com/amberstack/bosun/modules/gormrepomod"
+//	import "github.com/bluebeard63/bosun/modules/repomod"
+//	import "github.com/bluebeard63/bosun/modules/gormrepomod"
 //
 //	type User struct { ID uint; Email string }
 //	var _ = gormrepomod.For[User]()

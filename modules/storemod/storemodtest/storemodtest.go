@@ -9,7 +9,7 @@ import (
 	"io"
 	"testing"
 
-	"github.com/amberstack/bosun/modules/storemod"
+	"github.com/bluebeard63/bosun/modules/storemod"
 )
 
 // Run exercises the Store contract: put/get round-trip, listing by prefix,

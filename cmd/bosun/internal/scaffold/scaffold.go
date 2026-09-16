@@ -25,34 +25,34 @@ type serviceData struct {
 	EventImport  string
 	EventPkg     string
 	EventCall    string // "Default" or "Use"
-	BosunVersion string // github.com/amberstack/bosun version to require
+	BosunVersion string // github.com/bluebeard63/bosun version to require
 }
 
 func (s Service) data() serviceData {
 	d := serviceData{Service: s, BosunVersion: bosunVersion()}
 	switch s.Event {
 	case "amqp":
-		d.EventImport, d.EventPkg, d.EventCall = "github.com/amberstack/bosun/modules/eventamqpmod", "eventamqpmod", "Use"
+		d.EventImport, d.EventPkg, d.EventCall = "github.com/bluebeard63/bosun/modules/eventamqpmod", "eventamqpmod", "Use"
 	case "nats":
-		d.EventImport, d.EventPkg, d.EventCall = "github.com/amberstack/bosun/modules/eventnatsmod", "eventnatsmod", "Use"
+		d.EventImport, d.EventPkg, d.EventCall = "github.com/bluebeard63/bosun/modules/eventnatsmod", "eventnatsmod", "Use"
 	case "redis":
-		d.EventImport, d.EventPkg, d.EventCall = "github.com/amberstack/bosun/modules/eventredismod", "eventredismod", "Use"
+		d.EventImport, d.EventPkg, d.EventCall = "github.com/bluebeard63/bosun/modules/eventredismod", "eventredismod", "Use"
 	case "none":
 	default:
-		d.EventImport, d.EventPkg, d.EventCall = "github.com/amberstack/bosun/modules/eventmemmod", "eventmemmod", "Default"
+		d.EventImport, d.EventPkg, d.EventCall = "github.com/bluebeard63/bosun/modules/eventmemmod", "eventmemmod", "Default"
 	}
 	return d
 }
 
 // bosunModulePath is the module scaffolded projects depend on.
-const bosunModulePath = "github.com/amberstack/bosun"
+const bosunModulePath = "github.com/bluebeard63/bosun"
 
 // fallbackBosunVersion pins the bosun version scaffolded go.mod files require
 // when the running binary carries no usable build info (e.g. `go run` from
 // source or a dev build). Keep in sync with cmd/bosun/go.mod's bosun require.
-const fallbackBosunVersion = "v0.5.1"
+const fallbackBosunVersion = "v0.6.0"
 
-// bosunVersion returns the github.com/amberstack/bosun version the bosun binary
+// bosunVersion returns the github.com/bluebeard63/bosun version the bosun binary
 // was built against, so scaffolded projects pin the same release the CLI uses
 // rather than a placeholder. It falls back to fallbackBosunVersion when build
 // info is missing or does not carry a released semver (dev/workspace builds).
@@ -146,7 +146,7 @@ const tmplGoMod = `module {{.Module}}
 
 go 1.22
 
-require github.com/amberstack/bosun {{.BosunVersion}}
+require github.com/bluebeard63/bosun {{.BosunVersion}}
 `
 
 const tmplMain = `package main
@@ -154,9 +154,9 @@ const tmplMain = `package main
 import (
 	"log"
 
-	"github.com/amberstack/bosun"
-	"github.com/amberstack/bosun/modules/manifestmod"
-	"github.com/amberstack/bosun/registry"
+	"github.com/bluebeard63/bosun"
+	"github.com/bluebeard63/bosun/modules/manifestmod"
+	"github.com/bluebeard63/bosun/registry"
 
 	_ "{{.Module}}/internal/api"
 )
@@ -176,9 +176,9 @@ package api
 import (
 	"context"
 
-	"github.com/amberstack/bosun"
-	_ "github.com/amberstack/bosun/modules/healthmod"
-	_ "github.com/amberstack/bosun/modules/manifestmod"
+	"github.com/bluebeard63/bosun"
+	_ "github.com/bluebeard63/bosun/modules/healthmod"
+	_ "github.com/bluebeard63/bosun/modules/manifestmod"
 {{- if .EventImport}}
 
 	"{{.EventImport}}"

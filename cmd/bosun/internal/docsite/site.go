@@ -17,7 +17,7 @@ import (
 
 	"github.com/yuin/goldmark"
 
-	"github.com/amberstack/bosun/cmd/bosun/internal/docrender"
+	"github.com/bluebeard63/bosun/cmd/bosun/internal/docrender"
 )
 
 //go:embed content

@@ -8,7 +8,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/amberstack/bosun/cmd/bosun/internal/scaffold"
+	"github.com/bluebeard63/bosun/cmd/bosun/internal/scaffold"
 )
 
 func newCmd() *cobra.Command {

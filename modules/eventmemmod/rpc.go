@@ -4,7 +4,7 @@ import (
 	"context"
 	"strings"
 
-	"github.com/amberstack/bosun/modules/eventmod"
+	"github.com/bluebeard63/bosun/modules/eventmod"
 )
 
 // In-memory request/reply. A responder registers a handler; a request finds a

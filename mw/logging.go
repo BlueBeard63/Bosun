@@ -7,7 +7,7 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/amberstack/bosun"
+	"github.com/bluebeard63/bosun"
 )
 
 // --- Logging ---

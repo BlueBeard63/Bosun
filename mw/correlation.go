@@ -3,7 +3,7 @@ package mw
 import (
 	"net/http"
 
-	"github.com/amberstack/bosun"
+	"github.com/bluebeard63/bosun"
 )
 
 // --- Correlation ---

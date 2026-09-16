@@ -2,7 +2,7 @@
 // interfaces to a NATS connection so publishing and subscribing go over a NATS
 // server instead of the in-memory bus.
 //
-//	import _ "github.com/amberstack/bosun/modules/eventnatsmod"
+//	import _ "github.com/bluebeard63/bosun/modules/eventnatsmod"
 //	var _ = eventnatsmod.Use()
 //
 // Consumer groups map to NATS queue groups (competing consumers). Core NATS is
@@ -17,8 +17,8 @@ import (
 	"strconv"
 	"sync"
 
-	"github.com/amberstack/bosun"
-	"github.com/amberstack/bosun/modules/eventmod"
+	"github.com/bluebeard63/bosun"
+	"github.com/bluebeard63/bosun/modules/eventmod"
 	"github.com/nats-io/nats.go"
 )
 

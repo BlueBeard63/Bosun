@@ -5,7 +5,7 @@
 // every message (fan-out). A handler error re-adds the message with an
 // incremented attempt (at-least-once redelivery).
 //
-//	import _ "github.com/amberstack/bosun/modules/eventredismod"
+//	import _ "github.com/bluebeard63/bosun/modules/eventredismod"
 //	var _ = eventredismod.Use()
 //
 // Redis stream keys are exact, so this driver does not support subject
@@ -21,8 +21,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/amberstack/bosun"
-	"github.com/amberstack/bosun/modules/eventmod"
+	"github.com/bluebeard63/bosun"
+	"github.com/bluebeard63/bosun/modules/eventmod"
 	"github.com/redis/go-redis/v9"
 )
 

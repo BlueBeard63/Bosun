@@ -11,8 +11,8 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/amberstack/bosun/cmd/bosun/internal/docsite"
-	"github.com/amberstack/bosun/cmd/bosun/internal/openbrowser"
+	"github.com/bluebeard63/bosun/cmd/bosun/internal/docsite"
+	"github.com/bluebeard63/bosun/cmd/bosun/internal/openbrowser"
 )
 
 func docsCmd() *cobra.Command {

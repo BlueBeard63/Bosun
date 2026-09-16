@@ -1,5 +1,5 @@
-github.com/amberstack/bosun v0.5.1 h1:N4sDl0bXqrX3YgbQPeXJ3jJUk9ipYid6upfAJglsHDQ=
-github.com/amberstack/bosun v0.5.1/go.mod h1:6y9Aq7epljbiDmFyraM3KEAebyzibk/lJs/ZMRVvL/8=
+github.com/bluebeard63/bosun v0.6.0 h1:qjbWu9/bGPFeZN2Tm8yJdn4IpPxgmawCwjAhQeoN5CA=
+github.com/bluebeard63/bosun v0.6.0/go.mod h1:/FMTIzO6b92mCk6fFfY6XIpjRWz3QsRDdoiN4gNabbg=
 github.com/klauspost/compress v1.17.11 h1:In6xLpyWOi1+C7tXUUWv2ot1QvBjxevKAaI6IXrJmUc=
 github.com/klauspost/compress v1.17.11/go.mod h1:pMDklpSncoRMuLFrf1W9Ss9KT+0rH90U12bZKk7uwG0=
 github.com/nats-io/nats.go v1.38.0 h1:A7P+g7Wjp4/NWqDOOP/K6hfhr54DvdDQUznt5JFg9XA=

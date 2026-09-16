@@ -1,4 +1,4 @@
-github.com/amberstack/bosun v0.5.0/go.mod h1:6y9Aq7epljbiDmFyraM3KEAebyzibk/lJs/ZMRVvL/8=
+github.com/bluebeard63/bosun v0.6.0/go.mod h1:/FMTIzO6b92mCk6fFfY6XIpjRWz3QsRDdoiN4gNabbg=
 github.com/google/go-cmp v0.6.0/go.mod h1:17dUlkBOakJ0+DkrSSNjCkIjxS6bF9zb3elmeNGIjoY=
 github.com/kr/pretty v0.3.1/go.mod h1:hoEshYVHaxMs3cyo3Yncou5ZscifuDolrwPKZanG3xk=
 github.com/kr/text v0.2.0/go.mod h1:eLer722TekiGuMkidMxC/pM04lWEeraHUUmBw8l2grE=

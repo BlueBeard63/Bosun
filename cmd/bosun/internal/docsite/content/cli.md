@@ -1,6 +1,6 @@
 # The bosun CLI
 
-The `bosun` command is the framework's tooling: it serves the documentation, exposes it to AI over MCP, fetches deploy manifests, generates typed clients, and scaffolds new services. This page is the reference for every command and its options.
+The `bosun` command is the framework's tooling: it serves the documentation, exposes it to AI over MCP, fetches deploy manifests, generates typed clients and registry imports, and scaffolds new services. This page is the reference for every command and its options.
 
 ## Installing
 
@@ -61,11 +61,27 @@ bosun gen client http://billing:8080 --package clients --out clients/billing.go
 | `--service` | from manifest | Override the service name used for the client type. |
 | `--out`, `-o` | stdout | Write the client to a file instead of printing it. |
 
+## bosun gen registry
+
+Writes `zz_bosun_registry.go`, a file that blank-imports every package in the current module that registers with Bosun (package-level `bosun.Controller`, `Service`, `Middleware`, `Default`, `DefaultBind` or `DefaultDynamic` declarations). Run it from the package that calls `bosun.New()`, usually through `//go:generate bosun gen registry`. The [registration guide](./registration.md) explains what is detected and where the file should live.
+
+```bash
+bosun gen registry                    # write ./zz_bosun_registry.go
+bosun gen registry --dir ./cmd/worker # write into another main package
+bosun gen registry --check            # CI: fail if the file is stale
+```
+
+| Flag | Default | Description |
+| --- | --- | --- |
+| `--dir` | `.` | Package directory to write into. |
+| `--out`, `-o` | `zz_bosun_registry.go` | Generated file name, relative to `--dir`. |
+| `--check` | `false` | Exit non-zero if the file is missing or out of date, without writing it. |
+
 ## bosun new
 
 Scaffolds a new service or a new workspace. Both subcommands prompt for their options interactively, or take them as flags; pass `--yes` to accept every default without prompting, which is what you want in a script. The [microservices guide](./microservices.md) explains the layout they produce.
 
-`bosun new service <name>` creates a single deployable service directory.
+`bosun new service <name>` creates a single deployable service directory. Its `main.go` has a `//go:generate bosun gen registry` directive and a generated `zz_bosun_registry.go`, so new packages are wired in with `go generate` rather than hand-written imports.
 
 ```bash
 bosun new service billing --module example.com/billing --event inmem --yes

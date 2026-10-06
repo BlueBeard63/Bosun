@@ -46,7 +46,7 @@
         "anchor": "operations"
       }
     ],
-    "text": "Bosun docs Bosun is a dependency-light Go web framework built on the Go 1.22 net/http router. It gives you typed handlers, a dependency-injection registry, and a set of optional modules, without codegen or a heavy runtime. Start with the tutorial, then jump to the guide for whatever you are building. Start here The getting started tutorial takes you from an empty directory to a running service with routing, injection, a database, middleware, and errors. The API overview is the reference for every public symbol. Core concepts Controllers own groups of routes. Services hold your logic and are wired by dependency injection, and service options define a configuration value once and inject it everywhere. Middleware wraps handlers, and the auth and permissions guide builds the common authentication and role-check chain. Typed handlers explain request binding and response encoding, validation checks input with struct tags, errors cover status mapping, and convert maps a model to a response DTO. Routing Route groups share a prefix and middleware across related routes, and routing internals explain path syntax, wildcards, middleware ordering, and route inspection. Inputs Forms covers URL-encoded and multipart fields, and files covers uploads, streaming, and downloads. OpenAPI Bosun generates an OpenAPI 3.0 spec from your typed handlers. The tutorial adds a live spec and Swagger UI to a small API step by step. The how-to guides cover moving, hiding and exporting the spec and documenting error responses, and the reference lists exactly what gets generated and the current limitations. Data layer The repo module provides a generic Repo[T] with a query builder and transactions. The GORM and sqlc guides show the hand-rolled patterns for each. Operations Running and shutting down covers Run , graceful shutdown and custom servers. Config and hot reload binds typed options to files, environment, and databases. Testing drives an app from a Go test with stubs."
+    "text": "Bosun docs Bosun is a dependency-light Go web framework built on the Go 1.22 net/http router. It gives you typed handlers, a dependency-injection registry, and a set of optional modules, without codegen or a heavy runtime. Start with the tutorial, then jump to the guide for whatever you are building. Start here The getting started tutorial takes you from an empty directory to a running service with routing, injection, a database, middleware, and errors. The API overview is the reference for every public symbol. Core concepts Controllers own groups of routes, and registering packages shows how bosun gen registry wires them in without blank imports in main.go . Services hold your logic and are wired by dependency injection, and service options define a configuration value once and inject it everywhere. Middleware wraps handlers, and the auth and permissions guide builds the common authentication and role-check chain. Typed handlers explain request binding and response encoding, validation checks input with struct tags, errors cover status mapping, and convert maps a model to a response DTO. Routing Route groups share a prefix and middleware across related routes, and routing internals explain path syntax, wildcards, middleware ordering, and route inspection. Inputs Forms covers URL-encoded and multipart fields, and files covers uploads, streaming, and downloads. OpenAPI Bosun generates an OpenAPI 3.0 spec from your typed handlers. The tutorial adds a live spec and Swagger UI to a small API step by step. The how-to guides cover moving, hiding and exporting the spec and documenting error responses, and the reference lists exactly what gets generated and the current limitations. Data layer The repo module provides a generic Repo[T] with a query builder and transactions. The GORM and sqlc guides show the hand-rolled patterns for each. Operations Running and shutting down covers Run , graceful shutdown and custom servers. Config and hot reload binds typed options to files, environment, and databases. Testing drives an app from a Go test with stubs."
   },
   {
     "slug": "getting-started",
@@ -203,13 +203,72 @@
         "anchor": "mounting-controls-for-the-host"
       }
     ],
-    "text": "Controllers A controller is a Go struct that owns a group of related routes and the services those routes need. Bosun discovers controllers through a single package-level declaration, so there is no wiring code in main . This guide covers declaring a controller, injecting its dependencies, attaching middleware, and its lifecycle. Routing detail lives in two companion pages: route groups and routing internals . Declaring a controller A controller is registered with bosun.Controller and implements one method, Routes . type UsersController struct {} var _ = bosun . Controller [ UsersController ]( \"/users\" ) func ( c * UsersController ) Routes ( r * bosun . Router ) { bosun . Get ( r , \"/:id\" , c . Get ) bosun . Post ( r , \"/\" , c . Create ) } bosun.Controller[T](\"/prefix\") registers T and mounts its routes under the prefix. The var _ = form runs the registration at package-init time and discards the placeholder return value. Paths inside Routes are joined onto the prefix, so the example above mounts GET /users/:id and POST /users/ . Handlers follow the standard shape, taking a typed request and returning a typed response or an error. type GetIn struct { ID int `path:\"id\"` } type UserOut struct { ID int `json:\"id\"` Name string `json:\"name\"` } func ( c * UsersController ) Get ( ctx context . Context , req * bosun . Req [ GetIn ]) ( UserOut , error ) { if req . Body . ID == 0 { return UserOut {}, bosun . E ( http . StatusBadRequest , \"id required\" , nil ) } return UserOut { ID : req . Body . ID , Name : \"Jack\" }, nil } Request binding and response encoding are covered in the typed handlers guide . Injecting services Any controller field whose type is registered (through bosun.Service[T] or registry.RegisterInstance[T] ) is injected automatically, whether it is exported or unexported. There is no constructor. type UsersController struct { Users * UserService // injected log * slog . Logger // injected (registered as an instance) } var _ = bosun . Controller [ UsersController ]( \"/users\" ) Tag a field inject:\"-\" to leave it at its zero value, and note that plain unregistered types are never injected. See the services guide for how to register dependencies. Controller-wide middleware Middleware passed after the prefix runs on every route the controller mounts. var _ = bosun . Controller [ Admin ]( \"/admin\" , bosun . Use [ mw . Logging ](), bosun . Use [ mw . RequireStaff ](), ) Per-route middleware is appended to the individual bosun.Get / bosun.Post call instead. Both are covered in the middleware guide . Many controllers Each controller is one struct, usually in its own file. The framework picks up every controller at bosun.New() , so there is no central list to maintain. In main.go you only need to import the packages that declare them, often with a blank import. import ( _ \"myapp/users\" _ \"myapp/orgs\" ) Typed and raw handlers on one router *bosun.Router exposes two parallel APIs. The typed generics ( bosun.Get(r, ...) ) give you request binding, audit events, and OpenAPI entries. The raw methods ( r.Get(...) ) hand you plain net/http for cases where you need to stream, hijack, or control the ResponseWriter directly. func ( c * Files ) Routes ( r * bosun . Router ) { bosun . Get ( r , \"/files/:id\" , c . Get ) // typed: binding + audit + OpenAPI r . Get ( \"/files/:id/stream\" , c . Stream ) // raw net/http for streaming } Reach for the raw form only when you need that control; use typed handlers everywhere else. The files guide shows a full worked example of serving a file with the raw form. Lifecycle If a controller (or any injected service) implements Init() error , it runs once at startup after injection completes. Use it for validation or cache warm-up. For shutdown, implement io.Closer ; app.Shutdown() closes controllers and services in reverse dependency order. func ( c * UsersController ) Init () error { if c . Users == nil { return errors . New ( \"UserService missing\" ) } return nil } Mounting controls for the host An app can override where an imported controller mounts, or disable an entire package of registrations. app := bosun . New ( bosun . OverridePrefix [ users . UsersController ]( \"/v2/users\" ), bosun . Disable ( \"github.com/bluebeard63/bosun/audit\" ), ) OverridePrefix is useful for versioning a controller you import from a module. Disable skips every Service , Controller , and Default declared under an import path, which is how you uninstall an optional module."
+    "text": "Controllers A controller is a Go struct that owns a group of related routes and the services those routes need. Bosun discovers controllers through a single package-level declaration, so there is no wiring code in main . This guide covers declaring a controller, injecting its dependencies, attaching middleware, and its lifecycle. Routing detail lives in two companion pages: route groups and routing internals . Declaring a controller A controller is registered with bosun.Controller and implements one method, Routes . type UsersController struct {} var _ = bosun . Controller [ UsersController ]( \"/users\" ) func ( c * UsersController ) Routes ( r * bosun . Router ) { bosun . Get ( r , \"/:id\" , c . Get ) bosun . Post ( r , \"/\" , c . Create ) } bosun.Controller[T](\"/prefix\") registers T and mounts its routes under the prefix. The var _ = form runs the registration at package-init time and discards the placeholder return value. Paths inside Routes are joined onto the prefix, so the example above mounts GET /users/:id and POST /users/ . Handlers follow the standard shape, taking a typed request and returning a typed response or an error. type GetIn struct { ID int `path:\"id\"` } type UserOut struct { ID int `json:\"id\"` Name string `json:\"name\"` } func ( c * UsersController ) Get ( ctx context . Context , req * bosun . Req [ GetIn ]) ( UserOut , error ) { if req . Body . ID == 0 { return UserOut {}, bosun . E ( http . StatusBadRequest , \"id required\" , nil ) } return UserOut { ID : req . Body . ID , Name : \"Jack\" }, nil } Request binding and response encoding are covered in the typed handlers guide . Injecting services Any controller field whose type is registered (through bosun.Service[T] or registry.RegisterInstance[T] ) is injected automatically, whether it is exported or unexported. There is no constructor. type UsersController struct { Users * UserService // injected log * slog . Logger // injected (registered as an instance) } var _ = bosun . Controller [ UsersController ]( \"/users\" ) Tag a field inject:\"-\" to leave it at its zero value, and note that plain unregistered types are never injected. See the services guide for how to register dependencies. Controller-wide middleware Middleware passed after the prefix runs on every route the controller mounts. var _ = bosun . Controller [ Admin ]( \"/admin\" , bosun . Use [ mw . Logging ](), bosun . Use [ mw . RequireStaff ](), ) Per-route middleware is appended to the individual bosun.Get / bosun.Post call instead. Both are covered in the middleware guide . Many controllers Each controller is one struct, usually in its own file. The framework picks up every controller at bosun.New() , so there is no central list of routes to maintain. The packages that declare controllers do have to be imported somewhere, because Go only runs a package's declarations when the package is imported. Let bosun gen registry write those imports for you: //go:generate bosun gen registry It generates zz_bosun_registry.go with a blank import for every package that registers a controller, service or middleware. Registering packages explains how it works, how to check it in CI, and the hand-written alternative. Typed and raw handlers on one router *bosun.Router exposes two parallel APIs. The typed generics ( bosun.Get(r, ...) ) give you request binding, audit events, and OpenAPI entries. The raw methods ( r.Get(...) ) hand you plain net/http for cases where you need to stream, hijack, or control the ResponseWriter directly. func ( c * Files ) Routes ( r * bosun . Router ) { bosun . Get ( r , \"/files/:id\" , c . Get ) // typed: binding + audit + OpenAPI r . Get ( \"/files/:id/stream\" , c . Stream ) // raw net/http for streaming } Reach for the raw form only when you need that control; use typed handlers everywhere else. The files guide shows a full worked example of serving a file with the raw form. Lifecycle If a controller (or any injected service) implements Init() error , it runs once at startup after injection completes. Use it for validation or cache warm-up. For shutdown, implement io.Closer ; app.Shutdown() closes controllers and services in reverse dependency order. func ( c * UsersController ) Init () error { if c . Users == nil { return errors . New ( \"UserService missing\" ) } return nil } Mounting controls for the host An app can override where an imported controller mounts, or disable an entire package of registrations. app := bosun . New ( bosun . OverridePrefix [ users . UsersController ]( \"/v2/users\" ), bosun . Disable ( \"github.com/bluebeard63/bosun/audit\" ), ) OverridePrefix is useful for versioning a controller you import from a module. Disable skips every Service , Controller , and Default declared under an import path, which is how you uninstall an optional module."
+  },
+  {
+    "slug": "registration",
+    "title": "Registering packages without blank imports",
+    "section": "Core concepts",
+    "order": 4,
+    "headings": [
+      {
+        "level": 1,
+        "text": "Registering packages without blank imports",
+        "anchor": "registering-packages-without-blank-imports"
+      },
+      {
+        "level": 2,
+        "text": "Why the imports are needed",
+        "anchor": "why-the-imports-are-needed"
+      },
+      {
+        "level": 2,
+        "text": "Option 1: generate the imports (recommended)",
+        "anchor": "option-1-generate-the-imports-recommended"
+      },
+      {
+        "level": 3,
+        "text": "Set it up",
+        "anchor": "set-it-up"
+      },
+      {
+        "level": 3,
+        "text": "Keep it current",
+        "anchor": "keep-it-current"
+      },
+      {
+        "level": 3,
+        "text": "What gets imported",
+        "anchor": "what-gets-imported"
+      },
+      {
+        "level": 3,
+        "text": "Where to put the file",
+        "anchor": "where-to-put-the-file"
+      },
+      {
+        "level": 3,
+        "text": "Limitations",
+        "anchor": "limitations"
+      },
+      {
+        "level": 2,
+        "text": "Option 2: an aggregator package",
+        "anchor": "option-2-an-aggregator-package"
+      },
+      {
+        "level": 2,
+        "text": "Recommended project structure",
+        "anchor": "recommended-project-structure"
+      }
+    ],
+    "text": "Registering packages without blank imports Bosun controllers, services and middleware register themselves with package-level declarations such as var _ = bosun.Controller[UsersController](\"/users\") . Those declarations only run when their package is imported. As an app grows, main.go collects a list of blank imports that exist only to trigger them: import ( _ \"example.com/shop/internal/auth\" _ \"example.com/shop/internal/billing\" _ \"example.com/shop/internal/health\" _ \"example.com/shop/internal/users\" // ...one more for every new package, easy to forget ) This page explains why Go needs those imports, and shows the two supported ways to keep them out of main.go : a generated registry file (recommended), or a hand-written aggregator package. Why the imports are needed Go initialises a package, which runs its var declarations and init functions, only if the package is part of the program, and a package is only part of the program if something imports it. A package nothing imports isn't compiled into the binary at all, so no runtime mechanism can find its controllers. Reflection only sees types that are linked in, and scanning the filesystem at runtime would find source files the binary doesn't contain. So discovery has to happen when you build, not when the app runs. Bosun does it the way the Go toolchain expects: it generates ordinary Go code that imports the packages, and the compiler checks those imports like any others. Builds stay reproducible, and a missing or misspelled package is a compile error, not a route that silently never appears. Option 1: generate the imports (recommended) bosun gen registry scans your module for packages that register with Bosun and writes zz_bosun_registry.go , a file of blank imports, into the package that calls bosun.New() . Set it up Add a go:generate directive to main.go and remove the hand-written side-effect imports: package main //go:generate bosun gen registry import ( \"log\" \"github.com/bluebeard63/bosun\" ) func main () { if err := bosun . New (). Run ( \":8080\" ); err != nil { log . Fatal ( err ) } } Generate the file: go generate ./... // Code generated by bosun gen registry. DO NOT EDIT. package main import ( _ \"example.com/shop/internal/billing\" // Service[memStore], DefaultBind[Store, memStore], Middleware[Auth] _ \"example.com/shop/internal/users\" // Service[Repo], Controller[UsersController] ) Commit the generated file like any other source. Each import is annotated with what the package registers, so a code review shows exactly what a new package adds to the app. Services created with bosun new service are already set up this way. Keep it current Run go generate ./... after adding, removing or moving a package that registers with Bosun. To catch a forgotten regeneration, check the file in CI: bosun gen registry --check --check writes nothing and exits non-zero when the file doesn't match what would be generated: Error: zz_bosun_registry.go is out of date; run bosun gen registry (or go generate) What gets imported The generator parses the module's source with the Go standard library (no build and no reflection) and includes a package when one of its non-test files has a package-level declaration calling bosun.Controller , Service , Middleware , Default , DefaultBind or DefaultDynamic . Any import name for the bosun package is recognised, for example b \"github.com/bluebeard63/bosun\" . It skips: _test.go files; vendor , testdata , and directories whose names start with . or _ ; nested modules (directories with their own go.mod ); the target package itself; other package main directories, which Go can't import. The generator prints a note for each one. The output is sorted by import path, so it is the same on every machine. Where to put the file Generate the file into the package that calls bosun.New() . Go only allows importing a package under internal/ from inside the directory tree rooted at that internal/ directory's parent. A file at the module root or in cmd/\u003cname\u003e can import everything under the module's internal/ . A file elsewhere can be refused, and in that case the generator stops with an error naming the packages, instead of writing a file that won't compile. For a module with several binaries, give each binary's main package its own directive and file. Use --dir to write into another package and --out to change the file name: bosun gen registry --dir ./cmd/worker Flag Default Description --dir . Package directory to write into: the one that calls bosun.New() . --out , -o zz_bosun_registry.go File name, relative to --dir (or an absolute path). --check false Verify the file is up to date instead of writing it. Limitations Only package-level var declarations are detected. A registration made inside init() or another function isn't found. Use the var _ = bosun.X[...]() form, which is the Bosun convention anyway, or import that package by hand. Build tags are ignored. The generator reads every non-test file whatever its //go:build line. If a package is excluded entirely under some tags, import it by hand from a file with the same tags rather than relying on the generated file. Every registering package is imported. That is the point, but it also means a package you deliberately keep out of one binary needs its own target, or bosun.Disable(pkgPath) at runtime. Option 2: an aggregator package If you'd rather not generate code, collect the imports in one small package and import that once from main.go : // internal/app/app.go // Package app wires every package that registers with Bosun. package app import ( _ \"example.com/shop/internal/billing\" _ \"example.com/shop/internal/users\" ) // main.go import _ \"example.com/shop/internal/app\" main.go stays short, and the list lives next to the code it describes. You still maintain the list by hand. You can also combine the two options: put //go:generate bosun gen registry in internal/app/app.go , and the generated file will live there. Recommended project structure shop/ ├── go.mod ├── main.go // bosun.New().Run(...), //go:generate bosun gen registry ├── zz_bosun_registry.go // generated: blank imports └── internal/ ├── users/ // var _ = bosun.Controller[UsersController](\"/users\") ├── billing/ // var _ = bosun.Service[...], bosun.Middleware[...] └── dto/ // plain types only: not imported by the registry Keep shared types that should never register anything (DTOs, event payloads, generated clients) in packages without registrations. The microservices guide calls this the contracts package. Importing such a package for its types never pulls another service's controllers into your binary."
   },
   {
     "slug": "services",
     "title": "Services",
     "section": "Core concepts",
-    "order": 4,
+    "order": 5,
     "headings": [
       {
         "level": 1,
@@ -283,7 +342,7 @@
     "slug": "service-options",
     "title": "Service options",
     "section": "Core concepts",
-    "order": 5,
+    "order": 6,
     "headings": [
       {
         "level": 1,
@@ -328,7 +387,7 @@
     "title": "Middleware",
     "section": "Core concepts",
     "group": "Middleware",
-    "order": 6,
+    "order": 7,
     "headings": [
       {
         "level": 1,
@@ -403,7 +462,7 @@
     "title": "Auth and permissions",
     "section": "Core concepts",
     "group": "Middleware",
-    "order": 7,
+    "order": 8,
     "headings": [
       {
         "level": 1,
@@ -442,7 +501,7 @@
     "slug": "typed-handlers",
     "title": "Typed handlers",
     "section": "Core concepts",
-    "order": 8,
+    "order": 9,
     "headings": [
       {
         "level": 1,
@@ -496,7 +555,7 @@
     "slug": "validation",
     "title": "Validation",
     "section": "Core concepts",
-    "order": 9,
+    "order": 10,
     "headings": [
       {
         "level": 1,
@@ -560,7 +619,7 @@
     "slug": "errors",
     "title": "Error handling",
     "section": "Core concepts",
-    "order": 10,
+    "order": 11,
     "headings": [
       {
         "level": 1,
@@ -609,7 +668,7 @@
     "slug": "convert",
     "title": "bosun.Convert: struct to struct mapping",
     "section": "Core concepts",
-    "order": 11,
+    "order": 12,
     "headings": [
       {
         "level": 1,
@@ -653,7 +712,7 @@
     "slug": "routing-groups",
     "title": "Route groups",
     "section": "Routing",
-    "order": 12,
+    "order": 13,
     "headings": [
       {
         "level": 1,
@@ -687,7 +746,7 @@
     "slug": "routing-internals",
     "title": "Routing internals",
     "section": "Routing",
-    "order": 13,
+    "order": 14,
     "headings": [
       {
         "level": 1,
@@ -726,7 +785,7 @@
     "slug": "forms",
     "title": "Form handling",
     "section": "Inputs",
-    "order": 14,
+    "order": 15,
     "headings": [
       {
         "level": 1,
@@ -770,7 +829,7 @@
     "slug": "files",
     "title": "File handling",
     "section": "Inputs",
-    "order": 15,
+    "order": 16,
     "headings": [
       {
         "level": 1,
@@ -819,7 +878,7 @@
     "slug": "openapi-tutorial",
     "title": "Tutorial: document an API with OpenAPI",
     "section": "OpenAPI",
-    "order": 16,
+    "order": 17,
     "headings": [
       {
         "level": 1,
@@ -883,7 +942,7 @@
     "slug": "openapi",
     "title": "OpenAPI",
     "section": "OpenAPI",
-    "order": 17,
+    "order": 18,
     "headings": [
       {
         "level": 1,
@@ -967,7 +1026,7 @@
     "slug": "openapi-reference",
     "title": "OpenAPI reference",
     "section": "OpenAPI",
-    "order": 18,
+    "order": 19,
     "headings": [
       {
         "level": 1,
@@ -1026,7 +1085,7 @@
     "slug": "repo",
     "title": "Repo module",
     "section": "Data layer",
-    "order": 19,
+    "order": 20,
     "headings": [
       {
         "level": 1,
@@ -1071,7 +1130,7 @@
     "title": "GORM integration",
     "section": "Data layer",
     "group": "Databases",
-    "order": 20,
+    "order": 21,
     "headings": [
       {
         "level": 1,
@@ -1116,7 +1175,7 @@
     "title": "sqlc integration",
     "section": "Data layer",
     "group": "Databases",
-    "order": 21,
+    "order": 22,
     "headings": [
       {
         "level": 1,
@@ -1161,7 +1220,7 @@
     "title": "Events",
     "section": "Messaging",
     "group": "Events",
-    "order": 22,
+    "order": 23,
     "headings": [
       {
         "level": 1,
@@ -1196,7 +1255,7 @@
     "title": "Event backends",
     "section": "Messaging",
     "group": "Events",
-    "order": 23,
+    "order": 24,
     "headings": [
       {
         "level": 1,
@@ -1231,7 +1290,7 @@
     "title": "Event RPC (request/reply)",
     "section": "Messaging",
     "group": "Events",
-    "order": 24,
+    "order": 25,
     "headings": [
       {
         "level": 1,
@@ -1265,7 +1324,7 @@
     "slug": "webhooks",
     "title": "Webhooks",
     "section": "Messaging",
-    "order": 25,
+    "order": 26,
     "headings": [
       {
         "level": 1,
@@ -1294,7 +1353,7 @@
     "slug": "outbox",
     "title": "Transactional outbox",
     "section": "Messaging",
-    "order": 26,
+    "order": 27,
     "headings": [
       {
         "level": 1,
@@ -1328,7 +1387,7 @@
     "slug": "storage",
     "title": "Object storage",
     "section": "Platform",
-    "order": 27,
+    "order": 28,
     "headings": [
       {
         "level": 1,
@@ -1362,7 +1421,7 @@
     "slug": "secrets-infisical",
     "title": "Secrets with Infisical",
     "section": "Platform",
-    "order": 28,
+    "order": 29,
     "headings": [
       {
         "level": 1,
@@ -1391,7 +1450,7 @@
     "slug": "manifest",
     "title": "Deploy manifest",
     "section": "Platform",
-    "order": 30,
+    "order": 31,
     "headings": [
       {
         "level": 1,
@@ -1420,7 +1479,7 @@
     "slug": "multitenancy",
     "title": "Multi-tenancy",
     "section": "Platform",
-    "order": 31,
+    "order": 32,
     "headings": [
       {
         "level": 1,
@@ -1449,7 +1508,7 @@
     "slug": "tracing",
     "title": "Correlation and tracing",
     "section": "Platform",
-    "order": 32,
+    "order": 33,
     "headings": [
       {
         "level": 1,
@@ -1483,7 +1542,7 @@
     "slug": "cli",
     "title": "The bosun CLI",
     "section": "CLI \u0026 tooling",
-    "order": 33,
+    "order": 34,
     "headings": [
       {
         "level": 1,
@@ -1517,17 +1576,22 @@
       },
       {
         "level": 2,
+        "text": "bosun gen registry",
+        "anchor": "bosun-gen-registry"
+      },
+      {
+        "level": 2,
         "text": "bosun new",
         "anchor": "bosun-new"
       }
     ],
-    "text": "The bosun CLI The bosun command is the framework's tooling: it serves the documentation, exposes it to AI over MCP, fetches deploy manifests, generates typed clients, and scaffolds new services. This page is the reference for every command and its options. Installing Install the binary with go install . Because Bosun is a private module, set GOPRIVATE first. export GOPRIVATE = github.com/bluebeard63/* go install github.com/bluebeard63/bosun/cmd/bosun@latest bosun --version prints the build version, and bosun help \u003ccommand\u003e prints a command's usage. Every command also accepts --help . bosun docs Serves the documentation as a local website and opens it in your browser. The site is embedded in the binary, so it works offline, and it is fully searchable across page titles, headings, and body text. bosun docs Flag Default Description --addr 127.0.0.1:0 Listen address as host:port; :0 picks a free port. --no-open false Do not open a browser automatically; just print the URL. bosun mcp Serves the documentation to AI clients over the Model Context Protocol on stdin/stdout. It takes no flags, because an MCP client launches it and speaks the protocol over the pipe. See the MCP page for how to install it into Claude, Codex, Cursor, and other tools. bosun mcp bosun manifest Fetches a running service's deploy manifest from GET \u003cservice-url\u003e/.bosun/manifest and prints the JSON. With --caddy , it prints a Caddy reverse-proxy site block derived from the manifest instead. The manifest guide describes the manifest itself. bosun manifest http://localhost:8080 bosun manifest --caddy http://localhost:8080 Flag Default Description --caddy false Emit a Caddyfile instead of the JSON manifest. bosun gen client Generates a typed Go client from a service's manifest, taking either a URL to a running service or a path to a saved manifest file. Each route becomes a method whose request and response types are the handler's own types. The client generation guide covers the shared-contracts pattern this relies on. bosun gen client http://billing:8080 --package clients --out clients/billing.go Flag Default Description --package client Package name for the generated file. --service from manifest Override the service name used for the client type. --out , -o stdout Write the client to a file instead of printing it. bosun new Scaffolds a new service or a new workspace. Both subcommands prompt for their options interactively, or take them as flags; pass --yes to accept every default without prompting, which is what you want in a script. The microservices guide explains the layout they produce. bosun new service \u003cname\u003e creates a single deployable service directory. bosun new service billing --module example.com/billing --event inmem --yes Flag Default Description --module example.com/\u003cname\u003e Go module path. --event inmem Event backend: inmem , amqp , nats , redis , or none . --port 8080 Listen port baked into the service. --yes , -y false Accept defaults without prompting. bosun new project \u003cname\u003e creates a workspace with a shared contracts package and a first service. bosun new project acme --module example.com/acme --service api --yes Flag Default Description --module example.com/\u003cname\u003e Go module path for the workspace. --service api Name of the first service. --event inmem Event backend for the first service. --port 8080 Listen port for the first service. --yes , -y false Accept defaults without prompting."
+    "text": "The bosun CLI The bosun command is the framework's tooling: it serves the documentation, exposes it to AI over MCP, fetches deploy manifests, generates typed clients and registry imports, and scaffolds new services. This page is the reference for every command and its options. Installing Install the binary with go install . Because Bosun is a private module, set GOPRIVATE first. export GOPRIVATE = github.com/bluebeard63/* go install github.com/bluebeard63/bosun/cmd/bosun@latest bosun --version prints the build version, and bosun help \u003ccommand\u003e prints a command's usage. Every command also accepts --help . bosun docs Serves the documentation as a local website and opens it in your browser. The site is embedded in the binary, so it works offline, and it is fully searchable across page titles, headings, and body text. bosun docs Flag Default Description --addr 127.0.0.1:0 Listen address as host:port; :0 picks a free port. --no-open false Do not open a browser automatically; just print the URL. bosun mcp Serves the documentation to AI clients over the Model Context Protocol on stdin/stdout. It takes no flags, because an MCP client launches it and speaks the protocol over the pipe. See the MCP page for how to install it into Claude, Codex, Cursor, and other tools. bosun mcp bosun manifest Fetches a running service's deploy manifest from GET \u003cservice-url\u003e/.bosun/manifest and prints the JSON. With --caddy , it prints a Caddy reverse-proxy site block derived from the manifest instead. The manifest guide describes the manifest itself. bosun manifest http://localhost:8080 bosun manifest --caddy http://localhost:8080 Flag Default Description --caddy false Emit a Caddyfile instead of the JSON manifest. bosun gen client Generates a typed Go client from a service's manifest, taking either a URL to a running service or a path to a saved manifest file. Each route becomes a method whose request and response types are the handler's own types. The client generation guide covers the shared-contracts pattern this relies on. bosun gen client http://billing:8080 --package clients --out clients/billing.go Flag Default Description --package client Package name for the generated file. --service from manifest Override the service name used for the client type. --out , -o stdout Write the client to a file instead of printing it. bosun gen registry Writes zz_bosun_registry.go , a file that blank-imports every package in the current module that registers with Bosun (package-level bosun.Controller , Service , Middleware , Default , DefaultBind or DefaultDynamic declarations). Run it from the package that calls bosun.New() , usually through //go:generate bosun gen registry . The registration guide explains what is detected and where the file should live. bosun gen registry # write ./zz_bosun_registry.go bosun gen registry --dir ./cmd/worker # write into another main package bosun gen registry --check # CI: fail if the file is stale Flag Default Description --dir . Package directory to write into. --out , -o zz_bosun_registry.go Generated file name, relative to --dir . --check false Exit non-zero if the file is missing or out of date, without writing it. bosun new Scaffolds a new service or a new workspace. Both subcommands prompt for their options interactively, or take them as flags; pass --yes to accept every default without prompting, which is what you want in a script. The microservices guide explains the layout they produce. bosun new service \u003cname\u003e creates a single deployable service directory. Its main.go has a //go:generate bosun gen registry directive and a generated zz_bosun_registry.go , so new packages are wired in with go generate rather than hand-written imports. bosun new service billing --module example.com/billing --event inmem --yes Flag Default Description --module example.com/\u003cname\u003e Go module path. --event inmem Event backend: inmem , amqp , nats , redis , or none . --port 8080 Listen port baked into the service. --yes , -y false Accept defaults without prompting. bosun new project \u003cname\u003e creates a workspace with a shared contracts package and a first service. bosun new project acme --module example.com/acme --service api --yes Flag Default Description --module example.com/\u003cname\u003e Go module path for the workspace. --service api Name of the first service. --event inmem Event backend for the first service. --port 8080 Listen port for the first service. --yes , -y false Accept defaults without prompting."
   },
   {
     "slug": "mcp",
     "title": "Docs over MCP",
     "section": "CLI \u0026 tooling",
-    "order": 34,
+    "order": 35,
     "headings": [
       {
         "level": 1,
@@ -1591,7 +1655,7 @@
     "slug": "client-gen",
     "title": "Typed service clients",
     "section": "CLI \u0026 tooling",
-    "order": 35,
+    "order": 36,
     "headings": [
       {
         "level": 1,
@@ -1620,7 +1684,7 @@
     "slug": "microservices",
     "title": "Microservices",
     "section": "CLI \u0026 tooling",
-    "order": 36,
+    "order": 37,
     "headings": [
       {
         "level": 1,
@@ -1649,7 +1713,7 @@
     "slug": "server",
     "title": "Running and shutting down",
     "section": "Operations",
-    "order": 37,
+    "order": 38,
     "headings": [
       {
         "level": 1,
@@ -1688,7 +1752,7 @@
     "slug": "config",
     "title": "Config and hot reload",
     "section": "Operations",
-    "order": 38,
+    "order": 39,
     "headings": [
       {
         "level": 1,
@@ -1737,7 +1801,7 @@
     "slug": "testing",
     "title": "Testing",
     "section": "Operations",
-    "order": 40,
+    "order": 41,
     "headings": [
       {
         "level": 1,

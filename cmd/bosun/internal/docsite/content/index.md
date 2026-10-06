@@ -8,7 +8,7 @@ The [getting started](./getting-started.md) tutorial takes you from an empty dir
 
 ## Core concepts
 
-[Controllers](./controllers.md) own groups of routes. [Services](./services.md) hold your logic and are wired by dependency injection, and [service options](./service-options.md) define a configuration value once and inject it everywhere. [Middleware](./middleware.md) wraps handlers, and the [auth and permissions](./auth-and-permissions.md) guide builds the common authentication and role-check chain. [Typed handlers](./typed-handlers.md) explain request binding and response encoding, [validation](./validation.md) checks input with struct tags, [errors](./errors.md) cover status mapping, and [convert](./convert.md) maps a model to a response DTO.
+[Controllers](./controllers.md) own groups of routes, and [registering packages](./registration.md) shows how `bosun gen registry` wires them in without blank imports in `main.go`. [Services](./services.md) hold your logic and are wired by dependency injection, and [service options](./service-options.md) define a configuration value once and inject it everywhere. [Middleware](./middleware.md) wraps handlers, and the [auth and permissions](./auth-and-permissions.md) guide builds the common authentication and role-check chain. [Typed handlers](./typed-handlers.md) explain request binding and response encoding, [validation](./validation.md) checks input with struct tags, [errors](./errors.md) cover status mapping, and [convert](./convert.md) maps a model to a response DTO.
 
 ## Routing
 

@@ -18,6 +18,10 @@ The [getting started](./getting-started.md) tutorial takes you from an empty dir
 
 [Forms](./forms.md) covers URL-encoded and multipart fields, and [files](./files.md) covers uploads, streaming, and downloads.
 
+## OpenAPI
+
+Bosun generates an OpenAPI 3.0 spec from your typed handlers. The [tutorial](./openapi-tutorial.md) adds a live spec and Swagger UI to a small API step by step. The [how-to guides](./openapi.md) cover moving, hiding and exporting the spec and documenting error responses, and the [reference](./openapi-reference.md) lists exactly what gets generated and the current limitations.
+
 ## Data layer
 
 The [repo module](./repo.md) provides a generic `Repo[T]` with a query builder and transactions. The [GORM](./database-gorm.md) and [sqlc](./database-sqlc.md) guides show the hand-rolled patterns for each.

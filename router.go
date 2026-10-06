@@ -94,11 +94,19 @@ func (r *Router) handle(method, p string, h http.HandlerFunc, refs []MWRef) {
 	for i := len(all) - 1; i >= 0; i-- {
 		handler = all[i].Handle(handler)
 	}
+	r.app.Mux.Handle(method+" "+r.fullPath(p), handler)
+}
+
+// fullPath is the mux pattern path for p mounted on this router. It is the
+// single source of truth for both the registered route and its RouteInfo,
+// so OpenAPI and the manifest advertise exactly the path that is served.
+// path.Join drops a trailing slash: "/" under "/notes" serves "/notes".
+func (r *Router) fullPath(p string) string {
 	full := normalizePath(p)
 	if r.prefix != "" {
 		full = path.Join(r.prefix, full)
 	}
-	r.app.Mux.Handle(method+" "+full, handler)
+	return full
 }
 
 // normalizePath rewrites :name path params to the {name} form Go's

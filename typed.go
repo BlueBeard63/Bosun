@@ -101,10 +101,7 @@ func typed[In, Out any](r *Router, method, p string, h func(context.Context, *Re
 	}
 
 	p = normalizePath(p)
-	full := p
-	if r.prefix != "" {
-		full = joinPrefix(r.prefix, p)
-	}
+	full := r.fullPath(p)
 	paramNames := extractParamNames(full)
 	handlerName := runtime.FuncForPC(reflect.ValueOf(h).Pointer()).Name()
 

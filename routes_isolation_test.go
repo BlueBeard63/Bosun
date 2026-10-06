@@ -1,6 +1,7 @@
 package bosun
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -118,5 +119,39 @@ func TestAppIsInjectable(t *testing.T) {
 	}
 	if v.(*appInjected).App != app {
 		t.Fatal("injected *App is not the owning app")
+	}
+}
+
+// rootPathCtrl mounts typed routes at the controller root.
+type rootPathCtrl struct{}
+
+var _ = Controller[rootPathCtrl]("/rootpath")
+
+func (c *rootPathCtrl) Routes(r *Router) {
+	Post(r, "/", c.create)
+	Get(r, "", c.list)
+	Get(r, "/{id}", c.list)
+}
+
+func (c *rootPathCtrl) create(context.Context, *Req[struct{}]) (string, error) { return "ok", nil }
+func (c *rootPathCtrl) list(context.Context, *Req[struct{}]) (string, error)   { return "ok", nil }
+
+// Every advertised RouteInfo path must be the path the mux actually serves.
+func TestRouteInfoPathMatchesServedPath(t *testing.T) {
+	app := newStarted(t)
+	for _, rt := range app.TypedRoutes() {
+		if !strings.HasPrefix(rt.Path, "/rootpath") {
+			continue
+		}
+		target := strings.ReplaceAll(rt.Path, "{id}", "1")
+		rec := httptest.NewRecorder()
+		app.ServeHTTP(rec, httptest.NewRequest(rt.Method, target, nil))
+		if rec.Code != http.StatusOK {
+			t.Errorf("%s %s advertised but serves %d", rt.Method, rt.Path, rec.Code)
+		}
+	}
+	paths := routePaths(app.TypedRoutes())
+	if paths["POST /rootpath"] != 1 || paths["GET /rootpath"] != 1 {
+		t.Fatalf("root routes should be advertised without a trailing slash: %v", paths)
 	}
 }

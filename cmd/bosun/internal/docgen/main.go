@@ -238,6 +238,7 @@ var sections = []struct {
 	}},
 	{"Routing", []navGroup{{"", []string{"routing-groups", "routing-internals"}}}},
 	{"Inputs", []navGroup{{"", []string{"forms", "files"}}}},
+	{"OpenAPI", []navGroup{{"", []string{"openapi-tutorial", "openapi", "openapi-reference"}}}},
 	{"Data layer", []navGroup{
 		{"", []string{"repo"}},
 		{"Databases", []string{"database-gorm", "database-sqlc"}},
@@ -248,7 +249,7 @@ var sections = []struct {
 	}},
 	{"Platform", []navGroup{{"", []string{"storage", "secrets-infisical", "health", "manifest", "multitenancy", "tracing"}}}},
 	{"CLI & tooling", []navGroup{{"", []string{"cli", "mcp", "client-gen", "microservices"}}}},
-	{"Operations", []navGroup{{"", []string{"server", "config", "registry", "openapi", "testing"}}}},
+	{"Operations", []navGroup{{"", []string{"server", "config", "registry", "testing"}}}},
 }
 
 type place struct {

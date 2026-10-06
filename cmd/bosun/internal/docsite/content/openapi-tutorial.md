@@ -160,7 +160,7 @@ Look at the operation for `GET /notes/{id}`. Shortened, it reads:
   "get": {
     "operationId": "Get",
     "parameters": [
-      { "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }
+      { "name": "id", "in": "path", "required": true, "schema": { "type": "integer" } }
     ],
     "responses": {
       "200": { "description": "OK", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/NoteOut" } } } },
@@ -175,9 +175,9 @@ Look at the operation for `GET /notes/{id}`. Shortened, it reads:
 Each part comes from your Go code:
 
 - **The path and method** come from `bosun.Get(r, "/{id}", ...)` and the controller prefix.
-- **The `id` path parameter** comes from the `{id}` segment.
+- **The `id` path parameter** comes from the `{id}` segment. It is typed `integer` because `GetNoteIn.ID` is an `int` tagged `path:"id"`.
 - **The `200` response** points at `NoteOut`, the handler's `Out` type. The `NoteOut` schema uses your `json` tag names, and `time.Time` becomes a `date-time` string.
-- **`400` and `500`** are added automatically: `400` because the handler binds input that can be invalid, and `500` because any handler can fail unexpectedly.
+- **`400` and `500`** are added automatically: `400` because the handler binds input that can be invalid (its body lists the invalid fields), and `500` because any handler can fail unexpectedly.
 - **`404`** was found by reading your source code. The next step explains how.
 
 Now look at the other two operations:

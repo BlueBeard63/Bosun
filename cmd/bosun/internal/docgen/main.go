@@ -234,7 +234,7 @@ var sections = []struct {
 	{"Core concepts", []navGroup{
 		{"", []string{"controllers", "services", "service-options"}},
 		{"Middleware", []string{"middleware", "auth-and-permissions"}},
-		{"", []string{"typed-handlers", "errors", "convert"}},
+		{"", []string{"typed-handlers", "validation", "errors", "convert"}},
 	}},
 	{"Routing", []navGroup{{"", []string{"routing-groups", "routing-internals"}}}},
 	{"Inputs", []navGroup{{"", []string{"forms", "files"}}}},

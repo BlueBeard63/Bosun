@@ -2,6 +2,7 @@ package bosun
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"reflect"
@@ -24,11 +25,11 @@ func bind(req *http.Request, in any) error {
 
 	if isForm {
 		if err := req.ParseForm(); err != nil {
-			return fmt.Errorf("invalid form body: %w", err)
+			return &ValidationError{Message: "invalid form body"}
 		}
 	} else if hasBody && (ct == "" || strings.HasPrefix(ct, "application/json")) {
 		if err := json.NewDecoder(req.Body).Decode(in); err != nil {
-			return fmt.Errorf("invalid JSON body: %w", err)
+			return jsonBindError(err)
 		}
 	}
 
@@ -56,10 +57,54 @@ func bind(req *http.Request, in any) error {
 			continue
 		}
 		if err := setFromString(v.Field(i), raw); err != nil {
-			return fmt.Errorf("field %s: %w", sf.Name, err)
+			if errors.Is(err, errUnsupportedKind) {
+				// A field type bind can't fill is a programming error, not bad input.
+				return E(http.StatusInternalServerError, "internal server error", fmt.Errorf("field %s: %w", sf.Name, err))
+			}
+			name, src := clientName(sf)
+			return &ValidationError{Message: "invalid request", Fields: []FieldError{{
+				Field: name, In: src, Rule: "type", Message: "must be " + kindNoun(sf.Type),
+			}}}
 		}
 	}
 	return nil
+}
+
+var errUnsupportedKind = errors.New("unsupported bind kind")
+
+// jsonBindError turns a JSON decode failure into a client-safe error that
+// names the offending field when the decoder knows it.
+func jsonBindError(err error) error {
+	var te *json.UnmarshalTypeError
+	if errors.As(err, &te) && te.Field != "" {
+		return &ValidationError{Message: "invalid JSON body", Fields: []FieldError{{
+			Field: te.Field, In: "body", Rule: "type", Message: "must be " + kindNoun(te.Type),
+		}}}
+	}
+	return &ValidationError{Message: "invalid JSON body"}
+}
+
+// kindNoun describes a Go type in client terms for "must be ..." messages.
+func kindNoun(t reflect.Type) string {
+	if t.Kind() == reflect.Pointer {
+		t = t.Elem()
+	}
+	switch {
+	case t == timeType:
+		return "an RFC 3339 date-time"
+	case t.Kind() == reflect.String:
+		return "a string"
+	case t.Kind() == reflect.Bool:
+		return "a boolean"
+	case t.Kind() == reflect.Float32, t.Kind() == reflect.Float64:
+		return "a number"
+	case isNumber(t.Kind()):
+		return "an integer"
+	case t.Kind() == reflect.Slice, t.Kind() == reflect.Array:
+		return "an array"
+	default:
+		return "an object"
+	}
 }
 
 func setFromString(f reflect.Value, raw string) error {
@@ -72,6 +117,12 @@ func setFromString(f reflect.Value, raw string) error {
 			return err
 		}
 		f.SetInt(n)
+	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
+		n, err := strconv.ParseUint(raw, 10, 64)
+		if err != nil {
+			return err
+		}
+		f.SetUint(n)
 	case reflect.Bool:
 		b, err := strconv.ParseBool(raw)
 		if err != nil {
@@ -85,7 +136,7 @@ func setFromString(f reflect.Value, raw string) error {
 		}
 		f.SetFloat(fl)
 	default:
-		return fmt.Errorf("unsupported bind kind %s", f.Kind())
+		return fmt.Errorf("%w %s", errUnsupportedKind, f.Kind())
 	}
 	return nil
 }

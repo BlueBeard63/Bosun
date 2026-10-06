@@ -118,7 +118,17 @@ type Example struct {
 }
 ```
 
-Path, query, header, and form tags support these scalar kinds: `string`, the signed integers, `bool`, `float32`, and `float64`. Any other kind (slices, maps, unsigned integers, `time.Time`) is a bind-time error, so for richer parsing take the value as a string and parse it in the handler.
+Path, query, header, and form tags support these scalar kinds: `string`, the signed and unsigned integers, `bool`, `float32`, and `float64`. Any other kind (slices, maps, `time.Time`) can't be bound from a tag and answers `500`, because it's a mistake in the code rather than bad input. For richer parsing, take the value as a string and parse it in the handler.
+
+## Validation and input errors
+
+After binding, the `In` struct is checked against its `validate:"..."` tags and its optional `Validate()` method before the handler runs. Input that can't be converted (for example `?limit=abc` into an `int`, or malformed JSON) and input that breaks a rule are both answered with a JSON `400` that names each invalid field:
+
+```json
+{"error":"validation failed","fields":[{"field":"limit","in":"query","rule":"max","param":"100","message":"must be at most 100"}]}
+```
+
+The [validation guide](./validation.md) covers the rules, optional fields, nested structs, and custom checks.
 
 ## Auditing
 

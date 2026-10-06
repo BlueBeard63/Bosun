@@ -36,9 +36,10 @@ Each typed route (`bosun.Get`, `Post`, `Put`, `Delete`, `Patch`) becomes one ope
 | Path key | `RouteInfo.Path`: the controller prefix, group prefixes and the route path, with `:name` written as `{name}`. A route at `"/"` under `/notes` is `/notes`. |
 | Method key | The HTTP method, in lower case. |
 | `operationId` | The handler's method name, e.g. `Get` for `(*NotesController).Get`. |
-| `parameters`, path | One per `{name}` segment: `in: path`, `required: true`, schema `{"type":"string"}`. |
-| `parameters`, query | One per `In` field tagged `query:"name"`: `in: query`, `required: false`, schema from the field type. |
-| `requestBody` | Only for `POST`, `PUT` and `PATCH`, when `In` has at least one exported field that is not tagged `path` or `query`. It is `required: true`, with content type `application/json` and the schema of `In`. |
+| `parameters`, path | One per `{name}` segment: `in: path`, `required: true`. The schema comes from the `In` field tagged `path:"name"` (type plus [validation](./validation.md) constraints), or `{"type":"string"}` when there's no such field. |
+| `parameters`, query | One per `In` field tagged `query:"name"`: `in: query`. `required` is `true` when the field has the `required` rule. The schema comes from the field type plus its constraints. |
+| `parameters`, header | One per `In` field tagged `header:"Name"`, in the same way as query parameters. |
+| `requestBody` | Only for `POST`, `PUT` and `PATCH`, when `In` has at least one exported field that is not tagged `path`, `query` or `header`. It is `required: true`, with content type `application/json` and the schema of `In`. |
 | `responses` | See the next section. |
 
 Raw routes (`r.Get`, `r.Post` and so on) are not included.
@@ -48,7 +49,7 @@ Raw routes (`r.Get`, `r.Post` and so on) are not included.
 | Code | When it is listed | Body schema |
 |---|---|---|
 | `200` | Always. Description `OK`. | Schema of `Out` |
-| `400` | When `In` is a struct with at least one field (description "invalid request body or parameters"), or when one of the error layers adds it | `ErrorResponse` |
+| `400` | When `In` is a struct with at least one field (description "invalid request body or parameters"), or when one of the error layers adds it | `ValidationError` when `In` is a struct with fields, otherwise `ErrorResponse` |
 | `500` | Always (description "internal server error") | `ErrorResponse` |
 | Any other code | Declared, scanned or observed (see below). Description from `http.StatusText`. | `ErrorResponse` |
 
@@ -59,6 +60,32 @@ Raw routes (`r.Get`, `r.Post` and so on) are not included.
 ```
 
 It matches the body Bosun writes for handler errors: `{"error": "<public message>"}`.
+
+`ValidationError` describes the body of binding and validation failures (see [validation](./validation.md#what-a-failure-looks-like)):
+
+```json
+{
+  "type": "object",
+  "required": ["error"],
+  "properties": {
+    "error": { "type": "string" },
+    "fields": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["field", "rule", "message"],
+        "properties": {
+          "field": { "type": "string" },
+          "in": { "type": "string", "enum": ["body", "path", "query", "header", "form"] },
+          "rule": { "type": "string" },
+          "param": { "type": "string" },
+          "message": { "type": "string" }
+        }
+      }
+    }
+  }
+}
+```
 
 ### Error layers
 
@@ -89,9 +116,21 @@ Codes from the three layers are combined, and each code appears once.
 Struct properties:
 
 - Only exported fields are included.
-- Fields tagged `path` or `query` are left out of object schemas.
+- Fields tagged `path`, `query` or `header` are left out of object schemas; they are documented as parameters instead.
 - The property name is the first part of the `json` tag (`json:"created_at,omitempty"` becomes `created_at`), or the Go field name when there is no tag.
-- Object schemas don't have a `required` list.
+- Fields with the `required` validation rule are listed in the object's `required` array.
+
+### Validation constraints
+
+`validate` tags add JSON Schema keywords to inline property and parameter schemas:
+
+| Rule | string | number | slice / array | map |
+|---|---|---|---|---|
+| `min=N` | `minLength` | `minimum` | `minItems` | `minProperties` |
+| `max=N` | `maxLength` | `maximum` | `maxItems` | `maxProperties` |
+| `oneof=a b` | `enum` of strings | `enum` of numbers | n/a | n/a |
+
+Constraints aren't added to properties whose schema is a `$ref` (a named struct), because OpenAPI 3.0 ignores keywords next to `$ref`. Custom `Validate()` methods can't be inspected and don't appear in the spec.
 
 ## Source scanning rules
 
@@ -116,8 +155,8 @@ These describe the current generator. Use [declarations](./openapi.md#declare-st
 
 - **Fixed document info.** `info.title` is always `bosun API` and `info.version` is always `1.0.0`. There are no `servers`, `tags` or `securitySchemes`.
 - **Success is always `200` with JSON.** A `string` or `[]byte` `Out` is still described as `application/json`, a `[]byte` appears as an array of integers, and an empty `struct{}` appears as an empty object. Bosun actually sends `text/plain`, `application/octet-stream` and no body respectively.
-- **Other input sources aren't documented.** Fields tagged `header` or `form` appear as JSON body properties instead of header parameters or form fields. Form and multipart request bodies are described as JSON.
-- **Parameter types and requirements are simplified.** Path parameters are always strings, query parameters are always optional, and schemas have no `required` list. Constraints from request validation will be reflected once [#9](https://github.com/BlueBeard63/Bosun/issues/9) lands.
+- **Form bodies are described as JSON.** Fields tagged `form` appear as JSON body properties, and form and multipart request bodies get an `application/json` content type.
+- **Custom validation is invisible.** Checks made in `Validate()` methods aren't reflected in schemas.
 - **`operationId` can repeat.** It is the bare method name, so two controllers that both have a `Get` handler produce duplicate IDs. Some client generators reject that.
 - **Schema names can collide.** Two different types with the same name in different packages share one `components/schemas` entry.
 - **`json:"-"` fields are included** under their Go field name.

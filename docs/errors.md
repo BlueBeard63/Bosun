@@ -89,25 +89,25 @@ The cause passed to `bosun.E` is captured in the audit event but never in the re
 
 ## Panics
 
-The typed adapter does not call `recover`, so a panic in a handler is logged by `net/http` and served as an empty 500. To guarantee a JSON 500 and capture a stack trace, add a recover middleware and attach it where you want the safety net.
+The typed adapter does not call `recover`. Without a safety net, `net/http` logs a panic in a handler and the client receives an empty response. Register the built-in `mw.Recover` app-wide to guarantee a JSON 500 and a logged stack trace.
 
 ```go
-type Recover struct{}
-
-func (Recover) Handle(next http.Handler) http.Handler {
-    return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-        defer func() {
-            if rv := recover(); rv != nil {
-                log.Printf("panic: %v\n%s", rv, debug.Stack())
-                http.Error(w, `{"error":"internal server error"}`, http.StatusInternalServerError)
-            }
-        }()
-        next.ServeHTTP(w, r)
-    })
-}
-
-var _ = bosun.Middleware[Recover]()
+app := bosun.New(bosun.WithMiddleware(
+    bosun.Use[mw.Correlation](),
+    bosun.Use[mw.Logging](),
+    bosun.Use[mw.Recover](),
+))
 ```
+
+When a downstream handler or middleware panics, `Recover`:
+
+- logs the panic value, stack trace, method, path and correlation ID at `ERROR` level through `slog`;
+- responds with `500` and `{"error":"internal server error"}`, the same body the typed adapter uses for unexpected errors;
+- never sends the panic value or stack trace to the client.
+
+If the handler has already started the response (written headers or body, or flushed), the status can no longer change. In that case `Recover` logs the panic and aborts the connection by re-panicking with `http.ErrAbortHandler`, so the client sees a truncated response rather than a misleading success. A handler that panics with `http.ErrAbortHandler` itself is passed through untouched.
+
+Place `Recover` inside `Correlation`, `Logging` and `tracemod.Tracing`. Those layers then see the 500 and record it, and the panic log carries the correlation ID. Everything inside `Recover` (controller middleware, route middleware and handlers) is protected.
 
 ## Declaring statuses for OpenAPI
 

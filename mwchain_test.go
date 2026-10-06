@@ -204,8 +204,8 @@ func TestSingletonMWReadsConfigureArgs(t *testing.T) {
 func TestUseArgsWrongTypeFailsAtStart(t *testing.T) {
 	tc := &typedCtrl{} // any controller will do — we register a bad route on its router
 	app := New()
-	app.Reg.Validate()                       // make sure registry is sound
-	app.Mux = http.NewServeMux()             // fresh mux
+	app.Reg.Validate()           // make sure registry is sound
+	app.Mux = http.NewServeMux() // fresh mux
 	var errs []error
 	r := &Router{app: app, prefix: "/wrong", errs: &errs} // synthesize a router
 	Get(r, "/x", tc.echo, Use[hasPermissionMW]("not a string slice"))

@@ -55,7 +55,7 @@ type Bus struct {
 	mu      sync.Mutex
 	conn    *amqp.Connection
 	pubCh   *amqp.Channel
-	pubMu   sync.Mutex    // amqp channels are not safe for concurrent publish
+	pubMu   sync.Mutex // amqp channels are not safe for concurrent publish
 	subs    []*subscription
 	closed  bool
 	closeCh chan struct{} // closed on Close, to stop the reconnect supervisor

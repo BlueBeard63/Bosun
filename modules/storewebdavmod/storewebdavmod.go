@@ -174,9 +174,9 @@ type msResponse struct {
 	Href     string `xml:"href"`
 	Propstat []struct {
 		Prop struct {
-			ContentLength string `xml:"getcontentlength"`
-			ContentType   string `xml:"getcontenttype"`
-			LastModified  string `xml:"getlastmodified"`
+			ContentLength string    `xml:"getcontentlength"`
+			ContentType   string    `xml:"getcontenttype"`
+			LastModified  string    `xml:"getlastmodified"`
 			Collection    *struct{} `xml:"resourcetype>collection"`
 		} `xml:"prop"`
 	} `xml:"propstat"`

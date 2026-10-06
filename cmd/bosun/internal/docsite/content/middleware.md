@@ -91,6 +91,7 @@ app := bosun.New(bosun.WithMiddleware(
     bosun.Use[mw.Logging](),        // logs every request, including 404s and recovered 500s
     bosun.Use[tracemod.Tracing](),  // optional: span marked as errored on 500
     bosun.Use[mw.Recover](),        // everything below is panic-safe
+    bosun.Use[mw.CORS](corsOpts),   // answers preflights before routing
 ))
 ```
 
@@ -163,9 +164,61 @@ bosun.Use[mw.Logging]()      // slog-based request logger
 bosun.Use[mw.RateLimit]()    // per-IP limit, hot-reloadable
 bosun.Use[mw.Correlation]()  // attaches a correlation id to every request
 bosun.Use[mw.Recover]()      // turns panics into a logged JSON 500
+bosun.Use[mw.CORS](opts)     // cross-origin requests and preflights
 ```
 
 `RateLimit` reads its limit from a `*bosun.Dynamic[mw.RateLimitOptions]`, so you can tune it at runtime through the [config module](./config.md). `Correlation` is described in the [tracing guide](./tracing.md). `Recover` is described under [panics](./errors.md#panics).
+
+## CORS
+
+`mw.CORS` lets browser frontends on another origin call your API. It answers preflight requests (an `OPTIONS` request carrying `Access-Control-Request-Method`) itself with `204 No Content`, and adds `Access-Control-*` headers to actual requests from allowed origins.
+
+Register it **app-wide**. Controller routes are registered for specific methods such as `GET` and `POST`, so the `ServeMux` never sends an `OPTIONS` preflight to controller or route middleware. Only middleware that wraps the whole app sees it.
+
+A typical setup has a frontend dev server on `http://localhost:5173` and an API on `:8080`:
+
+```go
+app := bosun.New(bosun.WithMiddleware(
+    bosun.Use[mw.Recover](),
+    bosun.Use[mw.CORS](mw.CORSOptions{
+        AllowedOrigins:   []string{"http://localhost:5173", "https://app.example.com"},
+        AllowedMethods:   []string{"GET", "POST", "PUT", "DELETE"},
+        AllowedHeaders:   []string{"Content-Type", "Authorization"},
+        ExposedHeaders:   []string{"X-Correlation-ID"},
+        AllowCredentials: true,             // cookies / Authorization from the browser
+        MaxAge:           10 * time.Minute, // cache preflight results
+    }),
+))
+```
+
+```js
+// frontend at http://localhost:5173
+await fetch("http://localhost:8080/api/items", {
+  method: "POST",
+  credentials: "include",
+  headers: { "Content-Type": "application/json" },
+  body: JSON.stringify({ name: "widget" }),
+});
+```
+
+| Option | Default | Notes |
+|---|---|---|
+| `AllowedOrigins` | none | Exact origins; `"*"` for any; one wildcard subdomain such as `"https://*.example.com"`. Case-insensitive. |
+| `AllowOriginFunc` | nil | Called for origins that the list doesn't match. |
+| `AllowedMethods` | `GET, HEAD, POST, PUT, PATCH, DELETE` | Checked against `Access-Control-Request-Method`. |
+| `AllowedHeaders` | `Accept, Authorization, Content-Type, X-Correlation-ID` | `"*"` allows any requested header. |
+| `ExposedHeaders` | none | Response headers that scripts may read. |
+| `AllowCredentials` | `false` | When true, the request origin is echoed back and `*` is never sent. |
+| `MaxAge` | `0` (header omitted) | How long a preflight result may be cached, in whole seconds. |
+
+How it behaves:
+
+- The zero value allows no origins. Cross-origin access is opt-in.
+- A request without an `Origin` header (same-origin traffic, curl, server-to-server) passes through unchanged.
+- A disallowed origin, method or header gets no CORS headers, so the browser blocks the response. A disallowed preflight still gets a `204`, but without CORS headers.
+- `Vary: Origin` is always set, so caches keep different origins apart.
+
+To change the policy at runtime, use `bosun.Use[mw.CORS]()` with no arguments. The middleware then reads an injected `*bosun.Dynamic[mw.CORSOptions]` on every request, so you can update the policy through the [config module](./config.md) or by calling `Set` yourself. The default policy allows no origins.
 
 ## Short-circuiting a request
 

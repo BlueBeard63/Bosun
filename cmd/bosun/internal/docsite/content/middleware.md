@@ -83,12 +83,14 @@ srv := &http.Server{Addr: ":8080", Handler: app.Handler()}
 
 ### A production stack
 
-A typical ordering puts the cheapest and broadest concerns outermost:
+A typical ordering puts the cheapest and broadest concerns outermost, with panic recovery just inside the observability layers:
 
 ```go
 app := bosun.New(bosun.WithMiddleware(
-    bosun.Use[mw.Correlation](), // id available to every later layer
-    bosun.Use[mw.Logging](),     // logs every request, including 404s
+    bosun.Use[mw.Correlation](),    // id available to every later layer
+    bosun.Use[mw.Logging](),        // logs every request, including 404s and recovered 500s
+    bosun.Use[tracemod.Tracing](),  // optional: span marked as errored on 500
+    bosun.Use[mw.Recover](),        // everything below is panic-safe
 ))
 ```
 
@@ -160,9 +162,10 @@ import "github.com/bluebeard63/bosun/mw"
 bosun.Use[mw.Logging]()      // slog-based request logger
 bosun.Use[mw.RateLimit]()    // per-IP limit, hot-reloadable
 bosun.Use[mw.Correlation]()  // attaches a correlation id to every request
+bosun.Use[mw.Recover]()      // turns panics into a logged JSON 500
 ```
 
-`RateLimit` reads its limit from a `*bosun.Dynamic[mw.RateLimitOptions]`, so you can tune it at runtime through the [config module](./config.md). `Correlation` is described in the [tracing guide](./tracing.md).
+`RateLimit` reads its limit from a `*bosun.Dynamic[mw.RateLimitOptions]`, so you can tune it at runtime through the [config module](./config.md). `Correlation` is described in the [tracing guide](./tracing.md). `Recover` is described under [panics](./errors.md#panics).
 
 ## Short-circuiting a request
 

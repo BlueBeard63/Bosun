@@ -188,3 +188,35 @@ func TestStatusArgAndDiskScan(t *testing.T) {
 		t.Fatal("unknown handler should yield nil")
 	}
 }
+
+func TestSpecScopedToApp(t *testing.T) {
+	a := bosun.New()
+	b := bosun.New(bosun.OverridePrefix[FixtureController]("/elsewhere"))
+	for _, app := range []*bosun.App{a, b} {
+		if err := app.Start(); err != nil {
+			t.Fatal(err)
+		}
+	}
+	pathsA := fetchSpec(t, a)["paths"].(map[string]any)
+	pathsB := fetchSpec(t, b)["paths"].(map[string]any)
+	if _, ok := pathsA["/elsewhere/thing/{id}"]; ok {
+		t.Fatal("app A's spec includes app B's routes")
+	}
+	if _, ok := pathsB["/fix/thing/{id}"]; ok {
+		t.Fatal("app B's spec includes app A's routes")
+	}
+	if _, ok := pathsB["/elsewhere/thing/{id}"]; !ok {
+		t.Fatal("app B's spec missing its own route")
+	}
+
+	// Traffic on one app doesn't leak observed statuses into another's spec.
+	rec := httptest.NewRecorder()
+	a.ServeHTTP(rec, httptest.NewRequest("GET", "/fix/dyn", nil))
+	c := bosun.New()
+	if err := c.Start(); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := responsesOf(t, fetchSpec(t, c), "/fix/dyn", "get")["418"]; ok {
+		t.Fatal("app C's spec shows a status observed only on app A")
+	}
+}

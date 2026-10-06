@@ -106,4 +106,25 @@ t.Cleanup(func() { _ = app.Shutdown() })
 
 ## A note on shared state
 
-Bosun keeps some package-level state across tests, notably the route index and the pending registrations. Within one process these are append-only and safe to share, but `bosun.TypedRoutes()` returns the cumulative list rather than a per-app one. Each `bosun.New()` is independent for runtime state, so avoid sharing a single `App` between tests that need isolation.
+Each `bosun.New()` owns its runtime state: its registry and service instances, its mux, its mounted typed routes (`app.TypedRoutes()`) and the statuses observed on them (`app.ObservedStatuses`). Route assertions therefore don't depend on test order, and tests that each build their own app can use `t.Parallel()`.
+
+```go
+func TestRoutes(t *testing.T) {
+    t.Parallel()
+    app := bosun.New(bosun.OverridePrefix[users.Controller]("/v2"))
+    if err := app.Start(); err != nil {
+        t.Fatal(err)
+    }
+    for _, rt := range app.TypedRoutes() { // only this app's routes
+        ...
+    }
+}
+```
+
+Some state is still package-level. It consists of immutable declarations that are made in `init` and copied into each app at `New()` or `Start()`, so sharing it between tests is safe:
+
+- `bosun.Service`, `Middleware`, `Controller`, `Default` and `DefaultBind` declarations. Each app builds its own instances from them, and `bosun.Disable` and `bosun.OverridePrefix` adjust them per app.
+- Module-level declarations such as `eventmod.Declare`, `manifestmod.Register` contributors, webhook registrations and `openapi.Sources`.
+- Audit redaction's sensitive field names.
+
+The deprecated `bosun.TypedRoutes()` and `bosun.ObservedStatuses()` are the exception: they aggregate across every app in the process. Use the `app.` methods instead. Avoid sharing a single `App` between tests that need isolation.

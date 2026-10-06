@@ -21,6 +21,8 @@ type App struct {
 	mws      []MWRef      // app-wide middleware, set via WithMiddleware
 	handler  http.Handler // Mux wrapped in app-wide middleware; built by Start
 
+	routes routeTable // typed-route metadata mounted on this app
+
 	shutdownTimeout time.Duration        // grace period for in-flight requests
 	serverConfig    []func(*http.Server) // set via WithHTTPServer
 }
@@ -42,6 +44,7 @@ func New(opts ...Option) *App {
 		o(app)
 	}
 	registry.RegisterInstance[*registry.Registry](app.Reg, app.Reg)
+	registry.RegisterInstance[*App](app.Reg, app) // services can inject the app they belong to
 	for _, s := range pendingServices {
 		if app.disabled[s.pkg] {
 			continue

@@ -101,10 +101,7 @@ func typed[In, Out any](r *Router, method, p string, h func(context.Context, *Re
 	}
 
 	p = normalizePath(p)
-	full := p
-	if r.prefix != "" {
-		full = joinPrefix(r.prefix, p)
-	}
+	full := r.fullPath(p)
 	paramNames := extractParamNames(full)
 	handlerName := runtime.FuncForPC(reflect.ValueOf(h).Pointer()).Name()
 
@@ -117,16 +114,14 @@ func typed[In, Out any](r *Router, method, p string, h func(context.Context, *Re
 	outIsBytes := outType.Kind() == reflect.Slice && outType.Elem().Kind() == reflect.Uint8
 	outIsEmptyStruct := outType.Kind() == reflect.Struct && outType.NumField() == 0
 
-	routeIndexMu.Lock()
-	routeIndex = append(routeIndex, RouteInfo{
+	recordRoute(r.app, RouteInfo{
 		Method:   method,
 		Path:     full,
 		Handler:  handlerName,
 		In:       inType,
-		Out:      reflect.TypeOf((*Out)(nil)).Elem(),
+		Out:      outType,
 		Declared: declared,
 	})
-	routeIndexMu.Unlock()
 
 	app := r.app
 	var auditorOnce sync.Once
@@ -186,7 +181,7 @@ func typed[In, Out any](r *Router, method, p string, h func(context.Context, *Re
 			}
 		}
 
-		recordObserved(method, full, status)
+		recordObserved(app, method, full, status)
 
 		if auditor != nil {
 			ev := AuditEvent{

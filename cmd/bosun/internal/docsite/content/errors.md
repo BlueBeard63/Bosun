@@ -111,7 +111,7 @@ Place `Recover` inside `Correlation`, `Logging` and `tracemod.Tracing`. Those la
 
 ## Declaring statuses for OpenAPI
 
-OpenAPI generation infers `200` and any statically visible `bosun.E` calls, but it cannot see a status your handler computes at runtime. Declare those with `bosun.Errors` on the route so they appear in the generated spec.
+[OpenAPI generation](./openapi.md#document-error-responses) infers `200` and any statically visible `bosun.E` calls, but it cannot see a status your handler computes at runtime. Declare those with `bosun.Errors` on the route so they appear in the generated spec.
 
 ```go
 bosun.Post(r, "/things", c.Create,

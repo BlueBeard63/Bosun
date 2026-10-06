@@ -43,7 +43,7 @@ The five typed generics share the signature `func[In, Out any](r *Router, path s
 
 ## Auditing and inspection
 
-`bosun.Auditor` is the interface you implement and register to receive an `AuditEvent` for every typed request, with redacted snapshots of the body and response. `bosun.Redact(v any) any` is the same redacting walker, available for your own logging. `bosun.TypedRoutes() []RouteInfo` returns every typed route after `Start()`, where each `RouteInfo` carries the method, path, handler name, input and output types, and declared statuses; this is what OpenAPI generation and the deploy manifest read.
+`bosun.Auditor` is the interface you implement and register to receive an `AuditEvent` for every typed request, with redacted snapshots of the body and response. `bosun.Redact(v any) any` is the same redacting walker, available for your own logging. `(*App).TypedRoutes() []RouteInfo` returns the typed routes mounted on that app after `Start()`. Each `RouteInfo` carries the method, path, handler name, input and output types, and declared statuses; this is what [OpenAPI generation](./openapi.md) and the deploy manifest read. `(*App).ObservedStatuses(method, path)` returns the statuses a route has returned on that app. Services can inject `*bosun.App` to reach these. The package-level `bosun.TypedRoutes()` and `bosun.ObservedStatuses()` are deprecated process-wide aggregates; see [routing internals](./routing-internals.md#inspecting-registered-routes).
 
 ## Interfaces you implement
 

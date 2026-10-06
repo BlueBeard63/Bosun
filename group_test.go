@@ -119,7 +119,7 @@ func TestGroupRoutesAppearInIndex(t *testing.T) {
 		"/g/staff/v2/metrics":  false,
 		"/g/secret":            false,
 	}
-	for _, rt := range TypedRoutes() {
+	for _, rt := range newStarted(t).TypedRoutes() {
 		if _, ok := want[rt.Path]; ok {
 			want[rt.Path] = true
 		}

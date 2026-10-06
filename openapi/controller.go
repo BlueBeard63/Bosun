@@ -1,5 +1,5 @@
-// Package openapi serves an OpenAPI 3.0 spec generated from bosun's typed
-// route index, with error responses merged from three layers: declared
+// Package openapi serves an OpenAPI 3.0 spec generated from the typed routes
+// of the app it is mounted on (app.TypedRoutes), with error responses merged from three layers: declared
 // (bosun.Errors), scanned from handler source, and observed from traffic.
 package openapi
 
@@ -14,6 +14,7 @@ import (
 )
 
 type SpecController struct {
+	app     *bosun.App  // injected: the app this controller is mounted on
 	scanner *errScanner // injected (has injected ScanOptions itself)
 }
 
@@ -28,7 +29,7 @@ func (c *SpecController) Spec(w http.ResponseWriter, req *http.Request) {
 	schemas := map[string]any{}
 	paths := map[string]map[string]any{}
 
-	for _, rt := range bosun.TypedRoutes() {
+	for _, rt := range c.app.TypedRoutes() {
 		oaPath, pathParams := convertPath(rt.Path)
 		responses := map[string]any{
 			"200": map[string]any{
@@ -51,7 +52,7 @@ func (c *SpecController) Spec(w http.ResponseWriter, req *http.Request) {
 		for _, code := range c.scanner.statusesFor(rt.Handler) {
 			codes[code] = true
 		}
-		for _, code := range bosun.ObservedStatuses(rt.Method, rt.Path) {
+		for _, code := range c.app.ObservedStatuses(rt.Method, rt.Path) {
 			if code >= 400 {
 				codes[code] = true
 			}

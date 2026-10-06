@@ -32,6 +32,11 @@
       },
       {
         "level": 2,
+        "text": "OpenAPI",
+        "anchor": "openapi"
+      },
+      {
+        "level": 2,
         "text": "Data layer",
         "anchor": "data-layer"
       },
@@ -41,7 +46,7 @@
         "anchor": "operations"
       }
     ],
-    "text": "Bosun docs Bosun is a dependency-light Go web framework built on the Go 1.22 net/http router. It gives you typed handlers, a dependency-injection registry, and a set of optional modules, without codegen or a heavy runtime. Start with the tutorial, then jump to the guide for whatever you are building. Start here The getting started tutorial takes you from an empty directory to a running service with routing, injection, a database, middleware, and errors. The API overview is the reference for every public symbol. Core concepts Controllers own groups of routes. Services hold your logic and are wired by dependency injection, and service options define a configuration value once and inject it everywhere. Middleware wraps handlers, and the auth and permissions guide builds the common authentication and role-check chain. Typed handlers explain request binding and response encoding, errors cover status mapping, and convert maps a model to a response DTO. Routing Route groups share a prefix and middleware across related routes, and routing internals explain path syntax, wildcards, middleware ordering, and route inspection. Inputs Forms covers URL-encoded and multipart fields, and files covers uploads, streaming, and downloads. Data layer The repo module provides a generic Repo[T] with a query builder and transactions. The GORM and sqlc guides show the hand-rolled patterns for each. Operations Running and shutting down covers Run , graceful shutdown and custom servers. Config and hot reload binds typed options to files, environment, and databases. Testing drives an app from a Go test with stubs."
+    "text": "Bosun docs Bosun is a dependency-light Go web framework built on the Go 1.22 net/http router. It gives you typed handlers, a dependency-injection registry, and a set of optional modules, without codegen or a heavy runtime. Start with the tutorial, then jump to the guide for whatever you are building. Start here The getting started tutorial takes you from an empty directory to a running service with routing, injection, a database, middleware, and errors. The API overview is the reference for every public symbol. Core concepts Controllers own groups of routes. Services hold your logic and are wired by dependency injection, and service options define a configuration value once and inject it everywhere. Middleware wraps handlers, and the auth and permissions guide builds the common authentication and role-check chain. Typed handlers explain request binding and response encoding, errors cover status mapping, and convert maps a model to a response DTO. Routing Route groups share a prefix and middleware across related routes, and routing internals explain path syntax, wildcards, middleware ordering, and route inspection. Inputs Forms covers URL-encoded and multipart fields, and files covers uploads, streaming, and downloads. OpenAPI Bosun generates an OpenAPI 3.0 spec from your typed handlers. The tutorial adds a live spec and Swagger UI to a small API step by step. The how-to guides cover moving, hiding and exporting the spec and documenting error responses, and the reference lists exactly what gets generated and the current limitations. Data layer The repo module provides a generic Repo[T] with a query builder and transactions. The GORM and sqlc guides show the hand-rolled patterns for each. Operations Running and shutting down covers Run , graceful shutdown and custom servers. Config and hot reload binds typed options to files, environment, and databases. Testing drives an app from a Go test with stubs."
   },
   {
     "slug": "getting-started",
@@ -149,7 +154,7 @@
         "anchor": "a-minimal-app"
       }
     ],
-    "text": "Bosun public API This is a tour of every exported symbol you call when building an app, grouped by task rather than alphabetically. For deep detail on any area, follow the links to its dedicated guide. Typed and untyped routes The most important distinction is between typed and untyped routes. The typed generics ( bosun.Get , Post , Put , Delete , Patch ) take a handler of the form func(ctx context.Context, req *bosun.Req[In]) (Out, error) and give you body binding, audit events, and OpenAPI entries; use them for almost everything. The untyped methods on *Router ( r.Get , and so on) take a plain func(w http.ResponseWriter, r *http.Request) and hand you raw net/http for streaming, hijacking, or full control of the response. Passing a typed handler to r.Get is a compile error; call bosun.Get(r, ...) instead. bosun . Get ( r , \"/users/:id\" , c . Get ) // typed; :id and {id} both work r . Get ( \"/stream\" , c . Stream ) // untyped; c.Stream is an http.HandlerFunc Building the app bosun.New(opts ...Option) *App creates an app and applies every package-level registration. (*App).Run(addr) error is the normal entry point. It starts the app, serves on addr , and shuts down gracefully on SIGINT / SIGTERM : it drains in-flight requests, then closes services, and returns nil after a clean shutdown. (*App).RunContext(ctx, addr) does the same but stops when ctx is done, and (*App).Serve(ctx, ln) serves on an existing net.Listener . See running and shutting down . (*App).Start() error applies module defaults, validates the dependency graph, and mounts routes, which you call directly when you want to serve the app yourself. (*App).Handler() http.Handler returns the root handler: the mux wrapped in app-wide middleware. App also implements http.Handler . (*App).Shutdown() error closes registered io.Closer services in reverse dependency order. The public fields App.Reg and App.Mux give you the registry (for registering external instances) and the underlying *http.ServeMux . Serving App.Mux directly bypasses app-wide middleware. app := bosun . New () registry . RegisterInstance [ * gorm . DB ]( app . Reg , db ) if err := app . Run ( \":8080\" ); err != nil { log . Fatal ( err ) } Several options shape an app at construction. bosun.Disable(pkgPath) uninstalls every registration under an import path. bosun.OverridePrefix[T](prefix) remounts a controller at a different prefix than it declared. bosun.WithMiddleware(mws ...MWRef) registers app-wide middleware that wraps every request; see middleware . bosun.WithShutdownTimeout(d) sets the drain grace period (default bosun.DefaultShutdownTimeout , 10s), and bosun.WithHTTPServer(func(*http.Server)) customizes the server that Run uses. Self-registration These functions run at package-init time through var _ = ... and return a meaningless struct{} ; the value is discarded and the side effect is the registration. bosun.Service[T]() registers an injectable singleton. bosun.Controller[T](prefix, mws...) registers a controller, which must implement Routes(*bosun.Router) . bosun.Middleware[T]() registers middleware, which must implement Handle(http.Handler) http.Handler . bosun.Default[T](build) ships a fallback provider that fires only if the host has not registered T . bosun.DefaultBind[I, Impl]() binds an interface to an implementation unless the host overrides it. bosun.DefaultDynamic[T](build) ships a hot-reloadable default. These are covered in the services and service options guides. Middleware references bosun.Use[T](args ...any) MWRef is a type-safe reference to a registered middleware. With no arguments it runs T.Handle ; with arguments, T must define a Configure(args...) MiddlewareHandler method that the framework calls once at startup. bosun.UseFunc(MiddlewareFunc) MWRef wraps an inline closure, which is how per-route factory helpers like HasPermission(\"admin\") are built. bosun.WithRouteValue[T](v *T) MWRef attaches a typed value to the request context before later middleware runs, for passing data into a middleware you cannot modify. The auth and permissions guide works through these in a real chain. Typed routes and errors The five typed generics share the signature func[In, Out any](r *Router, path string, h Handler[In, Out], opts ...RouteOpt) , and type inference means you never write the type parameters. bosun.Errors(codes ...int) RouteOpt declares extra status codes for OpenAPI. bosun.E(status, publicMessage, cause) *Error returns a controlled error: the client sees the status and message while the cause is recorded for the audit log with the call site. Any other error becomes a 500. The typed handlers and errors guides cover these fully. Context values and dynamic values bosun.WithValue[T](ctx, *T) and bosun.Value[T](ctx) *T pass typed values from middleware to handlers, keyed by the Go type so there are no collisions. bosun.Dynamic[T] holds a hot-reloadable value with Get() , Set(v) , and OnChange(fn) ; inject *bosun.Dynamic[T] and call Get() per request so configuration reloads apply without rebuilding the service. The config guide drives dynamic values from files, environment, and databases. Auditing and inspection bosun.Auditor is the interface you implement and register to receive an AuditEvent for every typed request, with redacted snapshots of the body and response. bosun.Redact(v any) any is the same redacting walker, available for your own logging. bosun.TypedRoutes() []RouteInfo returns every typed route after Start() , where each RouteInfo carries the method, path, handler name, input and output types, and declared statuses; this is what OpenAPI generation and the deploy manifest read. Interfaces you implement Two interfaces are contracts the framework checks. bosun.BaseController requires Routes(r *Router) , and every controller satisfies it. bosun.MiddlewareHandler requires Handle(next http.Handler) http.Handler , and every middleware satisfies it. Registration panics early if a type does not implement the interface it was registered as. A minimal app type HealthResponse struct { OK bool `json:\"ok\"` } type HealthController struct {} var _ = bosun . Controller [ HealthController ]( \"\" ) func ( c * HealthController ) Routes ( r * bosun . Router ) { bosun . Get ( r , \"/health\" , c . Health ) } func ( c * HealthController ) Health ( ctx context . Context , _ * bosun . Req [ struct {}]) ( HealthResponse , error ) { return HealthResponse { OK : true }, nil } func main () { if err := bosun . New (). Run ( \":8080\" ); err != nil { log . Fatal ( err ) } }"
+    "text": "Bosun public API This is a tour of every exported symbol you call when building an app, grouped by task rather than alphabetically. For deep detail on any area, follow the links to its dedicated guide. Typed and untyped routes The most important distinction is between typed and untyped routes. The typed generics ( bosun.Get , Post , Put , Delete , Patch ) take a handler of the form func(ctx context.Context, req *bosun.Req[In]) (Out, error) and give you body binding, audit events, and OpenAPI entries; use them for almost everything. The untyped methods on *Router ( r.Get , and so on) take a plain func(w http.ResponseWriter, r *http.Request) and hand you raw net/http for streaming, hijacking, or full control of the response. Passing a typed handler to r.Get is a compile error; call bosun.Get(r, ...) instead. bosun . Get ( r , \"/users/:id\" , c . Get ) // typed; :id and {id} both work r . Get ( \"/stream\" , c . Stream ) // untyped; c.Stream is an http.HandlerFunc Building the app bosun.New(opts ...Option) *App creates an app and applies every package-level registration. (*App).Run(addr) error is the normal entry point. It starts the app, serves on addr , and shuts down gracefully on SIGINT / SIGTERM : it drains in-flight requests, then closes services, and returns nil after a clean shutdown. (*App).RunContext(ctx, addr) does the same but stops when ctx is done, and (*App).Serve(ctx, ln) serves on an existing net.Listener . See running and shutting down . (*App).Start() error applies module defaults, validates the dependency graph, and mounts routes, which you call directly when you want to serve the app yourself. (*App).Handler() http.Handler returns the root handler: the mux wrapped in app-wide middleware. App also implements http.Handler . (*App).Shutdown() error closes registered io.Closer services in reverse dependency order. The public fields App.Reg and App.Mux give you the registry (for registering external instances) and the underlying *http.ServeMux . Serving App.Mux directly bypasses app-wide middleware. app := bosun . New () registry . RegisterInstance [ * gorm . DB ]( app . Reg , db ) if err := app . Run ( \":8080\" ); err != nil { log . Fatal ( err ) } Several options shape an app at construction. bosun.Disable(pkgPath) uninstalls every registration under an import path. bosun.OverridePrefix[T](prefix) remounts a controller at a different prefix than it declared. bosun.WithMiddleware(mws ...MWRef) registers app-wide middleware that wraps every request; see middleware . bosun.WithShutdownTimeout(d) sets the drain grace period (default bosun.DefaultShutdownTimeout , 10s), and bosun.WithHTTPServer(func(*http.Server)) customizes the server that Run uses. Self-registration These functions run at package-init time through var _ = ... and return a meaningless struct{} ; the value is discarded and the side effect is the registration. bosun.Service[T]() registers an injectable singleton. bosun.Controller[T](prefix, mws...) registers a controller, which must implement Routes(*bosun.Router) . bosun.Middleware[T]() registers middleware, which must implement Handle(http.Handler) http.Handler . bosun.Default[T](build) ships a fallback provider that fires only if the host has not registered T . bosun.DefaultBind[I, Impl]() binds an interface to an implementation unless the host overrides it. bosun.DefaultDynamic[T](build) ships a hot-reloadable default. These are covered in the services and service options guides. Middleware references bosun.Use[T](args ...any) MWRef is a type-safe reference to a registered middleware. With no arguments it runs T.Handle ; with arguments, T must define a Configure(args...) MiddlewareHandler method that the framework calls once at startup. bosun.UseFunc(MiddlewareFunc) MWRef wraps an inline closure, which is how per-route factory helpers like HasPermission(\"admin\") are built. bosun.WithRouteValue[T](v *T) MWRef attaches a typed value to the request context before later middleware runs, for passing data into a middleware you cannot modify. The auth and permissions guide works through these in a real chain. Typed routes and errors The five typed generics share the signature func[In, Out any](r *Router, path string, h Handler[In, Out], opts ...RouteOpt) , and type inference means you never write the type parameters. bosun.Errors(codes ...int) RouteOpt declares extra status codes for OpenAPI. bosun.E(status, publicMessage, cause) *Error returns a controlled error: the client sees the status and message while the cause is recorded for the audit log with the call site. Any other error becomes a 500. The typed handlers and errors guides cover these fully. Context values and dynamic values bosun.WithValue[T](ctx, *T) and bosun.Value[T](ctx) *T pass typed values from middleware to handlers, keyed by the Go type so there are no collisions. bosun.Dynamic[T] holds a hot-reloadable value with Get() , Set(v) , and OnChange(fn) ; inject *bosun.Dynamic[T] and call Get() per request so configuration reloads apply without rebuilding the service. The config guide drives dynamic values from files, environment, and databases. Auditing and inspection bosun.Auditor is the interface you implement and register to receive an AuditEvent for every typed request, with redacted snapshots of the body and response. bosun.Redact(v any) any is the same redacting walker, available for your own logging. (*App).TypedRoutes() []RouteInfo returns the typed routes mounted on that app after Start() . Each RouteInfo carries the method, path, handler name, input and output types, and declared statuses; this is what OpenAPI generation and the deploy manifest read. (*App).ObservedStatuses(method, path) returns the statuses a route has returned on that app. Services can inject *bosun.App to reach these. The package-level bosun.TypedRoutes() and bosun.ObservedStatuses() are deprecated process-wide aggregates; see routing internals . Interfaces you implement Two interfaces are contracts the framework checks. bosun.BaseController requires Routes(r *Router) , and every controller satisfies it. bosun.MiddlewareHandler requires Handle(next http.Handler) http.Handler , and every middleware satisfies it. Registration panics early if a type does not implement the interface it was registered as. A minimal app type HealthResponse struct { OK bool `json:\"ok\"` } type HealthController struct {} var _ = bosun . Controller [ HealthController ]( \"\" ) func ( c * HealthController ) Routes ( r * bosun . Router ) { bosun . Get ( r , \"/health\" , c . Health ) } func ( c * HealthController ) Health ( ctx context . Context , _ * bosun . Req [ struct {}]) ( HealthResponse , error ) { return HealthResponse { OK : true }, nil } func main () { if err := bosun . New (). Run ( \":8080\" ); err != nil { log . Fatal ( err ) } }"
   },
   {
     "slug": "controllers",
@@ -641,7 +646,7 @@
         "anchor": "inspecting-registered-routes"
       }
     ],
-    "text": "Routing internals Bosun does not implement its own route matcher. It normalizes your path patterns, builds the wrapped handler chain, and registers everything with the Go 1.22 net/http.ServeMux , which does the matching. This page explains the two path syntaxes, wildcards, middleware ordering, and how to inspect what got registered. Bosun request lifecycle A request flows through the middleware chain, then the typed adapter binds the request body, the handler runs, and a response is written while an audit and observed-status event is emitted. EMIT HTTP request GET /users/1 Middleware outermost first Typed adapter bind In Handler (ctx, Req) (Out, err) Response JSON + status Audit + Observed redacted snapshot A typed request: the middleware chain wraps the adapter, which binds the body and calls the handler; the handler's result is encoded while an audit event is emitted. Static and dynamic paths Two path syntaxes are accepted and can be mixed freely. A colon parameter such as :id is rewritten internally to the standard library's {id} form, so the path:\"id\" binding tag matches either style. bosun . Get ( r , \"/users/:id\" , c . Get ) bosun . Get ( r , \"/users/{id}\" , c . Get ) // equivalent bosun . Get ( r , \"/orgs/:org/users/{user_id}\" , c . Member ) // mixed A static path (no parameters) matches only itself. A dynamic path captures each parameter segment, which you read through the path: tag on your request struct or, in a raw handler, through req.PathValue(\"id\") . Wildcards A trailing wildcard captures the remainder of the path. Use the standard library's {name...} form and bind it like any other parameter. bosun . Get ( r , \"/static/{path...}\" , c . Serve ) type StaticIn struct { Path string `path:\"path\"` } Middleware ordering Middleware runs outermost-first, in the order you declare it, layering from the app down to the controller, group and route, and finally the handler. App-wide middleware ( bosun.WithMiddleware ) wraps the whole mux, so it runs before routing and also sees unmatched requests. See middleware . var _ = bosun . Controller [ Admin ]( \"/admin\" , bosun . Use [ mw . Logging ](), // outermost bosun . Use [ mw . RequireStaff ](), ) func ( c * Admin ) Routes ( r * bosun . Router ) { bosun . Post ( r , \"/wipe\" , c . Wipe , bosun . Use [ mw . DoubleConfirm ]()) // order on /wipe: [app-wide] -\u003e Logging -\u003e RequireStaff -\u003e DoubleConfirm -\u003e handler } The raw router methods ( r.Get ) run through the same middleware chain as the typed generics, so authentication and logging behave identically for both. Declaring extra error statuses OpenAPI generation cannot always infer a status code that your handler computes at runtime. Declare such statuses explicitly so they appear in the generated spec. bosun . Post ( r , \"/things\" , c . Create , bosun . Errors ( http . StatusConflict , http . StatusGone ), ) Inspecting registered routes After app.Start() , every typed route is available through bosun.TypedRoutes() . This drives OpenAPI generation, the deploy manifest, and route smoke-tests. app . Start () for _ , rt := range bosun . TypedRoutes () { fmt . Printf ( \"%-6s %s %s\\n\" , rt . Method , rt . Path , rt . Handler ) }"
+    "text": "Routing internals Bosun does not implement its own route matcher. It normalizes your path patterns, builds the wrapped handler chain, and registers everything with the Go 1.22 net/http.ServeMux , which does the matching. This page explains the two path syntaxes, wildcards, middleware ordering, and how to inspect what got registered. Bosun request lifecycle A request flows through the middleware chain, then the typed adapter binds the request body, the handler runs, and a response is written while an audit and observed-status event is emitted. EMIT HTTP request GET /users/1 Middleware outermost first Typed adapter bind In Handler (ctx, Req) (Out, err) Response JSON + status Audit + Observed redacted snapshot A typed request: the middleware chain wraps the adapter, which binds the body and calls the handler; the handler's result is encoded while an audit event is emitted. Static and dynamic paths Two path syntaxes are accepted and can be mixed freely. A colon parameter such as :id is rewritten internally to the standard library's {id} form, so the path:\"id\" binding tag matches either style. bosun . Get ( r , \"/users/:id\" , c . Get ) bosun . Get ( r , \"/users/{id}\" , c . Get ) // equivalent bosun . Get ( r , \"/orgs/:org/users/{user_id}\" , c . Member ) // mixed A static path (no parameters) matches only itself. A dynamic path captures each parameter segment, which you read through the path: tag on your request struct or, in a raw handler, through req.PathValue(\"id\") . Wildcards A trailing wildcard captures the remainder of the path. Use the standard library's {name...} form and bind it like any other parameter. bosun . Get ( r , \"/static/{path...}\" , c . Serve ) type StaticIn struct { Path string `path:\"path\"` } Middleware ordering Middleware runs outermost-first, in the order you declare it, layering from the app down to the controller, group and route, and finally the handler. App-wide middleware ( bosun.WithMiddleware ) wraps the whole mux, so it runs before routing and also sees unmatched requests. See middleware . var _ = bosun . Controller [ Admin ]( \"/admin\" , bosun . Use [ mw . Logging ](), // outermost bosun . Use [ mw . RequireStaff ](), ) func ( c * Admin ) Routes ( r * bosun . Router ) { bosun . Post ( r , \"/wipe\" , c . Wipe , bosun . Use [ mw . DoubleConfirm ]()) // order on /wipe: [app-wide] -\u003e Logging -\u003e RequireStaff -\u003e DoubleConfirm -\u003e handler } The raw router methods ( r.Get ) run through the same middleware chain as the typed generics, so authentication and logging behave identically for both. Declaring extra error statuses OpenAPI generation cannot always infer a status code that your handler computes at runtime. Declare such statuses explicitly so they appear in the generated spec. bosun . Post ( r , \"/things\" , c . Create , bosun . Errors ( http . StatusConflict , http . StatusGone ), ) Inspecting registered routes After app.Start() , the typed routes mounted on an app are available through app.TypedRoutes() , in mount order. This drives OpenAPI generation, the deploy manifest, and route smoke-tests. app.ObservedStatuses(method, path) returns the statuses a route has actually returned on that app. app . Start () for _ , rt := range app . TypedRoutes () { fmt . Printf ( \"%-6s %s %s\\n\" , rt . Method , rt . Path , rt . Handler ) } Both are scoped to the App . Two apps in one process, such as two tests or an app built with OverridePrefix , never see each other's routes. Services that need this information can inject *bosun.App , which every app registers as itself. The OpenAPI and manifest controllers use this to describe only the app they are mounted on. The package-level bosun.TypedRoutes() and bosun.ObservedStatuses() are deprecated. They return a cumulative list across every app in the process and will be removed in a future release. To migrate, replace bosun.TypedRoutes() with app.TypedRoutes() and bosun.ObservedStatuses(m, p) with app.ObservedStatuses(m, p) . In the manifest module, replace manifestmod.Build(info) with manifestmod.BuildFor(app, info) and EmitIfRequested(info) with EmitIfRequestedFor(app, info) ."
   },
   {
     "slug": "forms",
@@ -737,10 +742,212 @@
     "text": "File handling Bosun adds nothing on top of net/http for files: the embedded *http.Request in Req[In] gives you FormFile , MultipartReader , and direct body access. This guide shows the standard upload and download patterns and the gotchas around body parsing. Two ways to read an upload FormFile buffers the whole request in memory or temp files for small uploads; MultipartReader streams each part for large uploads. SMALL STREAMING Multipart request one or more files req.FormFile buffered in memory / temp req.MultipartReader streamed part by part MultipartReader requires an unparsed body, so declare In as struct{} when you stream. Small uploads For a single file where buffering in memory is acceptable, bind the text fields with form: tags and read the file part with req.FormFile . type UploadIn struct { Title string `form:\"title\"` } func ( c * Avatars ) Upload ( ctx context . Context , req * bosun . Req [ UploadIn ]) ( UploadOut , error ) { f , hdr , err := req . FormFile ( \"file\" ) if err != nil { return UploadOut {}, bosun . E ( http . StatusBadRequest , \"missing file\" , err ) } defer f . Close () id , err := c . store . Save ( hdr . Filename , hdr . Header . Get ( \"Content-Type\" ), f ) if err != nil { return UploadOut {}, bosun . E ( http . StatusInternalServerError , \"save failed\" , err ) } return UploadOut { ID : id }, nil } FormFile parses the whole request into memory or temporary files before returning, so it is not suitable for streaming. Large or streaming uploads For gigabyte payloads or back-pressure to the client, use req.MultipartReader and stream each part straight to storage. This requires that nothing has already parsed the body, so declare In as struct{} to stop the framework from parsing it. func ( c * Bulk ) Upload ( ctx context . Context , req * bosun . Req [ struct {}]) ( BulkOut , error ) { mr , err := req . MultipartReader () if err != nil { return BulkOut {}, bosun . E ( http . StatusBadRequest , \"not multipart\" , err ) } for { part , err := mr . NextPart () if err == io . EOF { break } if err != nil { return BulkOut {}, bosun . E ( http . StatusBadRequest , \"bad multipart\" , err ) } if part . FormName () == \"file\" { if err := c . store . Stream ( part . FileName (), part ); err != nil { return BulkOut {}, bosun . E ( http . StatusInternalServerError , \"save failed\" , err ) } } _ = part . Close () } return BulkOut {}, nil } The reader is single-pass and cannot rewind, and each part is an io.Reader you pass directly to your storage backend. Raw body uploads For a PUT where the entire body is the file, read req.Request.Body directly. Use req.Request.Body rather than req.Body , because the outer parsed-body field shadows the embedded request body, and declare In as struct{} so the framework leaves the body untouched. func ( c * Files ) Put ( ctx context . Context , req * bosun . Req [ struct {}]) ( PutOut , error ) { id , err := c . store . Stream ( req . PathValue ( \"name\" ), req . Request . Body ) if err != nil { return PutOut {}, bosun . E ( http . StatusInternalServerError , \"save failed\" , err ) } return PutOut { ID : id }, nil } Downloads Return []byte from a typed handler for a small download; the response is sent as application/octet-stream . When you need a specific content type, a Content-Disposition header, or streaming, drop to the raw router methods, which hand you the ResponseWriter directly. func ( c * Files ) Routes ( r * bosun . Router ) { r . Get ( \"/files/:id/download\" , c . Download ) // raw net/http } func ( c * Files ) Download ( w http . ResponseWriter , r * http . Request ) { f , err := c . store . Open ( r . PathValue ( \"id\" )) if err != nil { http . Error ( w , \"not found\" , http . StatusNotFound ) return } defer f . Close () w . Header (). Set ( \"Content-Type\" , \"application/octet-stream\" ) w . Header (). Set ( \"Content-Disposition\" , `attachment; filename=\"` + f . Name + `\"` ) io . Copy ( w , f ) } A raw route does not emit an audit event or an OpenAPI entry; that is the trade for full control of the response. Limiting request size Cap the body with http.MaxBytesReader , applied in a middleware so it covers typed upload routes. Exceeding the cap surfaces as a parse error and a 400 response. type LimitBody struct {} func ( LimitBody ) Handle ( next http . Handler ) http . Handler { return http . HandlerFunc ( func ( w http . ResponseWriter , r * http . Request ) { r . Body = http . MaxBytesReader ( w , r . Body , 50 \u003c\u003c 20 ) // 50 MiB next . ServeHTTP ( w , r ) }) } var _ = bosun . Middleware [ LimitBody ]() Validating content type Check the declared content type, but do not trust it alone for security-sensitive flows; sniff the file's magic bytes when it matters. switch hdr . Header . Get ( \"Content-Type\" ) { case \"image/png\" , \"image/jpeg\" : default : return UploadOut {}, bosun . E ( http . StatusUnsupportedMediaType , \"only PNG or JPEG\" , nil ) } Auditing and files Only req.Body is walked by the audit redactor, so multipart file bytes never reach the audit log. If you copy a filename or caption into req.Body , that value is captured, so tag anything sensitive with audit:\"-\" ."
   },
   {
+    "slug": "openapi-tutorial",
+    "title": "Tutorial: document an API with OpenAPI",
+    "section": "OpenAPI",
+    "order": 15,
+    "headings": [
+      {
+        "level": 1,
+        "text": "Tutorial: document an API with OpenAPI",
+        "anchor": "tutorial-document-an-api-with-openapi"
+      },
+      {
+        "level": 2,
+        "text": "Step 1: create the project",
+        "anchor": "step-1-create-the-project"
+      },
+      {
+        "level": 2,
+        "text": "Step 2: write the notes API",
+        "anchor": "step-2-write-the-notes-api"
+      },
+      {
+        "level": 2,
+        "text": "Step 3: turn on OpenAPI",
+        "anchor": "step-3-turn-on-openapi"
+      },
+      {
+        "level": 2,
+        "text": "Step 4: read what Bosun generated",
+        "anchor": "step-4-read-what-bosun-generated"
+      },
+      {
+        "level": 2,
+        "text": "Step 5: see how error responses are found",
+        "anchor": "step-5-see-how-error-responses-are-found"
+      },
+      {
+        "level": 2,
+        "text": "Step 6: declare the status yourself",
+        "anchor": "step-6-declare-the-status-yourself"
+      },
+      {
+        "level": 2,
+        "text": "Step 7: watch the spec learn from traffic",
+        "anchor": "step-7-watch-the-spec-learn-from-traffic"
+      },
+      {
+        "level": 2,
+        "text": "Step 8: browse the API in Swagger UI",
+        "anchor": "step-8-browse-the-api-in-swagger-ui"
+      },
+      {
+        "level": 2,
+        "text": "Step 9: save the spec to a file",
+        "anchor": "step-9-save-the-spec-to-a-file"
+      },
+      {
+        "level": 2,
+        "text": "What you learned",
+        "anchor": "what-you-learned"
+      }
+    ],
+    "text": "Tutorial: document an API with OpenAPI In this tutorial you build a small notes API and add a live OpenAPI 3.0 spec to it, so the API documents itself. Along the way you see how Bosun turns typed handlers into schemas, how it discovers error responses, and how to browse the result in Swagger UI. It takes about fifteen minutes. By the end you will have: a running API with three typed routes; an OpenAPI spec at GET /openapi.json that lists every route, parameter, request body, response schema and error status; an interactive Swagger UI page at GET /docs ; the spec saved to a file you can commit or give to a client generator. You need Go 1.22 or newer and curl . If you haven't built a Bosun service before, read getting started first; this tutorial assumes you know what a controller and a typed handler are. Step 1: create the project Make a new module and add Bosun: mkdir notes \u0026\u0026 cd notes go mod init example.com/notes go get github.com/bluebeard63/bosun Step 2: write the notes API Create main.go with a controller that lists, fetches and creates notes. The notes live in memory so you can focus on the API itself. package main import ( \"context\" \"log\" \"net/http\" \"sync\" \"time\" \"github.com/bluebeard63/bosun\" ) type NoteIn struct { Title string `json:\"title\"` Body string `json:\"body\"` } type NoteOut struct { ID int `json:\"id\"` Title string `json:\"title\"` Body string `json:\"body\"` CreatedAt time . Time `json:\"created_at\"` } type GetNoteIn struct { ID int `path:\"id\"` } type ListNotesIn struct { Limit int `query:\"limit\"` } type NotesController struct { mu sync . Mutex notes [] NoteOut } var _ = bosun . Controller [ NotesController ]( \"/notes\" ) func ( c * NotesController ) Routes ( r * bosun . Router ) { bosun . Get ( r , \"/\" , c . List ) bosun . Get ( r , \"/{id}\" , c . Get ) bosun . Post ( r , \"/\" , c . Create ) } func ( c * NotesController ) List ( ctx context . Context , req * bosun . Req [ ListNotesIn ]) ([] NoteOut , error ) { c . mu . Lock () defer c . mu . Unlock () out := c . notes if n := req . Body . Limit ; n \u003e 0 \u0026\u0026 n \u003c len ( out ) { out = out [: n ] } return out , nil } func ( c * NotesController ) Get ( ctx context . Context , req * bosun . Req [ GetNoteIn ]) ( NoteOut , error ) { c . mu . Lock () defer c . mu . Unlock () for _ , n := range c . notes { if n . ID == req . Body . ID { return n , nil } } return NoteOut {}, bosun . E ( http . StatusNotFound , \"note not found\" , nil ) } func ( c * NotesController ) Create ( ctx context . Context , req * bosun . Req [ NoteIn ]) ( NoteOut , error ) { c . mu . Lock () defer c . mu . Unlock () n := NoteOut { ID : len ( c . notes ) + 1 , Title : req . Body . Title , Body : req . Body . Body , CreatedAt : time . Now ()} c . notes = append ( c . notes , n ) return n , nil } func main () { if err := bosun . New (). Run ( \":8080\" ); err != nil { log . Fatal ( err ) } } Run it and create a note to check that it works: go run . curl -H 'Content-Type: application/json' -d '{\"title\":\"Groceries\",\"body\":\"milk\"}' localhost:8080/notes You see the new note: { \"id\" : 1 , \"title\" : \"Groceries\" , \"body\" : \"milk\" , \"created_at\" : \"2026-10-06T12:24:26.59+01:00\" } Notice that bosun.Post(r, \"/\", ...) under the /notes prefix is served at /notes , without a trailing slash. Step 3: turn on OpenAPI Add one blank import to main.go : import ( // ... \"github.com/bluebeard63/bosun\" _ \"github.com/bluebeard63/bosun/openapi\" // serves GET /openapi.json ) That is the whole setup. The openapi package registers its own controller, and it is mounted when the app starts, like any other controller. Stop the server with Ctrl+C, start it again, and fetch the spec: go run . curl localhost:8080/openapi.json You get an OpenAPI 3.0.3 document with a paths entry for each route and a components.schemas entry for each named type. Step 4: read what Bosun generated Look at the operation for GET /notes/{id} . Shortened, it reads: \"/notes/{id}\" : { \"get\" : { \"operationId\" : \"Get\" , \"parameters\" : [ { \"name\" : \"id\" , \"in\" : \"path\" , \"required\" : true , \"schema\" : { \"type\" : \"string\" } } ], \"responses\" : { \"200\" : { \"description\" : \"OK\" , \"content\" : { \"application/json\" : { \"schema\" : { \"$ref\" : \"#/components/schemas/NoteOut\" } } } }, \"400\" : { \"description\" : \"invalid request body or parameters\" , \"...\" : \"...\" }, \"404\" : { \"description\" : \"Not Found\" , \"...\" : \"...\" }, \"500\" : { \"description\" : \"internal server error\" , \"...\" : \"...\" } } } } Each part comes from your Go code: The path and method come from bosun.Get(r, \"/{id}\", ...) and the controller prefix. The id path parameter comes from the {id} segment. The 200 response points at NoteOut , the handler's Out type. The NoteOut schema uses your json tag names, and time.Time becomes a date-time string. 400 and 500 are added automatically: 400 because the handler binds input that can be invalid, and 500 because any handler can fail unexpectedly. 404 was found by reading your source code. The next step explains how. Now look at the other two operations: GET /notes has a limit query parameter, taken from the query:\"limit\" tag on ListNotesIn . POST /notes has a required JSON requestBody that points at the NoteIn schema. Step 5: see how error responses are found Get returns bosun.E(http.StatusNotFound, ...) . At startup, the openapi package parses the Go files in the working directory, finds bosun.E calls inside each handler method, and adds their statuses to that route. That's where the 404 came from, without you declaring anything. Try it. Add a rule to Create that rejects duplicate titles, using a small helper to build the error: func ( c * NotesController ) Create ( ctx context . Context , req * bosun . Req [ NoteIn ]) ( NoteOut , error ) { c . mu . Lock () defer c . mu . Unlock () for _ , n := range c . notes { if n . Title == req . Body . Title { return NoteOut {}, duplicateTitle ( n . Title ) } } n := NoteOut { ID : len ( c . notes ) + 1 , Title : req . Body . Title , Body : req . Body . Body , CreatedAt : time . Now ()} c . notes = append ( c . notes , n ) return n , nil } func duplicateTitle ( title string ) error { return bosun . E ( http . StatusConflict , \"a note titled \" + title + \" already exists\" , nil ) } Restart the server and look at the responses for POST /notes : curl -s localhost:8080/openapi.json | grep -A12 '\"post\"' There is no 409 . The scanner only looks inside the handler method itself, and this bosun.E call is in a separate helper function, so the spec can't link it to Create . Step 6: declare the status yourself When the scanner can't see an error, declare it on the route with bosun.Errors : bosun . Post ( r , \"/\" , c . Create , bosun . Errors ( http . StatusConflict )) Restart the server and fetch the spec again. POST /notes now lists 409 alongside 200 , 400 and 500 . Declarations always appear, even in a deployed binary that has no source code to scan. Confirm the API really returns it: curl -H 'Content-Type: application/json' -d '{\"title\":\"Groceries\"}' localhost:8080/notes curl -H 'Content-Type: application/json' -d '{\"title\":\"Groceries\"}' localhost:8080/notes The second call answers {\"error\":\"a note titled Groceries already exists\"} with status 409 . Step 7: watch the spec learn from traffic Some statuses are only known at runtime. Make the notebook hold at most three notes, and compute the status in a function: if len ( c . notes ) \u003e= 3 { return NoteOut {}, bosun . E ( statusFull (), \"notebook full\" , nil ) } Put that check in Create , just before the new note is built, and add the function: func statusFull () int { return http . StatusInsufficientStorage } Restart the server. The spec for POST /notes has no 507 yet, because the scanner only understands literal numbers and http.Status... constants, not function calls. Now send four notes: for t in Groceries Work Ideas Travel ; do curl -s -w ' %{http_code}\\n' -H 'Content-Type: application/json' -d \"{\\\"title\\\":\\\" $t \\\"}\" localhost:8080/notes done The fourth answers 507 . Fetch the spec again: POST /notes now lists 507 Insufficient Storage . Bosun records every error status ( \u003e= 400 ) a route actually returns and adds it to the spec. These observed statuses are kept in memory, so they reset when the process restarts. Step 8: browse the API in Swagger UI The JSON spec is meant for tools. For people, serve Swagger UI. Add a second controller to main.go that returns a small HTML page, which loads Swagger UI from a CDN and points it at your spec: type DocsController struct {} var _ = bosun . Controller [ DocsController ]( \"\" ) func ( c * DocsController ) Routes ( r * bosun . Router ) { r . Get ( \"/docs\" , c . ui ) // raw route: not part of the spec itself } func ( c * DocsController ) ui ( w http . ResponseWriter , _ * http . Request ) { w . Header (). Set ( \"Content-Type\" , \"text/html; charset=utf-8\" ) _ , _ = w . Write ([] byte ( swaggerUI )) } const swaggerUI = `\u003c!doctype html\u003e \u003chtml\u003e \u003chead\u003e \u003ctitle\u003eNotes API\u003c/title\u003e \u003clink rel=\"stylesheet\" href=\"https://unpkg.com/swagger-ui-dist@5/swagger-ui.css\"\u003e \u003c/head\u003e \u003cbody\u003e \u003cdiv id=\"swagger-ui\"\u003e\u003c/div\u003e \u003cscript src=\"https://unpkg.com/swagger-ui-dist@5/swagger-ui-bundle.js\"\u003e\u003c/script\u003e \u003cscript\u003eSwaggerUIBundle({ url: \"/openapi.json\", dom_id: \"#swagger-ui\" });\u003c/script\u003e \u003c/body\u003e \u003c/html\u003e` /docs is registered with the raw r.Get , so it doesn't appear in the spec. Raw routes are never included. Restart the server and open http://localhost:8080/docs in a browser. You see the three notes operations with their schemas and error responses. Expand POST /notes , choose Try it out , and send a request straight from the page. Step 9: save the spec to a file A spec file is useful in code review, CI and client generators. With the server running: curl -s localhost:8080/openapi.json -o openapi.json openapi.json is a standard OpenAPI 3.0.3 document. You can give it to tools such as oapi-codegen or openapi-generator to produce clients in other languages. For Go-to-Go calls between Bosun services, bosun gen client generates a typed client from the deploy manifest instead. What you learned You turned a plain Bosun API into a self-documenting one with a single import, and you used all three sources of error responses: scanned: bosun.E calls inside handler methods ( 404 ); declared: bosun.Errors(...) on the route ( 409 ); observed: statuses the route actually returned ( 507 ). Next steps: The OpenAPI how-to guides cover moving or hiding the spec, scanning source in deployed binaries, exporting the spec in CI, and working with several apps. The OpenAPI reference lists exactly how Go types and routes map to the spec, and the current limitations."
+  },
+  {
+    "slug": "openapi",
+    "title": "OpenAPI",
+    "section": "OpenAPI",
+    "order": 16,
+    "headings": [
+      {
+        "level": 1,
+        "text": "OpenAPI",
+        "anchor": "openapi"
+      },
+      {
+        "level": 2,
+        "text": "Enable the spec",
+        "anchor": "enable-the-spec"
+      },
+      {
+        "level": 2,
+        "text": "Serve the spec at another path",
+        "anchor": "serve-the-spec-at-another-path"
+      },
+      {
+        "level": 2,
+        "text": "Turn the spec off",
+        "anchor": "turn-the-spec-off"
+      },
+      {
+        "level": 2,
+        "text": "Restrict who can read the spec",
+        "anchor": "restrict-who-can-read-the-spec"
+      },
+      {
+        "level": 2,
+        "text": "Document error responses",
+        "anchor": "document-error-responses"
+      },
+      {
+        "level": 3,
+        "text": "Declare statuses on the route",
+        "anchor": "declare-statuses-on-the-route"
+      },
+      {
+        "level": 3,
+        "text": "Let the scanner find bosun.E calls",
+        "anchor": "let-the-scanner-find-bosune-calls"
+      },
+      {
+        "level": 3,
+        "text": "Scan a different source directory",
+        "anchor": "scan-a-different-source-directory"
+      },
+      {
+        "level": 3,
+        "text": "Scan source in deployed binaries",
+        "anchor": "scan-source-in-deployed-binaries"
+      },
+      {
+        "level": 3,
+        "text": "Rely on observed statuses",
+        "anchor": "rely-on-observed-statuses"
+      },
+      {
+        "level": 2,
+        "text": "Shape the schemas",
+        "anchor": "shape-the-schemas"
+      },
+      {
+        "level": 2,
+        "text": "Add an interactive documentation page",
+        "anchor": "add-an-interactive-documentation-page"
+      },
+      {
+        "level": 2,
+        "text": "Export the spec in CI",
+        "anchor": "export-the-spec-in-ci"
+      },
+      {
+        "level": 2,
+        "text": "Work with several apps and in tests",
+        "anchor": "work-with-several-apps-and-in-tests"
+      }
+    ],
+    "text": "OpenAPI Bosun generates an OpenAPI 3.0 spec from your typed handlers and serves it at GET /openapi.json . There are no annotations or separate schema files: route paths, parameters, request bodies and response schemas come from your Go types, and error responses come from three sources that you control. This page is a set of how-to guides for common tasks. For a guided first run, follow the OpenAPI tutorial . For exact mappings and limits, see the OpenAPI reference . How the OpenAPI spec is built The app's typed routes give paths, parameters and schemas. Three error layers, declared, scanned and observed, add error responses. The spec controller merges them on each request to /openapi.json. app.TypedRoutes() paths - params - schemas declared: bosun.Errors(...) scanned: bosun.E(...) in source observed: real responses ≥ 400 ERROR LAYERS SpecController merges per request /openapi.json Routes and schemas come from the app's typed handlers. Error responses are merged from three layers every time the spec is requested. Enable the spec Import the package for its side effects, anywhere in your binary: import _ \"github.com/bluebeard63/bosun/openapi\" The package registers openapi.SpecController , which mounts GET /openapi.json when the app starts. The spec is built fresh on every request from the typed routes of the app that serves it ( app.TypedRoutes() ), so it always matches the running code. Raw routes registered with r.Get and similar methods are not included. Serve the spec at another path Remount the controller with OverridePrefix : app := bosun . New ( bosun . OverridePrefix [ openapi . SpecController ]( \"/api\" )) // spec now at GET /api/openapi.json; /openapi.json returns 404 Turn the spec off Disable the package for one app without removing the import: app := bosun . New ( bosun . Disable ( \"github.com/bluebeard63/bosun/openapi\" )) To leave the package out of a binary completely, put the import in a file with a build tag, for example openapi_dev.go : //go:build !prod package main import _ \"github.com/bluebeard63/bosun/openapi\" Builds made with go build -tags prod then contain no spec endpoint and no scanner. Restrict who can read the spec SpecController is declared without middleware. To protect it, guard its path with app-wide middleware: func internalOnly ( next http . Handler ) http . Handler { return http . HandlerFunc ( func ( w http . ResponseWriter , r * http . Request ) { if r . URL . Path == \"/openapi.json\" \u0026\u0026 r . Header . Get ( \"X-Internal-Token\" ) != os . Getenv ( \"INTERNAL_TOKEN\" ) { http . NotFound ( w , r ) return } next . ServeHTTP ( w , r ) }) } app := bosun . New ( bosun . WithMiddleware ( bosun . UseFunc ( internalOnly ))) Alternatively, remount it under a prefix that your gateway only exposes internally. See app-wide middleware . Document error responses Every operation always lists 200 and 500 , and lists 400 when the handler binds input. Other error statuses come from three layers, which are merged together: Layer How When it works Declared bosun.Errors(codes...) on the route Always, including deployed binaries Scanned bosun.E(status, ...) written directly in the handler method When source is on disk or embedded Observed Any status \u003e= 400 the route actually returned After traffic, until the process restarts Declare statuses on the route Use declarations for any status the scanner can't see: errors built in helper functions or services, statuses held in variables, and errors passed up from other packages. bosun . Post ( r , \"/\" , c . Create , bosun . Errors ( http . StatusConflict , http . StatusGone )) Declared statuses also appear in the deploy manifest . Let the scanner find bosun.E calls You don't need to do anything for this. At the first request for the spec, the scanner parses the .go files under the working directory (skipping _test.go , vendor , node_modules and hidden directories). It records the status of each bosun.E(status, ...) call found in a method body, and attaches those statuses to the route whose handler is that method: func ( c * NotesController ) Get ( ctx context . Context , req * bosun . Req [ GetNoteIn ]) ( NoteOut , error ) { // ... return NoteOut {}, bosun . E ( http . StatusNotFound , \"note not found\" , nil ) // -\u003e 404 in the spec } For the scanner to see a status, the status must be an integer literal ( 404 ) or an http.Status... constant, and the call must be written in the handler method itself. The reference has the full rules. Scan a different source directory The scanner starts from ScanOptions.SourceDir , which defaults to \".\" , the process's working directory. If you run the binary from somewhere else, point it at your source: app := bosun . New () registry . RegisterInstance [ * openapi . ScanOptions ]( app . Reg , \u0026 openapi . ScanOptions { SourceDir : \"./internal\" }) An empty SourceDir turns off on-disk scanning. Scan source in deployed binaries A deployed binary usually runs without its source code nearby, so on-disk scanning finds nothing. Embed the handler source and register it in each package that contains handlers: package notes import ( \"embed\" \"github.com/bluebeard63/bosun/openapi\" ) //go:embed *.go var handlerSource embed . FS var _ = openapi . Sources ( handlerSource ) This puts the package's source code inside the binary, where anyone with the binary can read it. For closed-source services, use bosun.Errors declarations instead. Rely on observed statuses Every typed response records its status against its route. Any status \u003e= 400 that a route has actually returned appears in that app's spec, described with its standard text (for example, 507 Insufficient Storage ). This catches statuses computed at runtime, but observed statuses are kept in memory only. Declare any status that clients must always see. Shape the schemas Schemas are generated from your In and Out types: Field names follow json tags. Fields tagged json:\"-\" keep their Go name (see limitations ), and unexported fields are skipped. Named structs become reusable entries under components/schemas , referenced with $ref . Anonymous structs are written inline. path:\"...\" fields become path parameters, and query:\"...\" fields become optional query parameters. Neither appears in the body schema. Request bodies are documented for POST , PUT and PATCH when the In struct has at least one body field. Give request and response types distinct, descriptive names. Schemas are keyed by the bare type name, so two different User types in two packages would share one schema entry. Add an interactive documentation page Serve Swagger UI (or Redoc) from a raw route and point it at the spec. The tutorial has a complete DocsController you can copy. Because it uses a raw route, the page itself stays out of the spec. Export the spec in CI To commit the spec or check it in CI, write it from a Go test. No server or network is needed: // openapi_export_test.go func TestExportOpenAPI ( t * testing . T ) { app := bosun . New () if err := app . Start (); err != nil { t . Fatal ( err ) } t . Cleanup ( func () { _ = app . Shutdown () }) rec := httptest . NewRecorder () app . ServeHTTP ( rec , httptest . NewRequest ( \"GET\" , \"/openapi.json\" , nil )) if rec . Code != http . StatusOK { t . Fatalf ( \"GET /openapi.json: %d\" , rec . Code ) } if err := os . WriteFile ( \"openapi.json\" , rec . Body . Bytes (), 0 o644 ); err != nil { t . Fatal ( err ) } } Put the test in your main package (or whichever package imports your controllers) so every route is registered. In CI, fail the build when the committed spec is out of date: go test -run TestExportOpenAPI . \u0026\u0026 git diff --exit-code openapi.json The test runs in the package directory, which is also where the scanner looks for source, so scanned statuses are included. Work with several apps and in tests The spec describes only the app that serves it. Two apps in one process, for example in parallel tests or with different OverridePrefix options, each produce their own spec, and traffic on one never adds observed statuses to the other. To inspect routes without going through HTTP, call app.TypedRoutes() . See routing internals ."
+  },
+  {
+    "slug": "openapi-reference",
+    "title": "OpenAPI reference",
+    "section": "OpenAPI",
+    "order": 17,
+    "headings": [
+      {
+        "level": 1,
+        "text": "OpenAPI reference",
+        "anchor": "openapi-reference"
+      },
+      {
+        "level": 2,
+        "text": "Package API",
+        "anchor": "package-api"
+      },
+      {
+        "level": 2,
+        "text": "Endpoint",
+        "anchor": "endpoint"
+      },
+      {
+        "level": 2,
+        "text": "Operations",
+        "anchor": "operations"
+      },
+      {
+        "level": 2,
+        "text": "Responses",
+        "anchor": "responses"
+      },
+      {
+        "level": 3,
+        "text": "Error layers",
+        "anchor": "error-layers"
+      },
+      {
+        "level": 2,
+        "text": "Schema mapping",
+        "anchor": "schema-mapping"
+      },
+      {
+        "level": 2,
+        "text": "Source scanning rules",
+        "anchor": "source-scanning-rules"
+      },
+      {
+        "level": 2,
+        "text": "Limitations",
+        "anchor": "limitations"
+      }
+    ],
+    "text": "OpenAPI reference This page describes exactly what github.com/bluebeard63/bosun/openapi generates. For tasks, see the OpenAPI how-to guides . For a walkthrough, see the OpenAPI tutorial . Package API Symbol Description SpecController Controller that serves the spec. Registered with prefix \"\" , so it serves GET /openapi.json . Remount it with bosun.OverridePrefix[openapi.SpecController](prefix) . ScanOptions{SourceDir string} Where the source scanner looks for files on disk. Default: \u0026ScanOptions{SourceDir: \".\"} . Override it with registry.RegisterInstance[*openapi.ScanOptions] . An empty SourceDir turns off on-disk scanning. Sources(fsys fs.FS) struct{} Registers an embedded source tree for scanning. Use it as var _ = openapi.Sources(src) . The registration applies to every app in the process. Importing the package registers the controller, the scanner service and the ScanOptions default. bosun.Disable(\"github.com/bluebeard63/bosun/openapi\") removes all three from an app. Endpoint GET /openapi.json responds with 200 , Content-Type: application/json , and an indented OpenAPI 3.0.3 document: { \"openapi\" : \"3.0.3\" , \"info\" : { \"title\" : \"bosun API\" , \"version\" : \"1.0.0\" }, \"paths\" : { \"...\" : \"...\" }, \"components\" : { \"schemas\" : { \"...\" : \"...\" } } } The document is rebuilt on every request from the serving app's app.TypedRoutes() . The source scan runs once per app, on the first request. Operations Each typed route ( bosun.Get , Post , Put , Delete , Patch ) becomes one operation: Spec field Source Path key RouteInfo.Path : the controller prefix, group prefixes and the route path, with :name written as {name} . A route at \"/\" under /notes is /notes . Method key The HTTP method, in lower case. operationId The handler's method name, e.g. Get for (*NotesController).Get . parameters , path One per {name} segment: in: path , required: true , schema {\"type\":\"string\"} . parameters , query One per In field tagged query:\"name\" : in: query , required: false , schema from the field type. requestBody Only for POST , PUT and PATCH , when In has at least one exported field that is not tagged path or query . It is required: true , with content type application/json and the schema of In . responses See the next section. Raw routes ( r.Get , r.Post and so on) are not included. Responses Code When it is listed Body schema 200 Always. Description OK . Schema of Out 400 When In is a struct with at least one field (description \"invalid request body or parameters\"), or when one of the error layers adds it ErrorResponse 500 Always (description \"internal server error\") ErrorResponse Any other code Declared, scanned or observed (see below). Description from http.StatusText . ErrorResponse ErrorResponse is added to components/schemas the first time it is used: { \"type\" : \"object\" , \"properties\" : { \"error\" : { \"type\" : \"string\" } } } It matches the body Bosun writes for handler errors: {\"error\": \"\u003cpublic message\u003e\"} . Error layers Layer Source Scope and lifetime Declared bosun.Errors(codes...) passed to the route Fixed when the route is mounted Scanned bosun.E(status, ...) calls inside the handler method's body Scanned once per app, on the first spec request Observed Statuses \u003e= 400 the route has returned, from app.ObservedStatuses(method, path) Per app, in memory, reset on restart Codes from the three layers are combined, and each code appears once. Schema mapping Go type Schema string {\"type\":\"string\"} bool {\"type\":\"boolean\"} int , int8 ... int64 , uint , uint8 ... uint64 {\"type\":\"integer\"} float32 , float64 {\"type\":\"number\"} time.Time {\"type\":\"string\",\"format\":\"date-time\"} []T , [N]T {\"type\":\"array\",\"items\":\u003cT\u003e} map[K]V {\"type\":\"object\",\"additionalProperties\":\u003cV\u003e} *T Same as T Named struct {\"$ref\":\"#/components/schemas/\u003cTypeName\u003e\"} , with the definition stored once under its bare type name. Recursive types are supported. Anonymous struct Inline {\"type\":\"object\",\"properties\":{...}} Anything else (interfaces, any , channels) {} (any value) Struct properties: Only exported fields are included. Fields tagged path or query are left out of object schemas. The property name is the first part of the json tag ( json:\"created_at,omitempty\" becomes created_at ), or the Go field name when there is no tag. Object schemas don't have a required list. Source scanning rules The scanner reads .go files from two places: Embedded trees registered with openapi.Sources . Every .go file in them is read. On-disk files under ScanOptions.SourceDir . It skips _test.go files and the directories vendor , node_modules , and any directory whose name starts with . . A status is recorded only when all of these are true: The call is written inside the body of a method with a pointer receiver , such as func (c *NotesController) Get(...) . Plain functions and closures aren't scanned, and neither are value-receiver methods. The call has the form \u003canything\u003e.E(status, ...) , for example bosun.E(...) . The status argument is an integer literal ( 409 ) or one of these http constants: StatusBadRequest , StatusUnauthorized , StatusPaymentRequired , StatusForbidden , StatusNotFound , StatusMethodNotAllowed , StatusNotAcceptable , StatusRequestTimeout , StatusConflict , StatusGone , StatusUnprocessableEntity , StatusTooManyRequests , StatusInternalServerError , StatusNotImplemented , StatusBadGateway , StatusServiceUnavailable . The scanner links recorded statuses to a route by matching (*Type).Method against the route's handler name. Files that fail to parse are skipped without an error. Limitations These describe the current generator. Use declarations or your own tooling where they matter. Fixed document info. info.title is always bosun API and info.version is always 1.0.0 . There are no servers , tags or securitySchemes . Success is always 200 with JSON. A string or []byte Out is still described as application/json , a []byte appears as an array of integers, and an empty struct{} appears as an empty object. Bosun actually sends text/plain , application/octet-stream and no body respectively. Other input sources aren't documented. Fields tagged header or form appear as JSON body properties instead of header parameters or form fields. Form and multipart request bodies are described as JSON. Parameter types and requirements are simplified. Path parameters are always strings, query parameters are always optional, and schemas have no required list. Constraints from request validation will be reflected once #9 lands. operationId can repeat. It is the bare method name, so two controllers that both have a Get handler produce duplicate IDs. Some client generators reject that. Schema names can collide. Two different types with the same name in different packages share one components/schemas entry. json:\"-\" fields are included under their Go field name. Observed statuses reset on restart and only include codes \u003e= 400 ."
+  },
+  {
     "slug": "repo",
     "title": "Repo module",
     "section": "Data layer",
-    "order": 15,
+    "order": 18,
     "headings": [
       {
         "level": 1,
@@ -785,7 +992,7 @@
     "title": "GORM integration",
     "section": "Data layer",
     "group": "Databases",
-    "order": 16,
+    "order": 19,
     "headings": [
       {
         "level": 1,
@@ -830,7 +1037,7 @@
     "title": "sqlc integration",
     "section": "Data layer",
     "group": "Databases",
-    "order": 17,
+    "order": 20,
     "headings": [
       {
         "level": 1,
@@ -875,7 +1082,7 @@
     "title": "Events",
     "section": "Messaging",
     "group": "Events",
-    "order": 18,
+    "order": 21,
     "headings": [
       {
         "level": 1,
@@ -910,7 +1117,7 @@
     "title": "Event backends",
     "section": "Messaging",
     "group": "Events",
-    "order": 19,
+    "order": 22,
     "headings": [
       {
         "level": 1,
@@ -945,7 +1152,7 @@
     "title": "Event RPC (request/reply)",
     "section": "Messaging",
     "group": "Events",
-    "order": 20,
+    "order": 23,
     "headings": [
       {
         "level": 1,
@@ -979,7 +1186,7 @@
     "slug": "webhooks",
     "title": "Webhooks",
     "section": "Messaging",
-    "order": 21,
+    "order": 24,
     "headings": [
       {
         "level": 1,
@@ -1008,7 +1215,7 @@
     "slug": "outbox",
     "title": "Transactional outbox",
     "section": "Messaging",
-    "order": 22,
+    "order": 25,
     "headings": [
       {
         "level": 1,
@@ -1042,7 +1249,7 @@
     "slug": "storage",
     "title": "Object storage",
     "section": "Platform",
-    "order": 23,
+    "order": 26,
     "headings": [
       {
         "level": 1,
@@ -1076,7 +1283,7 @@
     "slug": "secrets-infisical",
     "title": "Secrets with Infisical",
     "section": "Platform",
-    "order": 24,
+    "order": 27,
     "headings": [
       {
         "level": 1,
@@ -1105,7 +1312,7 @@
     "slug": "manifest",
     "title": "Deploy manifest",
     "section": "Platform",
-    "order": 26,
+    "order": 29,
     "headings": [
       {
         "level": 1,
@@ -1128,13 +1335,13 @@
         "anchor": "from-the-command-line"
       }
     ],
-    "text": "Deploy manifest A Bosun service already knows its own shape: its routes, its health endpoints, and the event subjects it produces and consumes. The deploy manifest exposes that as JSON so the deployment platform can wire the service up without hand-maintained configuration, and so a Caddyfile can be generated from it. The manifest is assembled from the framework's own introspection, not from a file you keep in sync. The deploy manifest A Bosun app's routes, health, and queues are assembled into a manifest that the deploy dashboard and a Caddyfile generator consume. ASSEMBLE Bosun app routes, health, queues Manifest /.bosun/manifest Deploy dashboard wires the service Caddyfile reverse proxy Routes come from the typed route index, queues from event declarations, and the rest from registered contributors. The runtime endpoint Importing the manifest module mounts GET /.bosun/manifest , which serves the live manifest. Configure the service name, version, and port with an *Options instance. registry . RegisterInstance [ * manifestmod . Options ]( app . Reg , \u0026 manifestmod . Options { Service : \"billing\" , Version : buildVersion , Port : 8080 , }) The response lists each route with its method, path, operation, and declared statuses; the health endpoints; and every event subject the service declared, with its direction. { \"service\" : \"billing\" , \"version\" : \"v1.2.3\" , \"port\" : 8080 , \"routes\" : [{ \"method\" : \"POST\" , \"path\" : \"/api/users\" , \"operation\" : \"...\" }], \"health\" : { \"live\" : \"/health/live\" , \"ready\" : \"/health/ready\" }, \"queues\" : [{ \"subject\" : \"users.created\" , \"direction\" : \"produces\" }] } Declaring queues and contributors Routes and health are inferred automatically. To advertise the event subjects a service uses, declare them next to your topics with eventmod.Declare ; they then appear under queues . To advertise anything the framework cannot infer, such as required environment variables or secrets, register a Contributor . var _ = eventmod . Declare ( \"users.created\" , eventmod . Produces , \"\" ) var _ = manifestmod . Register ( manifestmod . ContributorFunc ( func ( m * manifestmod . Manifest ) { m . Secrets = append ( m . Secrets , manifestmod . SecretRef { Name : \"DB_PASSWORD\" }) })) From the command line The bosun manifest command fetches a running service's manifest, and with --caddy prints a Caddy reverse-proxy site block derived from it. For a build-time step that does not run a server, call manifestmod.EmitIfRequested in main after app.Start() ; with BOSUN_MANIFEST=1 set, the process prints the manifest and exits. bosun manifest http://localhost:8080 bosun manifest --caddy http://localhost:8080"
+    "text": "Deploy manifest A Bosun service already knows its own shape: its routes, its health endpoints, and the event subjects it produces and consumes. The deploy manifest exposes that as JSON so the deployment platform can wire the service up without hand-maintained configuration, and so a Caddyfile can be generated from it. The manifest is assembled from the framework's own introspection, not from a file you keep in sync. The deploy manifest A Bosun app's routes, health, and queues are assembled into a manifest that the deploy dashboard and a Caddyfile generator consume. ASSEMBLE Bosun app routes, health, queues Manifest /.bosun/manifest Deploy dashboard wires the service Caddyfile reverse proxy Routes come from the typed route index, queues from event declarations, and the rest from registered contributors. The runtime endpoint Importing the manifest module mounts GET /.bosun/manifest , which serves the live manifest. Configure the service name, version, and port with an *Options instance. registry . RegisterInstance [ * manifestmod . Options ]( app . Reg , \u0026 manifestmod . Options { Service : \"billing\" , Version : buildVersion , Port : 8080 , }) The response lists each route with its method, path, operation, and declared statuses; the health endpoints; and every event subject the service declared, with its direction. { \"service\" : \"billing\" , \"version\" : \"v1.2.3\" , \"port\" : 8080 , \"routes\" : [{ \"method\" : \"POST\" , \"path\" : \"/api/users\" , \"operation\" : \"...\" }], \"health\" : { \"live\" : \"/health/live\" , \"ready\" : \"/health/ready\" }, \"queues\" : [{ \"subject\" : \"users.created\" , \"direction\" : \"produces\" }] } Declaring queues and contributors Routes and health are inferred automatically. To advertise the event subjects a service uses, declare them next to your topics with eventmod.Declare ; they then appear under queues . To advertise anything the framework cannot infer, such as required environment variables or secrets, register a Contributor . var _ = eventmod . Declare ( \"users.created\" , eventmod . Produces , \"\" ) var _ = manifestmod . Register ( manifestmod . ContributorFunc ( func ( m * manifestmod . Manifest ) { m . Secrets = append ( m . Secrets , manifestmod . SecretRef { Name : \"DB_PASSWORD\" }) })) From the command line The bosun manifest command fetches a running service's manifest, and with --caddy prints a Caddy reverse-proxy site block derived from it. For a build-time step that does not run a server, call manifestmod.EmitIfRequestedFor(app, info) in main after app.Start() ; with BOSUN_MANIFEST=1 set, the process prints the manifest and exits. manifestmod.BuildFor(app, info) returns the manifest without printing it. Both describe only the given app's routes. The older Build(info) and EmitIfRequested(info) are deprecated because they aggregate across every app in the process. bosun manifest http://localhost:8080 bosun manifest --caddy http://localhost:8080"
   },
   {
     "slug": "multitenancy",
     "title": "Multi-tenancy",
     "section": "Platform",
-    "order": 27,
+    "order": 30,
     "headings": [
       {
         "level": 1,
@@ -1163,7 +1370,7 @@
     "slug": "tracing",
     "title": "Correlation and tracing",
     "section": "Platform",
-    "order": 28,
+    "order": 31,
     "headings": [
       {
         "level": 1,
@@ -1197,7 +1404,7 @@
     "slug": "cli",
     "title": "The bosun CLI",
     "section": "CLI \u0026 tooling",
-    "order": 29,
+    "order": 32,
     "headings": [
       {
         "level": 1,
@@ -1241,7 +1448,7 @@
     "slug": "mcp",
     "title": "Docs over MCP",
     "section": "CLI \u0026 tooling",
-    "order": 30,
+    "order": 33,
     "headings": [
       {
         "level": 1,
@@ -1305,7 +1512,7 @@
     "slug": "client-gen",
     "title": "Typed service clients",
     "section": "CLI \u0026 tooling",
-    "order": 31,
+    "order": 34,
     "headings": [
       {
         "level": 1,
@@ -1334,7 +1541,7 @@
     "slug": "microservices",
     "title": "Microservices",
     "section": "CLI \u0026 tooling",
-    "order": 32,
+    "order": 35,
     "headings": [
       {
         "level": 1,
@@ -1363,7 +1570,7 @@
     "slug": "server",
     "title": "Running and shutting down",
     "section": "Operations",
-    "order": 33,
+    "order": 36,
     "headings": [
       {
         "level": 1,
@@ -1402,7 +1609,7 @@
     "slug": "config",
     "title": "Config and hot reload",
     "section": "Operations",
-    "order": 34,
+    "order": 37,
     "headings": [
       {
         "level": 1,
@@ -1451,7 +1658,7 @@
     "slug": "testing",
     "title": "Testing",
     "section": "Operations",
-    "order": 37,
+    "order": 39,
     "headings": [
       {
         "level": 1,
@@ -1489,6 +1696,6 @@
         "anchor": "a-note-on-shared-state"
       }
     ],
-    "text": "Testing You drive a Bosun app from a Go test by constructing the App , registering stubs, calling Start() , and serving requests through httptest . There is no process boundary and no network. This works because registry.RegisterInstance[T] beats any bosun.Service[T] or bosun.Default[T] declaration, so a stub registered first always wins, and App is itself an http.Handler that httptest drives directly. app.ServeHTTP includes app-wide middleware ( bosun.WithMiddleware ); app.Mux.ServeHTTP skips it and only exercises the routes. A handler test end to end func TestUsersGet ( t * testing . T ) { app := bosun . New () registry . RegisterInstance [ users . Repo ]( app . Reg , \u0026 stubRepo {}) // override the real repo if err := app . Start (); err != nil { t . Fatal ( err ) } rec := httptest . NewRecorder () app . ServeHTTP ( rec , httptest . NewRequest ( http . MethodGet , \"/users/1\" , nil )) if rec . Code != 200 { t . Fatalf ( \"status %d: %s\" , rec . Code , rec . Body ) } if ! strings . Contains ( rec . Body . String (), `\"id\":1` ) { t . Fatalf ( \"body = %s\" , rec . Body ) } } The stub is trivial to write when a controller depends on an interface rather than a concrete type. Have the production code bind the real implementation with bosun.DefaultBind , and let the test register the stub. type Repo interface { Find ( id int ) ( * User , error ) } var _ = bosun . Service [ GormRepo ]() var _ = bosun . DefaultBind [ Repo , GormRepo ]() registry . RegisterInstance [ Repo ]( app . Reg , \u0026 stubRepo {}) Asserting on audit events To test behavior that is not visible in the response (the cause of an error, or its origin), register a capturing auditor and assert on the events it collects. The audit event carries the full cause and the bosun.E origin. type capAuditor struct { events [] bosun . AuditEvent } func ( a * capAuditor ) Audit ( ctx context . Context , ev bosun . AuditEvent ) { a . events = append ( a . events , ev ) } func TestUnauthorizedAudit ( t * testing . T ) { aud := \u0026 capAuditor {} app := bosun . New () registry . RegisterInstance [ bosun . Auditor ]( app . Reg , aud ) app . Start () // ...drive a request that fails auth... last := aud . events [ len ( aud . events ) - 1 ] if last . Status != 401 { t . Fatalf ( \"audit status = %d\" , last . Status ) } } Testing middleware in isolation Middleware is a registered type, so resolve it from the registry, wrap a verification handler, and drive it directly. This is how you assert both that a middleware blocks a request and that it attaches the expected typed context value. func TestRequireAuthAttachesUser ( t * testing . T ) { app := bosun . New () registry . RegisterInstance [ * Sessions ]( app . Reg , \u0026 fakeSessions { user : \u0026 AuthUser { ID : 1 }}) app . Start () mw , _ := registry . Resolve [ * RequireAuth ]( app . Reg ) var seen * AuthUser h := mw . Handle ( http . HandlerFunc ( func ( w http . ResponseWriter , r * http . Request ) { seen = bosun . Value [ AuthUser ]( r . Context ()) })) req := httptest . NewRequest ( \"GET\" , \"/\" , nil ) req . Header . Set ( \"Authorization\" , \"Bearer ok\" ) h . ServeHTTP ( httptest . NewRecorder (), req ) if seen == nil || seen . ID != 1 { t . Fatalf ( \"user not attached: %+v\" , seen ) } } Database tests Two patterns cover most cases. For a repository package, prefer a real database (a containerized Postgres or an in-memory SQLite) migrated in setup, so the SQL is exercised for real. For a controller or service test where the SQL does not matter, stub the repo interface, which is fast and isolated. Pick per package. Cleanup and shutdown If a service starts a background goroutine in Init() (the config watcher, an event consumer, an outbox relay), call app.Shutdown() in t.Cleanup so it does not leak into later tests. Shutdown closes every registered io.Closer in reverse dependency order. t . Cleanup ( func () { _ = app . Shutdown () }) A note on shared state Bosun keeps some package-level state across tests, notably the route index and the pending registrations. Within one process these are append-only and safe to share, but bosun.TypedRoutes() returns the cumulative list rather than a per-app one. Each bosun.New() is independent for runtime state, so avoid sharing a single App between tests that need isolation."
+    "text": "Testing You drive a Bosun app from a Go test by constructing the App , registering stubs, calling Start() , and serving requests through httptest . There is no process boundary and no network. This works because registry.RegisterInstance[T] beats any bosun.Service[T] or bosun.Default[T] declaration, so a stub registered first always wins, and App is itself an http.Handler that httptest drives directly. app.ServeHTTP includes app-wide middleware ( bosun.WithMiddleware ); app.Mux.ServeHTTP skips it and only exercises the routes. A handler test end to end func TestUsersGet ( t * testing . T ) { app := bosun . New () registry . RegisterInstance [ users . Repo ]( app . Reg , \u0026 stubRepo {}) // override the real repo if err := app . Start (); err != nil { t . Fatal ( err ) } rec := httptest . NewRecorder () app . ServeHTTP ( rec , httptest . NewRequest ( http . MethodGet , \"/users/1\" , nil )) if rec . Code != 200 { t . Fatalf ( \"status %d: %s\" , rec . Code , rec . Body ) } if ! strings . Contains ( rec . Body . String (), `\"id\":1` ) { t . Fatalf ( \"body = %s\" , rec . Body ) } } The stub is trivial to write when a controller depends on an interface rather than a concrete type. Have the production code bind the real implementation with bosun.DefaultBind , and let the test register the stub. type Repo interface { Find ( id int ) ( * User , error ) } var _ = bosun . Service [ GormRepo ]() var _ = bosun . DefaultBind [ Repo , GormRepo ]() registry . RegisterInstance [ Repo ]( app . Reg , \u0026 stubRepo {}) Asserting on audit events To test behavior that is not visible in the response (the cause of an error, or its origin), register a capturing auditor and assert on the events it collects. The audit event carries the full cause and the bosun.E origin. type capAuditor struct { events [] bosun . AuditEvent } func ( a * capAuditor ) Audit ( ctx context . Context , ev bosun . AuditEvent ) { a . events = append ( a . events , ev ) } func TestUnauthorizedAudit ( t * testing . T ) { aud := \u0026 capAuditor {} app := bosun . New () registry . RegisterInstance [ bosun . Auditor ]( app . Reg , aud ) app . Start () // ...drive a request that fails auth... last := aud . events [ len ( aud . events ) - 1 ] if last . Status != 401 { t . Fatalf ( \"audit status = %d\" , last . Status ) } } Testing middleware in isolation Middleware is a registered type, so resolve it from the registry, wrap a verification handler, and drive it directly. This is how you assert both that a middleware blocks a request and that it attaches the expected typed context value. func TestRequireAuthAttachesUser ( t * testing . T ) { app := bosun . New () registry . RegisterInstance [ * Sessions ]( app . Reg , \u0026 fakeSessions { user : \u0026 AuthUser { ID : 1 }}) app . Start () mw , _ := registry . Resolve [ * RequireAuth ]( app . Reg ) var seen * AuthUser h := mw . Handle ( http . HandlerFunc ( func ( w http . ResponseWriter , r * http . Request ) { seen = bosun . Value [ AuthUser ]( r . Context ()) })) req := httptest . NewRequest ( \"GET\" , \"/\" , nil ) req . Header . Set ( \"Authorization\" , \"Bearer ok\" ) h . ServeHTTP ( httptest . NewRecorder (), req ) if seen == nil || seen . ID != 1 { t . Fatalf ( \"user not attached: %+v\" , seen ) } } Database tests Two patterns cover most cases. For a repository package, prefer a real database (a containerized Postgres or an in-memory SQLite) migrated in setup, so the SQL is exercised for real. For a controller or service test where the SQL does not matter, stub the repo interface, which is fast and isolated. Pick per package. Cleanup and shutdown If a service starts a background goroutine in Init() (the config watcher, an event consumer, an outbox relay), call app.Shutdown() in t.Cleanup so it does not leak into later tests. Shutdown closes every registered io.Closer in reverse dependency order. t . Cleanup ( func () { _ = app . Shutdown () }) A note on shared state Each bosun.New() owns its runtime state: its registry and service instances, its mux, its mounted typed routes ( app.TypedRoutes() ) and the statuses observed on them ( app.ObservedStatuses ). Route assertions therefore don't depend on test order, and tests that each build their own app can use t.Parallel() . func TestRoutes ( t * testing . T ) { t . Parallel () app := bosun . New ( bosun . OverridePrefix [ users . Controller ]( \"/v2\" )) if err := app . Start (); err != nil { t . Fatal ( err ) } for _ , rt := range app . TypedRoutes () { // only this app's routes ... } } Some state is still package-level. It consists of immutable declarations that are made in init and copied into each app at New() or Start() , so sharing it between tests is safe: bosun.Service , Middleware , Controller , Default and DefaultBind declarations. Each app builds its own instances from them, and bosun.Disable and bosun.OverridePrefix adjust them per app. Module-level declarations such as eventmod.Declare , manifestmod.Register contributors, webhook registrations and openapi.Sources . Audit redaction's sensitive field names. The deprecated bosun.TypedRoutes() and bosun.ObservedStatuses() are the exception: they aggregate across every app in the process. Use the app. methods instead. Avoid sharing a single App between tests that need isolation."
   }
 ]

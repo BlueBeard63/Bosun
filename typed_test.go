@@ -327,7 +327,7 @@ func TestColonAndBracePathMixed(t *testing.T) {
 
 func TestRouteInfoNormalizesColons(t *testing.T) {
 	found := false
-	for _, rt := range TypedRoutes() {
+	for _, rt := range newStarted(t).TypedRoutes() {
 		if rt.Path == "/api/colon/{id}" {
 			found = true
 			break
@@ -574,7 +574,7 @@ func TestRedactShapes(t *testing.T) {
 // --- route metadata: declared + observed ---
 
 func TestDeclaredErrorsInRouteIndex(t *testing.T) {
-	for _, rt := range TypedRoutes() {
+	for _, rt := range newStarted(t).TypedRoutes() {
 		if rt.Path == "/api/declared" {
 			if len(rt.Declared) != 1 || rt.Declared[0] != 418 {
 				t.Fatalf("declared errors wrong: %v", rt.Declared)
@@ -589,7 +589,7 @@ func TestObservedStatuses(t *testing.T) {
 	app := newStarted(t)
 	do(app, "POST", "/api/login", `{"password":"hunter2"}`)
 	do(app, "POST", "/api/login", `{"password":"nope"}`)
-	got := ObservedStatuses("POST", "/api/login")
+	got := app.ObservedStatuses("POST", "/api/login")
 	has := func(c int) bool {
 		for _, g := range got {
 			if g == c {

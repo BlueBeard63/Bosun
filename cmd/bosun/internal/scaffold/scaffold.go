@@ -136,9 +136,9 @@ func WriteProject(dir string, p Project) ([]string, error) {
 	}{Project: p, ServiceModule: p.Module + "/services/" + p.Service}
 
 	written, err := render(dir, map[string]string{
-		"go.work":            tmplGoWork,
-		"contracts/doc.go":   tmplContracts,
-		"README.md":          tmplReadme,
+		"go.work":          tmplGoWork,
+		"contracts/doc.go": tmplContracts,
+		"README.md":        tmplReadme,
 	}, pd)
 	if err != nil {
 		return written, err

@@ -69,9 +69,9 @@ func TestValidSignatureDispatches(t *testing.T) {
 	app := newApp(t, "s3cr3t")
 	body := []byte(`{"ref":"refs/heads/main"}`)
 	rec := post(app, body, map[string]string{
-		"X-GitHub-Event":       "push",
-		"X-Hub-Signature-256":  ghSign("s3cr3t", body),
-		"X-GitHub-Delivery":    "abc-123",
+		"X-GitHub-Event":      "push",
+		"X-Hub-Signature-256": ghSign("s3cr3t", body),
+		"X-GitHub-Delivery":   "abc-123",
 	})
 	if rec.Code != http.StatusOK {
 		t.Fatalf("code = %d, body = %s", rec.Code, rec.Body)

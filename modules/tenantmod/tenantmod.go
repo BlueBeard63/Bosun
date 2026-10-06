@@ -301,4 +301,3 @@ func gormColumn(sf reflect.StructField) string {
 	}
 	return ""
 }
-

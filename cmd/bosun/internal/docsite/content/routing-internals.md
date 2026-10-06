@@ -63,7 +63,7 @@ type StaticIn struct {
 
 ## Middleware ordering
 
-Middleware runs outermost-first, in the order you declare it, layering from the controller down to the route and finally the handler.
+Middleware runs outermost-first, in the order you declare it, layering from the app down to the controller, group and route, and finally the handler. App-wide middleware (`bosun.WithMiddleware`) wraps the whole mux, so it runs before routing and also sees unmatched requests. See [middleware](./middleware.md#app-wide-middleware).
 
 ```go
 var _ = bosun.Controller[Admin]("/admin",
@@ -73,7 +73,7 @@ var _ = bosun.Controller[Admin]("/admin",
 
 func (c *Admin) Routes(r *bosun.Router) {
     bosun.Post(r, "/wipe", c.Wipe, bosun.Use[mw.DoubleConfirm]())
-    // order on /wipe: Logging -> RequireStaff -> DoubleConfirm -> handler
+    // order on /wipe: [app-wide] -> Logging -> RequireStaff -> DoubleConfirm -> handler
 }
 ```
 

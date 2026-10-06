@@ -56,6 +56,44 @@ func (c *UsersController) Routes(r *bosun.Router) {
 
 The chain runs outermost-first: controller-wide middleware, then per-route middleware, then the handler. Ordering is covered in [routing internals](./routing-internals.md).
 
+## App-wide middleware
+
+Some concerns, such as panic recovery, correlation IDs, request logging, CORS, security headers and tracing, apply to every route. Register them once with `bosun.WithMiddleware` instead of repeating them on every controller.
+
+```go
+app := bosun.New(bosun.WithMiddleware(
+    bosun.Use[mw.Correlation](),
+    bosun.Use[mw.Logging](),
+))
+```
+
+`WithMiddleware` accepts the same references as routes: `bosun.Use[T]()`, `bosun.Use[T](args...)` and `bosun.UseFunc(f)`. If you pass the option more than once, the later middleware is added to the end of the list. Errors such as a `Configure` argument mismatch are returned from `app.Start()`.
+
+App-wide middleware wraps the whole `ServeMux`, not individual routes. As a result:
+
+- It runs for every request, including framework endpoints such as `/openapi.json` and the manifest, unmatched paths (404/405), and `OPTIONS` preflight requests that no controller route matches.
+- It runs before routing, so `r.PathValue(...)` is not populated yet.
+- The full order is **app, then controller, then group, then route, then the typed adapter, then the handler**. Within each list, the first entry is outermost.
+
+App-wide middleware lives on the app's root handler. Serve the app through `app.Run`, `app.Handler()` or `app` itself, which implements `http.Handler`. Serving `app.Mux` directly bypasses app-wide middleware.
+
+```go
+srv := &http.Server{Addr: ":8080", Handler: app.Handler()}
+```
+
+### A production stack
+
+A typical ordering puts the cheapest and broadest concerns outermost:
+
+```go
+app := bosun.New(bosun.WithMiddleware(
+    bosun.Use[mw.Correlation](), // id available to every later layer
+    bosun.Use[mw.Logging](),     // logs every request, including 404s
+))
+```
+
+Authentication and permissions usually belong on controllers or groups rather than at the app level, because some routes, such as health checks and login, must stay public.
+
 ## Middleware with dependencies
 
 Because middleware is a service, it can inject anything the registry knows about, and it may implement `Init()` and `Close()` just like any other service.

@@ -13,7 +13,7 @@ r.Get("/stream", c.Stream)         // untyped; c.Stream is an http.HandlerFunc
 
 ## Building the app
 
-`bosun.New(opts ...Option) *App` creates an app and applies every package-level registration. `(*App).Run(addr) error` is `Start()` followed by `ListenAndServe` and is the normal entry point. `(*App).Start() error` applies module defaults, validates the dependency graph, and mounts routes, which you call directly when you want to serve `app.Mux` yourself. `(*App).Shutdown() error` closes registered `io.Closer` services in reverse dependency order. The public fields `App.Reg` and `App.Mux` give you the registry (for registering external instances) and the underlying `*http.ServeMux`.
+`bosun.New(opts ...Option) *App` creates an app and applies every package-level registration. `(*App).Run(addr) error` is `Start()` followed by `ListenAndServe` and is the normal entry point. `(*App).Start() error` applies module defaults, validates the dependency graph, and mounts routes, which you call directly when you want to serve the app yourself. `(*App).Handler() http.Handler` returns the root handler: the mux wrapped in app-wide middleware. `App` also implements `http.Handler`. `(*App).Shutdown() error` closes registered `io.Closer` services in reverse dependency order. The public fields `App.Reg` and `App.Mux` give you the registry (for registering external instances) and the underlying `*http.ServeMux`. Serving `App.Mux` directly bypasses app-wide middleware.
 
 ```go
 app := bosun.New()
@@ -21,7 +21,7 @@ registry.RegisterInstance[*gorm.DB](app.Reg, db)
 log.Fatal(app.Run(":8080"))
 ```
 
-Two options shape an app at construction. `bosun.Disable(pkgPath)` uninstalls every registration under an import path, and `bosun.OverridePrefix[T](prefix)` remounts a controller at a different prefix than it declared.
+Three options shape an app at construction. `bosun.Disable(pkgPath)` uninstalls every registration under an import path. `bosun.OverridePrefix[T](prefix)` remounts a controller at a different prefix than it declared. `bosun.WithMiddleware(mws ...MWRef)` registers app-wide middleware that wraps every request; see [middleware](./middleware.md#app-wide-middleware).
 
 ## Self-registration
 

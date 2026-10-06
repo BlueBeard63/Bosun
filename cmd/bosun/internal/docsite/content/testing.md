@@ -1,6 +1,6 @@
 # Testing
 
-You drive a Bosun app from a Go test by constructing the `App`, registering stubs, calling `Start()`, and hitting `app.Mux` through `httptest`. There is no process boundary and no network. This works because `registry.RegisterInstance[T]` beats any `bosun.Service[T]` or `bosun.Default[T]` declaration, so a stub registered first always wins, and `app.Mux` is a plain `*http.ServeMux` that `httptest` drives directly.
+You drive a Bosun app from a Go test by constructing the `App`, registering stubs, calling `Start()`, and serving requests through `httptest`. There is no process boundary and no network. This works because `registry.RegisterInstance[T]` beats any `bosun.Service[T]` or `bosun.Default[T]` declaration, so a stub registered first always wins, and `App` is itself an `http.Handler` that `httptest` drives directly. `app.ServeHTTP` includes app-wide middleware (`bosun.WithMiddleware`); `app.Mux.ServeHTTP` skips it and only exercises the routes.
 
 ## A handler test end to end
 
@@ -13,7 +13,7 @@ func TestUsersGet(t *testing.T) {
     }
 
     rec := httptest.NewRecorder()
-    app.Mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/users/1", nil))
+    app.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/users/1", nil))
 
     if rec.Code != 200 {
         t.Fatalf("status %d: %s", rec.Code, rec.Body)

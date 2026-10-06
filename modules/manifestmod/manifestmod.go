@@ -181,7 +181,7 @@ func (c *ManifestController) serve(w http.ResponseWriter, r *http.Request) {
 //	app := bosun.New()
 //	if err := app.Start(); err != nil { log.Fatal(err) }
 //	manifestmod.EmitIfRequested(manifestmod.Info{Service: "billing", Version: v, Port: 8080})
-//	log.Fatal(http.ListenAndServe(":8080", app.Mux))
+//	log.Fatal(http.ListenAndServe(":8080", app.Handler()))
 func EmitIfRequested(info Info) {
 	if os.Getenv("BOSUN_MANIFEST") == "" {
 		return

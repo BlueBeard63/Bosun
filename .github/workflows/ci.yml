@@ -137,9 +137,9 @@ jobs:
       BOSUN_AMQP_URL: amqp://guest:guest@localhost:5672/
       BOSUN_NATS_URL: nats://localhost:4222
       BOSUN_REDIS_ADDR: localhost:6379
-      BOSUN_S3_ENDPOINT: localhost:9000
-      BOSUN_S3_KEY: minioadmin
-      BOSUN_S3_SECRET: minioadmin
+      BOSUN_S3_ENDPOINT: localhost:8333
+      BOSUN_S3_KEY: bosunci
+      BOSUN_S3_SECRET: bosunci-secret
       BOSUN_S3_BUCKET: bosun-ci
     steps:
       - uses: actions/checkout@v4
@@ -147,17 +147,26 @@ jobs:
         with:
           go-version: stable
           cache-dependency-path: "**/go.sum"
-      # Service containers can't take a command, and MinIO needs `server /data`.
-      - name: Start MinIO
+      # S3-compatible store for stores3mod. MinIO's community images are gone
+      # (deleted from Docker Hub, anonymous pulls refused on quay.io since
+      # 2026-09), so CI uses SeaweedFS. Service containers can't take a
+      # command, hence docker run.
+      - name: Start SeaweedFS (S3)
         run: |
-          docker run -d --name minio -p 9000:9000 \
-            -e MINIO_ROOT_USER="$BOSUN_S3_KEY" -e MINIO_ROOT_PASSWORD="$BOSUN_S3_SECRET" \
-            minio/minio server /data
-          for i in $(seq 1 30); do
-            curl -fs http://localhost:9000/minio/health/live && exit 0
+          docker run -d --name seaweedfs -p 8333:8333 -p 9333:9333 -p 8080:8080 \
+            -e AWS_ACCESS_KEY_ID="$BOSUN_S3_KEY" -e AWS_SECRET_ACCESS_KEY="$BOSUN_S3_SECRET" \
+            chrislusf/seaweedfs:4.48 \
+            server -s3 -dir=/data -ip.bind=0.0.0.0 -master.volumeSizeLimitMB=1024
+          # Ready once the master, a volume server and the S3 gateway all answer.
+          for i in $(seq 1 60); do
+            if curl -fs http://localhost:9333/cluster/status >/dev/null &&
+               curl -fs http://localhost:8080/status >/dev/null &&
+               curl -s -o /dev/null http://localhost:8333/; then
+              exit 0
+            fi
             sleep 2
           done
-          docker logs minio
+          docker logs seaweedfs
           exit 1
       - name: Create workspace
         run: go work init . $NESTED_MODULES
@@ -168,3 +177,6 @@ jobs:
             (cd "$m" && go test -race -count=1 -v ./...) || { echo "::endgroup::"; exit 1; }
             echo "::endgroup::"
           done
+      - name: SeaweedFS logs
+        if: failure()
+        run: docker logs seaweedfs 2>&1 | tail -100

@@ -44,12 +44,13 @@ The broker and storage tests are skipped unless a server is configured:
 docker run -d -p 5672:5672 rabbitmq:3
 docker run -d -p 4222:4222 nats:2
 docker run -d -p 6379:6379 redis:7
-docker run -d -p 9000:9000 -e MINIO_ROOT_USER=minioadmin -e MINIO_ROOT_PASSWORD=minioadmin minio/minio server /data
+docker run -d -p 8333:8333 -e AWS_ACCESS_KEY_ID=bosun -e AWS_SECRET_ACCESS_KEY=bosun-secret \
+  chrislusf/seaweedfs:4.48 server -s3 -dir=/data -ip.bind=0.0.0.0 -master.volumeSizeLimitMB=1024
 
 export BOSUN_AMQP_URL=amqp://guest:guest@localhost:5672/
 export BOSUN_NATS_URL=nats://localhost:4222
 export BOSUN_REDIS_ADDR=localhost:6379
-export BOSUN_S3_ENDPOINT=localhost:9000 BOSUN_S3_KEY=minioadmin BOSUN_S3_SECRET=minioadmin BOSUN_S3_BUCKET=bosun-dev
+export BOSUN_S3_ENDPOINT=localhost:8333 BOSUN_S3_KEY=bosun BOSUN_S3_SECRET=bosun-secret BOSUN_S3_BUCKET=bosun-dev
 ```
 
 ## Continuous integration
@@ -61,7 +62,7 @@ export BOSUN_S3_ENDPOINT=localhost:9000 BOSUN_S3_KEY=minioadmin BOSUN_S3_SECRET=
 | **Root module** | `go mod verify`, `go vet` and `go test -race` on Go 1.22 (the minimum in `go.mod`) and on the latest stable Go. |
 | **Formatting, tidiness and generated docs** | `gofmt`, `go mod tidy` for every module, and that `cmd/bosun/internal/docsite/content` matches `docs/` after `go generate`. |
 | **Nested modules** | `go vet` and `go test -race` for `cmd/bosun` and each driver module, linked to the PR's root module through a Go workspace, so changes that break a nested module fail before release. |
-| **Integration** | The RabbitMQ, NATS, Redis and S3 (MinIO) tests against real services. |
+| **Integration** | The RabbitMQ, NATS, Redis and S3 tests against real services. S3 is served by SeaweedFS, because MinIO no longer publishes community images. |
 
 ## Releasing
 

@@ -11,10 +11,12 @@ import (
 	"github.com/minio/minio-go/v7/pkg/credentials"
 )
 
-// Integration test runs only when BOSUN_S3_ENDPOINT is set, e.g. a MinIO server:
+// Integration test runs only when BOSUN_S3_ENDPOINT is set, against any
+// S3-compatible server, e.g. SeaweedFS (as used in CI):
 //
-//	docker run -p 9000:9000 -e MINIO_ROOT_USER=key -e MINIO_ROOT_PASSWORD=secret123 minio/minio server /data
-//	BOSUN_S3_ENDPOINT=localhost:9000 BOSUN_S3_KEY=key BOSUN_S3_SECRET=secret123 BOSUN_S3_BUCKET=test go test ./...
+//	docker run -p 8333:8333 -e AWS_ACCESS_KEY_ID=key -e AWS_SECRET_ACCESS_KEY=secret123 \
+//	  chrislusf/seaweedfs:4.48 server -s3 -dir=/data -ip.bind=0.0.0.0 -master.volumeSizeLimitMB=1024
+//	BOSUN_S3_ENDPOINT=localhost:8333 BOSUN_S3_KEY=key BOSUN_S3_SECRET=secret123 BOSUN_S3_BUCKET=test go test ./...
 func TestConformance(t *testing.T) {
 	ep := os.Getenv("BOSUN_S3_ENDPOINT")
 	if ep == "" {

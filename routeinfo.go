@@ -46,13 +46,49 @@ func (declaredErrors) routeOpt() {}
 // generation in binaries where source scanning isn't available or desired.
 func Errors(codes ...int) RouteOpt { return declaredErrors(codes) }
 
+// routeTable holds the typed-route metadata one App has mounted and the
+// statuses those routes have returned. Each App owns its own, so apps built
+// in the same process (e.g. in tests) never see each other's routes.
+type routeTable struct {
+	mu       sync.Mutex
+	routes   []RouteInfo
+	observed map[string]map[int]struct{}
+}
+
+func (t *routeTable) add(ri RouteInfo) {
+	t.mu.Lock()
+	t.routes = append(t.routes, ri)
+	t.mu.Unlock()
+}
+
+func (t *routeTable) snapshot() []RouteInfo {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return append([]RouteInfo(nil), t.routes...)
+}
+
+// TypedRoutes returns the typed routes mounted on this app, in mount order.
+// Complete after Start; OpenAPI generation and the deploy manifest read it.
+func (a *App) TypedRoutes() []RouteInfo { return a.routes.snapshot() }
+
+// Process-wide aggregate kept for the deprecated package-level TypedRoutes.
 var (
 	routeIndexMu sync.Mutex
 	routeIndex   []RouteInfo
 )
 
-// TypedRoutes returns every typed route registered so far. Complete after
-// App.Start; OpenAPI generators read this.
+func recordRoute(a *App, ri RouteInfo) {
+	a.routes.add(ri)
+	routeIndexMu.Lock()
+	routeIndex = append(routeIndex, ri)
+	routeIndexMu.Unlock()
+}
+
+// TypedRoutes returns every typed route mounted by any App in this process,
+// cumulatively — routes from earlier apps (e.g. other tests) are included.
+//
+// Deprecated: use app.TypedRoutes(), which is scoped to one App. This
+// package-level aggregate will be removed in a future release.
 func TypedRoutes() []RouteInfo {
 	routeIndexMu.Lock()
 	defer routeIndexMu.Unlock()

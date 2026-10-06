@@ -114,12 +114,12 @@ func TestGroupEmptyPrefixDoesNotAddSegment(t *testing.T) {
 
 func TestGroupRoutesAppearInIndex(t *testing.T) {
 	want := map[string]bool{
-		"/g/root":              false,
-		"/g/staff/list":        false,
-		"/g/staff/v2/metrics":  false,
-		"/g/secret":            false,
+		"/g/root":             false,
+		"/g/staff/list":       false,
+		"/g/staff/v2/metrics": false,
+		"/g/secret":           false,
 	}
-	for _, rt := range TypedRoutes() {
+	for _, rt := range newStarted(t).TypedRoutes() {
 		if _, ok := want[rt.Path]; ok {
 			want[rt.Path] = true
 		}

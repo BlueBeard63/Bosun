@@ -1,0 +1,182 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [master, "v*"]
+  push:
+    branches: [master]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+env:
+  # Every module except the root, in dependency order. Keep in sync with
+  # scripts/release.sh.
+  NESTED_MODULES: >-
+    cmd/bosun
+    modules/eventamqpmod
+    modules/eventnatsmod
+    modules/eventredismod
+    modules/stores3mod
+    modules/traceotelmod
+
+jobs:
+  root:
+    name: Root module (Go ${{ matrix.go }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # 1.22.x is the minimum in go.mod; stable catches new vet/toolchain issues.
+        go: ["1.22.x", "stable"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ matrix.go }}
+          cache-dependency-path: go.sum
+      - name: Verify dependencies
+        run: go mod verify
+      - name: Vet
+        run: go vet ./...
+      - name: Test
+        run: go test -race -count=1 ./...
+
+  checks:
+    name: Formatting, tidiness and generated docs
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: stable
+          cache-dependency-path: "**/go.sum"
+      - name: gofmt
+        run: |
+          unformatted=$(gofmt -l $(git ls-files '*.go' | grep -v '/testdata/'))
+          if [ -n "$unformatted" ]; then
+            echo "::error::These files need gofmt -w:"
+            echo "$unformatted"
+            exit 1
+          fi
+      - name: go mod tidy
+        run: |
+          status=0
+          for m in . $NESTED_MODULES; do
+            if ! (cd "$m" && GOWORK=off go mod tidy -diff); then
+              echo "::error file=$m/go.mod::go.mod/go.sum not tidy; run (cd $m && go mod tidy)"
+              status=1
+            fi
+          done
+          exit $status
+      - name: Docs site is regenerated
+        run: |
+          (cd cmd/bosun && go generate .)
+          if [ -n "$(git status --porcelain -- cmd/bosun/internal/docsite/content)" ]; then
+            echo "::error::docs/ changed without regenerating the docsite; run (cd cmd/bosun && go generate .)"
+            git status --short -- cmd/bosun/internal/docsite/content
+            exit 1
+          fi
+
+  nested:
+    name: ${{ matrix.module }} (against this PR's bosun)
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        module:
+          - cmd/bosun
+          - modules/eventamqpmod
+          - modules/eventnatsmod
+          - modules/eventredismod
+          - modules/stores3mod
+          - modules/traceotelmod
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: stable
+          cache-dependency-path: "**/go.sum"
+      # Nested modules require the *published* bosun; a workspace points them at
+      # the checked-out root instead, so a PR that breaks them fails here rather
+      # than after release.
+      - name: Create workspace
+        run: go work init . $NESTED_MODULES
+      - name: Vet
+        working-directory: ${{ matrix.module }}
+        run: go vet ./...
+      - name: Test
+        working-directory: ${{ matrix.module }}
+        run: go test -race -count=1 ./...
+
+  integration:
+    name: Broker and storage integration
+    runs-on: ubuntu-latest
+    services:
+      rabbitmq:
+        image: rabbitmq:3
+        ports: ["5672:5672"]
+        options: >-
+          --health-cmd "rabbitmq-diagnostics -q ping"
+          --health-interval 5s --health-timeout 10s --health-retries 20
+      nats:
+        image: nats:2
+        ports: ["4222:4222"]
+      redis:
+        image: redis:7
+        ports: ["6379:6379"]
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      BOSUN_AMQP_URL: amqp://guest:guest@localhost:5672/
+      BOSUN_NATS_URL: nats://localhost:4222
+      BOSUN_REDIS_ADDR: localhost:6379
+      BOSUN_S3_ENDPOINT: localhost:8333
+      BOSUN_S3_KEY: bosunci
+      BOSUN_S3_SECRET: bosunci-secret
+      BOSUN_S3_BUCKET: bosun-ci
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: stable
+          cache-dependency-path: "**/go.sum"
+      # S3-compatible store for stores3mod. MinIO's community images are gone
+      # (deleted from Docker Hub, anonymous pulls refused on quay.io since
+      # 2026-09), so CI uses SeaweedFS. Service containers can't take a
+      # command, hence docker run.
+      - name: Start SeaweedFS (S3)
+        run: |
+          docker run -d --name seaweedfs -p 8333:8333 -p 9333:9333 -p 8080:8080 \
+            -e AWS_ACCESS_KEY_ID="$BOSUN_S3_KEY" -e AWS_SECRET_ACCESS_KEY="$BOSUN_S3_SECRET" \
+            chrislusf/seaweedfs:4.48 \
+            server -s3 -dir=/data -ip.bind=0.0.0.0 -master.volumeSizeLimitMB=1024
+          # Ready once the master, a volume server and the S3 gateway all answer.
+          for i in $(seq 1 60); do
+            if curl -fs http://localhost:9333/cluster/status >/dev/null &&
+               curl -fs http://localhost:8080/status >/dev/null &&
+               curl -s -o /dev/null http://localhost:8333/; then
+              exit 0
+            fi
+            sleep 2
+          done
+          docker logs seaweedfs
+          exit 1
+      - name: Create workspace
+        run: go work init . $NESTED_MODULES
+      - name: Test with live services
+        run: |
+          for m in modules/eventamqpmod modules/eventnatsmod modules/eventredismod modules/stores3mod; do
+            echo "::group::$m"
+            (cd "$m" && go test -race -count=1 -v ./...) || { echo "::endgroup::"; exit 1; }
+            echo "::endgroup::"
+          done
+      - name: SeaweedFS logs
+        if: failure()
+        run: docker logs seaweedfs 2>&1 | tail -100

@@ -71,14 +71,13 @@ Per-route middleware is appended to the individual `bosun.Get`/`bosun.Post` call
 
 ## Many controllers
 
-Each controller is one struct, usually in its own file. The framework picks up every controller at `bosun.New()`, so there is no central list to maintain. In `main.go` you only need to import the packages that declare them, often with a blank import.
+Each controller is one struct, usually in its own file. The framework picks up every controller at `bosun.New()`, so there is no central list of routes to maintain. The packages that declare controllers do have to be imported somewhere, because Go only runs a package's declarations when the package is imported. Let `bosun gen registry` write those imports for you:
 
 ```go
-import (
-    _ "myapp/users"
-    _ "myapp/orgs"
-)
+//go:generate bosun gen registry
 ```
+
+It generates `zz_bosun_registry.go` with a blank import for every package that registers a controller, service or middleware. [Registering packages](./registration.md) explains how it works, how to check it in CI, and the hand-written alternative.
 
 ## Typed and raw handlers on one router
 

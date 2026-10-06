@@ -17,6 +17,7 @@ import (
 	"context"
 	"io"
 	"net/url"
+	"os"
 	"time"
 
 	"github.com/bluebeard63/bosun"
@@ -33,7 +34,15 @@ type Options struct {
 	Bucket    string
 	Region    string
 	UseSSL    bool
+	// PartSize is the multipart part size for large or unknown-length
+	// uploads, and bounds the memory each Put buffers. Default 16 MiB;
+	// S3 requires at least 5 MiB. With unknown-length readers the largest
+	// object is PartSize × 10,000 parts (156 GiB at the default).
+	PartSize uint64
 }
+
+// DefaultPartSize is the multipart part size used when Options.PartSize is 0.
+const DefaultPartSize = 16 << 20
 
 // S3Store stores objects in an S3-compatible bucket.
 type S3Store struct {
@@ -57,14 +66,47 @@ func (s *S3Store) Init() error {
 	return nil
 }
 
-// Put uploads the object, streaming the reader.
+// Put uploads the object, streaming the reader. Objects up to PartSize go up
+// in a single request; larger or unknown-length objects use multipart upload
+// with at most one part buffered at a time.
 func (s *S3Store) Put(ctx context.Context, key string, r io.Reader, opts ...storemod.PutOption) error {
 	cfg := storemod.ResolvePut(opts)
-	_, err := s.client.PutObject(ctx, s.Opts.Bucket, key, r, -1, minio.PutObjectOptions{
+	partSize := s.Opts.PartSize
+	if partSize == 0 {
+		partSize = DefaultPartSize
+	}
+	_, err := s.client.PutObject(ctx, s.Opts.Bucket, key, r, readerSize(r), minio.PutObjectOptions{
 		ContentType:  cfg.ContentType,
 		UserMetadata: cfg.Meta,
+		// Without a part size, minio-go sizes parts for a 5 TiB object and
+		// allocates a buffer of several hundred MiB for every unknown-length Put.
+		PartSize: partSize,
+		// Content-MD5 is the integrity check every S3 implementation verifies.
+		// minio-go's default per-part CRC32C header is rejected by some
+		// S3-compatible servers (e.g. SeaweedFS answers BadDigest).
+		SendContentMd5: true,
 	})
 	return err
+}
+
+// readerSize returns the number of bytes left in r when that is known
+// without reading it, or -1.
+func readerSize(r io.Reader) int64 {
+	switch v := r.(type) {
+	case interface{ Len() int }: // *bytes.Reader, *bytes.Buffer, *strings.Reader
+		return int64(v.Len())
+	case *os.File:
+		fi, err := v.Stat()
+		if err != nil || !fi.Mode().IsRegular() {
+			return -1
+		}
+		pos, err := v.Seek(0, io.SeekCurrent)
+		if err != nil {
+			return -1
+		}
+		return fi.Size() - pos
+	}
+	return -1
 }
 
 // Get downloads the object and its metadata.

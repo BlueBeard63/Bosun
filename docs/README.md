@@ -8,7 +8,7 @@ The [getting started](./getting-started.md) tutorial takes you from an empty dir
 
 ## Core concepts
 
-[Controllers](./controllers.md) own groups of routes. [Services](./services.md) hold your logic and are wired by dependency injection, and [service options](./service-options.md) define a configuration value once and inject it everywhere. [Middleware](./middleware.md) wraps handlers, and the [auth and permissions](./auth-and-permissions.md) guide builds the common authentication and role-check chain. [Typed handlers](./typed-handlers.md) explain request binding and response encoding, [errors](./errors.md) cover status mapping, and [convert](./convert.md) maps a model to a response DTO.
+[Controllers](./controllers.md) own groups of routes, and [registering packages](./registration.md) shows how `bosun gen registry` wires them in without blank imports in `main.go`. [Services](./services.md) hold your logic and are wired by dependency injection, and [service options](./service-options.md) define a configuration value once and inject it everywhere. [Middleware](./middleware.md) wraps handlers, and the [auth and permissions](./auth-and-permissions.md) guide builds the common authentication and role-check chain. [Typed handlers](./typed-handlers.md) explain request binding and response encoding, [validation](./validation.md) checks input with struct tags, [errors](./errors.md) cover status mapping, and [convert](./convert.md) maps a model to a response DTO.
 
 ## Routing
 
@@ -18,10 +18,14 @@ The [getting started](./getting-started.md) tutorial takes you from an empty dir
 
 [Forms](./forms.md) covers URL-encoded and multipart fields, and [files](./files.md) covers uploads, streaming, and downloads.
 
+## OpenAPI
+
+Bosun generates an OpenAPI 3.0 spec from your typed handlers. The [tutorial](./openapi-tutorial.md) adds a live spec and Swagger UI to a small API step by step. The [how-to guides](./openapi.md) cover moving, hiding and exporting the spec and documenting error responses, and the [reference](./openapi-reference.md) lists exactly what gets generated and the current limitations.
+
 ## Data layer
 
 The [repo module](./repo.md) provides a generic `Repo[T]` with a query builder and transactions. The [GORM](./database-gorm.md) and [sqlc](./database-sqlc.md) guides show the hand-rolled patterns for each.
 
 ## Operations
 
-[Config and hot reload](./config.md) binds typed options to files, environment, and databases. [Testing](./testing.md) drives an app from a Go test with stubs.
+[Running and shutting down](./server.md) covers `Run`, graceful shutdown and custom servers. [Config and hot reload](./config.md) binds typed options to files, environment, and databases. [Testing](./testing.md) drives an app from a Go test with stubs.

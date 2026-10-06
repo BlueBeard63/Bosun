@@ -10,6 +10,8 @@ import (
 	"runtime/debug"
 	"strings"
 	"text/template"
+
+	"github.com/bluebeard63/bosun/cmd/bosun/internal/registrygen"
 )
 
 // Service describes a single service to scaffold.
@@ -78,6 +80,9 @@ func bosunVersion() string {
 }
 
 // WriteService renders a service into dir/ and returns the written file paths.
+// main.go carries no hand-written side-effect imports: a generated
+// zz_bosun_registry.go (bosun gen registry) blank-imports every package that
+// registers with Bosun, and `go generate` keeps it current.
 func WriteService(dir string, s Service) ([]string, error) {
 	files := map[string]string{
 		"go.mod":              tmplGoMod,
@@ -85,7 +90,32 @@ func WriteService(dir string, s Service) ([]string, error) {
 		"internal/api/api.go": tmplAPI,
 		"Dockerfile":          tmplDockerfile,
 	}
-	return render(dir, files, s.data())
+	written, err := render(dir, files, s.data())
+	if err != nil {
+		return written, err
+	}
+	reg, err := writeRegistry(dir)
+	return append(written, reg), err
+}
+
+// writeRegistry generates the service's zz_bosun_registry.go exactly as
+// `bosun gen registry` would, so `bosun gen registry --check` passes on a
+// fresh scaffold.
+func writeRegistry(dir string) (string, error) {
+	mod, err := registrygen.Scan(dir)
+	if err != nil {
+		return "", err
+	}
+	target, err := registrygen.TargetFor(mod, dir)
+	if err != nil {
+		return "", err
+	}
+	src, err := registrygen.Render(mod, target)
+	if err != nil {
+		return "", err
+	}
+	full := filepath.Join(dir, registrygen.FileName)
+	return full, os.WriteFile(full, src, 0o644)
 }
 
 // Project describes a workspace to scaffold, including its first service.
@@ -106,9 +136,9 @@ func WriteProject(dir string, p Project) ([]string, error) {
 	}{Project: p, ServiceModule: p.Module + "/services/" + p.Service}
 
 	written, err := render(dir, map[string]string{
-		"go.work":            tmplGoWork,
-		"contracts/doc.go":   tmplContracts,
-		"README.md":          tmplReadme,
+		"go.work":          tmplGoWork,
+		"contracts/doc.go": tmplContracts,
+		"README.md":        tmplReadme,
 	}, pd)
 	if err != nil {
 		return written, err
@@ -151,14 +181,17 @@ require github.com/bluebeard63/bosun {{.BosunVersion}}
 
 const tmplMain = `package main
 
+// Controllers and services register themselves; zz_bosun_registry.go imports
+// every package that does. Regenerate it after adding one:
+//
+//go:generate bosun gen registry
+
 import (
 	"log"
 
 	"github.com/bluebeard63/bosun"
 	"github.com/bluebeard63/bosun/modules/manifestmod"
 	"github.com/bluebeard63/bosun/registry"
-
-	_ "{{.Module}}/internal/api"
 )
 
 func main() {
@@ -166,7 +199,9 @@ func main() {
 	registry.RegisterInstance[*manifestmod.Options](app.Reg, &manifestmod.Options{
 		Service: "{{.Name}}", Version: "dev", Port: {{.Port}},
 	})
-	log.Fatal(app.Run(":{{.Port}}"))
+	if err := app.Run(":{{.Port}}"); err != nil {
+		log.Fatal(err)
+	}
 }
 `
 

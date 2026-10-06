@@ -66,7 +66,7 @@ var _ = manifestmod.Register(manifestmod.ContributorFunc(func(m *manifestmod.Man
 
 ## From the command line
 
-The `bosun manifest` command fetches a running service's manifest, and with `--caddy` prints a Caddy reverse-proxy site block derived from it. For a build-time step that does not run a server, call `manifestmod.EmitIfRequested` in `main` after `app.Start()`; with `BOSUN_MANIFEST=1` set, the process prints the manifest and exits.
+The `bosun manifest` command fetches a running service's manifest, and with `--caddy` prints a Caddy reverse-proxy site block derived from it. For a build-time step that does not run a server, call `manifestmod.EmitIfRequestedFor(app, info)` in `main` after `app.Start()`; with `BOSUN_MANIFEST=1` set, the process prints the manifest and exits. `manifestmod.BuildFor(app, info)` returns the manifest without printing it. Both describe only the given app's routes. The older `Build(info)` and `EmitIfRequested(info)` are deprecated because they aggregate across every app in the process.
 
 ```bash
 bosun manifest http://localhost:8080

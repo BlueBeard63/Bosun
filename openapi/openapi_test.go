@@ -188,3 +188,119 @@ func TestStatusArgAndDiskScan(t *testing.T) {
 		t.Fatal("unknown handler should yield nil")
 	}
 }
+
+func TestSpecScopedToApp(t *testing.T) {
+	a := bosun.New()
+	b := bosun.New(bosun.OverridePrefix[FixtureController]("/elsewhere"))
+	for _, app := range []*bosun.App{a, b} {
+		if err := app.Start(); err != nil {
+			t.Fatal(err)
+		}
+	}
+	pathsA := fetchSpec(t, a)["paths"].(map[string]any)
+	pathsB := fetchSpec(t, b)["paths"].(map[string]any)
+	if _, ok := pathsA["/elsewhere/thing/{id}"]; ok {
+		t.Fatal("app A's spec includes app B's routes")
+	}
+	if _, ok := pathsB["/fix/thing/{id}"]; ok {
+		t.Fatal("app B's spec includes app A's routes")
+	}
+	if _, ok := pathsB["/elsewhere/thing/{id}"]; !ok {
+		t.Fatal("app B's spec missing its own route")
+	}
+
+	// Traffic on one app doesn't leak observed statuses into another's spec.
+	rec := httptest.NewRecorder()
+	a.ServeHTTP(rec, httptest.NewRequest("GET", "/fix/dyn", nil))
+	c := bosun.New()
+	if err := c.Start(); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := responsesOf(t, fetchSpec(t, c), "/fix/dyn", "get")["418"]; ok {
+		t.Fatal("app C's spec shows a status observed only on app A")
+	}
+}
+
+// --- validation constraints ---
+
+type ValIn struct {
+	ID     int      `path:"id" validate:"min=1"`
+	Sort   string   `query:"sort" validate:"omitempty,oneof=asc desc"`
+	Tenant string   `header:"X-Tenant" validate:"required"`
+	Name   string   `json:"name" validate:"required,min=2,max=40"`
+	Age    int      `json:"age" validate:"omitempty,min=18,max=130"`
+	Tags   []string `json:"tags" validate:"max=5"`
+	Level  int      `json:"level" validate:"oneof=1 2 3"`
+	Ratio  float64  `json:"ratio" validate:"max=0.5"`
+}
+
+type ValController struct{}
+
+var _ = bosun.Controller[ValController]("/val")
+
+func (c *ValController) Routes(r *bosun.Router) {
+	bosun.Put(r, "/items/{id}", c.Update)
+}
+
+func (c *ValController) Update(ctx context.Context, req *bosun.Req[ValIn]) (FixOut, error) {
+	return FixOut{}, nil
+}
+
+func TestSpecValidationConstraints(t *testing.T) {
+	app := bosun.New()
+	if err := app.Start(); err != nil {
+		t.Fatal(err)
+	}
+	spec := fetchSpec(t, app)
+	op := spec["paths"].(map[string]any)["/val/items/{id}"].(map[string]any)["put"].(map[string]any)
+
+	params := map[string]map[string]any{}
+	for _, p := range op["parameters"].([]any) {
+		pm := p.(map[string]any)
+		params[pm["in"].(string)+":"+pm["name"].(string)] = pm
+	}
+	id := params["path:id"]
+	if id == nil || id["required"] != true {
+		t.Fatalf("path param: %v", id)
+	}
+	if s := id["schema"].(map[string]any); s["type"] != "integer" || s["minimum"] != float64(1) {
+		t.Fatalf("path param schema should be typed and constrained: %v", s)
+	}
+	if s := params["query:sort"]; s == nil || s["required"] != false ||
+		!reflect.DeepEqual(s["schema"].(map[string]any)["enum"], []any{"asc", "desc"}) {
+		t.Fatalf("query param: %v", s)
+	}
+	if h := params["header:X-Tenant"]; h == nil || h["required"] != true {
+		t.Fatalf("header param missing or not required: %v", h)
+	}
+
+	body := spec["components"].(map[string]any)["schemas"].(map[string]any)["ValIn"].(map[string]any)
+	props := body["properties"].(map[string]any)
+	if _, leaked := props["Tenant"]; leaked {
+		t.Fatal("header field must not appear in the JSON body schema")
+	}
+	if !reflect.DeepEqual(body["required"], []any{"name"}) {
+		t.Fatalf("required = %v", body["required"])
+	}
+	want := map[string]map[string]any{
+		"name":  {"minLength": float64(2), "maxLength": float64(40)},
+		"age":   {"minimum": float64(18), "maximum": float64(130)},
+		"tags":  {"maxItems": float64(5)},
+		"level": {"enum": []any{float64(1), float64(2), float64(3)}},
+		"ratio": {"maximum": 0.5},
+	}
+	for name, kv := range want {
+		p := props[name].(map[string]any)
+		for k, v := range kv {
+			if !reflect.DeepEqual(p[k], v) {
+				t.Errorf("%s.%s = %v, want %v", name, k, p[k], v)
+			}
+		}
+	}
+
+	r400 := op["responses"].(map[string]any)["400"].(map[string]any)
+	ref := r400["content"].(map[string]any)["application/json"].(map[string]any)["schema"].(map[string]any)["$ref"]
+	if ref != "#/components/schemas/ValidationError" {
+		t.Fatalf("400 should use ValidationError, got %v", ref)
+	}
+}

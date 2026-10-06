@@ -109,5 +109,7 @@ func main() {
 	app := bosun.New()
 	registry.RegisterInstance[*gorm.DB](app.Reg, db)
 	log.Println("listening on :8090")
-	log.Fatal(app.Run(":8090"))
+	if err := app.Run(":8090"); err != nil {
+		log.Fatal(err)
+	}
 }

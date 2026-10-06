@@ -62,7 +62,7 @@ import _ "github.com/bluebeard63/bosun/modules/storefsmod"
 var _ = storefsmod.For()
 ```
 
-For S3, configure an `*Options` instance in `main`. The S3 driver works with AWS S3, MinIO, and Cloudflare R2 through the same client.
+For S3, configure an `*Options` instance in `main`. The S3 driver works with AWS S3, Cloudflare R2, SeaweedFS, MinIO, and other S3-compatible services through the same client.
 
 ```go
 registry.RegisterInstance[*stores3mod.Options](app.Reg, &stores3mod.Options{
@@ -72,6 +72,8 @@ registry.RegisterInstance[*stores3mod.Options](app.Reg, &stores3mod.Options{
     UseSSL:    true,
 })
 ```
+
+`Put` sends a reader whose length is known up front (`*bytes.Reader`, `*strings.Reader`, `*bytes.Buffer`, a regular `*os.File`) in a single request, as long as it fits in one part. Larger objects, and readers of unknown length such as an HTTP request body, use multipart upload, with at most one part buffered in memory at a time. The part size is `Options.PartSize` (default 16 MiB, minimum 5 MiB), so a stream of unknown length can be up to 10,000 parts, or 156 GiB at the default. Each part is sent with a `Content-MD5` checksum, which every S3-compatible server checks.
 
 ## Presigned URLs
 

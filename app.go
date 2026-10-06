@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"reflect"
+	"time"
 
 	"github.com/bluebeard63/bosun/registry"
 )
@@ -17,6 +18,13 @@ type App struct {
 	Mux      *http.ServeMux
 	disabled map[string]bool
 	prefixes map[reflect.Type]string
+	mws      []MWRef      // app-wide middleware, set via WithMiddleware
+	handler  http.Handler // Mux wrapped in app-wide middleware; built by Start
+
+	routes routeTable // typed-route metadata mounted on this app
+
+	shutdownTimeout time.Duration        // grace period for in-flight requests
+	serverConfig    []func(*http.Server) // set via WithHTTPServer
 }
 
 // New creates an App, applies options, then applies every enabled
@@ -29,11 +37,14 @@ func New(opts ...Option) *App {
 		Mux:      http.NewServeMux(),
 		disabled: map[string]bool{},
 		prefixes: map[reflect.Type]string{},
+
+		shutdownTimeout: DefaultShutdownTimeout,
 	}
 	for _, o := range opts {
 		o(app)
 	}
 	registry.RegisterInstance[*registry.Registry](app.Reg, app.Reg)
+	registry.RegisterInstance[*App](app.Reg, app) // services can inject the app they belong to
 	for _, s := range pendingServices {
 		if app.disabled[s.pkg] {
 			continue
@@ -55,6 +66,19 @@ func (a *App) Start() error {
 	if err := a.Reg.Validate(); err != nil {
 		return err
 	}
+	appMWs, err := a.resolveMWs(a.mws)
+	if err != nil {
+		return fmt.Errorf("app middleware: %w", err)
+	}
+	// Dispatch through a.Mux at request time (not captured) so a Mux swapped
+	// after Start is still honoured.
+	var root http.Handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		a.Mux.ServeHTTP(w, r)
+	})
+	for i := len(appMWs) - 1; i >= 0; i-- {
+		root = appMWs[i].Handle(root)
+	}
+	a.handler = root
 	for _, c := range pendingCtrls {
 		if a.disabled[c.pkg] {
 			continue
@@ -81,12 +105,20 @@ func (a *App) Start() error {
 	return nil
 }
 
-// Run is Start + ListenAndServe.
-func (a *App) Run(addr string) error {
-	if err := a.Start(); err != nil {
-		return err
+// Handler returns the app's root http.Handler: Mux wrapped in the app-wide
+// middleware registered with WithMiddleware. Serve this (not Mux) when you
+// manage your own http.Server. Before Start it is the bare Mux.
+func (a *App) Handler() http.Handler {
+	if a.handler == nil {
+		return a.Mux
 	}
-	return http.ListenAndServe(addr, a.Mux)
+	return a.handler
+}
+
+// ServeHTTP makes App an http.Handler; it delegates to Handler(). Tests can
+// drive the app directly with app.ServeHTTP(rec, req).
+func (a *App) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	a.Handler().ServeHTTP(w, r)
 }
 
 // Shutdown closes services (io.Closer) in reverse dependency order.

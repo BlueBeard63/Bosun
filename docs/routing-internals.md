@@ -63,7 +63,7 @@ type StaticIn struct {
 
 ## Middleware ordering
 
-Middleware runs outermost-first, in the order you declare it, layering from the controller down to the route and finally the handler.
+Middleware runs outermost-first, in the order you declare it, layering from the app down to the controller, group and route, and finally the handler. App-wide middleware (`bosun.WithMiddleware`) wraps the whole mux, so it runs before routing and also sees unmatched requests. See [middleware](./middleware.md#app-wide-middleware).
 
 ```go
 var _ = bosun.Controller[Admin]("/admin",
@@ -73,7 +73,7 @@ var _ = bosun.Controller[Admin]("/admin",
 
 func (c *Admin) Routes(r *bosun.Router) {
     bosun.Post(r, "/wipe", c.Wipe, bosun.Use[mw.DoubleConfirm]())
-    // order on /wipe: Logging -> RequireStaff -> DoubleConfirm -> handler
+    // order on /wipe: [app-wide] -> Logging -> RequireStaff -> DoubleConfirm -> handler
 }
 ```
 
@@ -91,11 +91,15 @@ bosun.Post(r, "/things", c.Create,
 
 ## Inspecting registered routes
 
-After `app.Start()`, every typed route is available through `bosun.TypedRoutes()`. This drives OpenAPI generation, the deploy manifest, and route smoke-tests.
+After `app.Start()`, the typed routes mounted on an app are available through `app.TypedRoutes()`, in mount order. This drives OpenAPI generation, the deploy manifest, and route smoke-tests. `app.ObservedStatuses(method, path)` returns the statuses a route has actually returned on that app.
 
 ```go
 app.Start()
-for _, rt := range bosun.TypedRoutes() {
+for _, rt := range app.TypedRoutes() {
     fmt.Printf("%-6s %s  %s\n", rt.Method, rt.Path, rt.Handler)
 }
 ```
+
+Both are scoped to the `App`. Two apps in one process, such as two tests or an app built with `OverridePrefix`, never see each other's routes. Services that need this information can inject `*bosun.App`, which every app registers as itself. The OpenAPI and manifest controllers use this to describe only the app they are mounted on.
+
+The package-level `bosun.TypedRoutes()` and `bosun.ObservedStatuses()` are deprecated. They return a cumulative list across every app in the process and will be removed in a future release. To migrate, replace `bosun.TypedRoutes()` with `app.TypedRoutes()` and `bosun.ObservedStatuses(m, p)` with `app.ObservedStatuses(m, p)`. In the manifest module, replace `manifestmod.Build(info)` with `manifestmod.BuildFor(app, info)` and `EmitIfRequested(info)` with `EmitIfRequestedFor(app, info)`.

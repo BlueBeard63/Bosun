@@ -4,7 +4,7 @@ This is a tour of every exported symbol you call when building an app, grouped b
 
 ## Typed and untyped routes
 
-The most important distinction is between typed and untyped routes. The typed generics (`bosun.Get`, `Post`, `Put`, `Delete`, `Patch`) take a handler of the form `func(ctx context.Context, req *bosun.Req[In]) (Out, error)` and give you body binding, audit events, and OpenAPI entries; use them for almost everything. The untyped methods on `*Router` (`r.Get`, and so on) take a plain `func(w http.ResponseWriter, r *http.Request)` and hand you raw `net/http` for streaming, hijacking, or full control of the response. Passing a typed handler to `r.Get` is a compile error; call `bosun.Get(r, ...)` instead.
+The most important distinction is between typed and untyped routes. The typed generics (`bosun.Get`, `Post`, `Put`, `Delete`, `Patch`) take a handler of the form `func(ctx context.Context, req *bosun.Req[In]) (Out, error)` and give you body binding, [validation](./validation.md), audit events, and OpenAPI entries; use them for almost everything. The untyped methods on `*Router` (`r.Get`, and so on) take a plain `func(w http.ResponseWriter, r *http.Request)` and hand you raw `net/http` for streaming, hijacking, or full control of the response. Passing a typed handler to `r.Get` is a compile error; call `bosun.Get(r, ...)` instead.
 
 ```go
 bosun.Get(r, "/users/:id", c.Get)  // typed; :id and {id} both work
@@ -13,15 +13,17 @@ r.Get("/stream", c.Stream)         // untyped; c.Stream is an http.HandlerFunc
 
 ## Building the app
 
-`bosun.New(opts ...Option) *App` creates an app and applies every package-level registration. `(*App).Run(addr) error` is `Start()` followed by `ListenAndServe` and is the normal entry point. `(*App).Start() error` applies module defaults, validates the dependency graph, and mounts routes, which you call directly when you want to serve `app.Mux` yourself. `(*App).Shutdown() error` closes registered `io.Closer` services in reverse dependency order. The public fields `App.Reg` and `App.Mux` give you the registry (for registering external instances) and the underlying `*http.ServeMux`.
+`bosun.New(opts ...Option) *App` creates an app and applies every package-level registration. `(*App).Run(addr) error` is the normal entry point. It starts the app, serves on `addr`, and shuts down gracefully on `SIGINT`/`SIGTERM`: it drains in-flight requests, then closes services, and returns `nil` after a clean shutdown. `(*App).RunContext(ctx, addr)` does the same but stops when `ctx` is done, and `(*App).Serve(ctx, ln)` serves on an existing `net.Listener`. See [running and shutting down](./server.md). `(*App).Start() error` applies module defaults, validates the dependency graph, and mounts routes, which you call directly when you want to serve the app yourself. `(*App).Handler() http.Handler` returns the root handler: the mux wrapped in app-wide middleware. `App` also implements `http.Handler`. `(*App).Shutdown() error` closes registered `io.Closer` services in reverse dependency order. The public fields `App.Reg` and `App.Mux` give you the registry (for registering external instances) and the underlying `*http.ServeMux`. Serving `App.Mux` directly bypasses app-wide middleware.
 
 ```go
 app := bosun.New()
 registry.RegisterInstance[*gorm.DB](app.Reg, db)
-log.Fatal(app.Run(":8080"))
+if err := app.Run(":8080"); err != nil {
+    log.Fatal(err)
+}
 ```
 
-Two options shape an app at construction. `bosun.Disable(pkgPath)` uninstalls every registration under an import path, and `bosun.OverridePrefix[T](prefix)` remounts a controller at a different prefix than it declared.
+Several options shape an app at construction. `bosun.Disable(pkgPath)` uninstalls every registration under an import path. `bosun.OverridePrefix[T](prefix)` remounts a controller at a different prefix than it declared. `bosun.WithMiddleware(mws ...MWRef)` registers app-wide middleware that wraps every request; see [middleware](./middleware.md#app-wide-middleware). `bosun.WithShutdownTimeout(d)` sets the drain grace period (default `bosun.DefaultShutdownTimeout`, 10s), and `bosun.WithHTTPServer(func(*http.Server))` customizes the server that `Run` uses.
 
 ## Self-registration
 
@@ -41,7 +43,7 @@ The five typed generics share the signature `func[In, Out any](r *Router, path s
 
 ## Auditing and inspection
 
-`bosun.Auditor` is the interface you implement and register to receive an `AuditEvent` for every typed request, with redacted snapshots of the body and response. `bosun.Redact(v any) any` is the same redacting walker, available for your own logging. `bosun.TypedRoutes() []RouteInfo` returns every typed route after `Start()`, where each `RouteInfo` carries the method, path, handler name, input and output types, and declared statuses; this is what OpenAPI generation and the deploy manifest read.
+`bosun.Auditor` is the interface you implement and register to receive an `AuditEvent` for every typed request, with redacted snapshots of the body and response. `bosun.Redact(v any) any` is the same redacting walker, available for your own logging. `(*App).TypedRoutes() []RouteInfo` returns the typed routes mounted on that app after `Start()`. Each `RouteInfo` carries the method, path, handler name, input and output types, and declared statuses; this is what [OpenAPI generation](./openapi.md) and the deploy manifest read. `(*App).ObservedStatuses(method, path)` returns the statuses a route has returned on that app. Services can inject `*bosun.App` to reach these. The package-level `bosun.TypedRoutes()` and `bosun.ObservedStatuses()` are deprecated process-wide aggregates; see [routing internals](./routing-internals.md#inspecting-registered-routes).
 
 ## Interfaces you implement
 
@@ -67,6 +69,8 @@ func (c *HealthController) Health(ctx context.Context, _ *bosun.Req[struct{}]) (
 }
 
 func main() {
-    log.Fatal(bosun.New().Run(":8080"))
+    if err := bosun.New().Run(":8080"); err != nil {
+        log.Fatal(err)
+    }
 }
 ```

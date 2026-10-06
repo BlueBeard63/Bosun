@@ -45,7 +45,9 @@ func main() {
     registry.RegisterInstance[*eventamqpmod.Options](app.Reg, &eventamqpmod.Options{
         URL: "amqp://guest:guest@rabbit:5672/",
     })
-    log.Fatal(app.Run(":8080"))
+    if err := app.Run(":8080"); err != nil {
+        log.Fatal(err)
+    }
 }
 ```
 

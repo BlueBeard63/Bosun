@@ -91,3 +91,27 @@ func TestCaddyfile(t *testing.T) {
 		t.Fatalf("caddyfile missing header:\n%s", out)
 	}
 }
+
+func TestManifestScopedToApp(t *testing.T) {
+	a := bosun.New()
+	b := bosun.New(bosun.OverridePrefix[sampleController]("/v2"))
+	for _, app := range []*bosun.App{a, b} {
+		if err := app.Start(); err != nil {
+			t.Fatal(err)
+		}
+	}
+	paths := func(app *bosun.App) map[string]bool {
+		out := map[string]bool{}
+		for _, r := range manifestmod.BuildFor(app, manifestmod.Info{Service: "svc"}).Routes {
+			out[r.Method+" "+r.Path] = true
+		}
+		return out
+	}
+	pa, pb := paths(a), paths(b)
+	if !pa["POST /api/users"] || pa["POST /v2/users"] {
+		t.Fatalf("app A manifest routes wrong: %v", pa)
+	}
+	if !pb["POST /v2/users"] || pb["POST /api/users"] {
+		t.Fatalf("app B manifest routes wrong: %v", pb)
+	}
+}

@@ -8,6 +8,7 @@ package bosun
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/url"
@@ -101,10 +102,7 @@ func typed[In, Out any](r *Router, method, p string, h func(context.Context, *Re
 	}
 
 	p = normalizePath(p)
-	full := p
-	if r.prefix != "" {
-		full = joinPrefix(r.prefix, p)
-	}
+	full := r.fullPath(p)
 	paramNames := extractParamNames(full)
 	handlerName := runtime.FuncForPC(reflect.ValueOf(h).Pointer()).Name()
 
@@ -112,21 +110,28 @@ func typed[In, Out any](r *Router, method, p string, h func(context.Context, *Re
 	isString := inType.Kind() == reflect.String
 	isEmptyStruct := inType.Kind() == reflect.Struct && inType.NumField() == 0
 
+	// Compile validate tags now so malformed rules fail app.Start, not requests.
+	validates := inType.Kind() == reflect.Struct && !isEmptyStruct
+	if validates {
+		if _, err := planFor(inType); err != nil {
+			*r.errs = append(*r.errs, fmt.Errorf("%s %s: invalid validate tag: %w", method, p, err))
+			return
+		}
+	}
+
 	outType := reflect.TypeOf((*Out)(nil)).Elem()
 	outIsString := outType.Kind() == reflect.String
 	outIsBytes := outType.Kind() == reflect.Slice && outType.Elem().Kind() == reflect.Uint8
 	outIsEmptyStruct := outType.Kind() == reflect.Struct && outType.NumField() == 0
 
-	routeIndexMu.Lock()
-	routeIndex = append(routeIndex, RouteInfo{
+	recordRoute(r.app, RouteInfo{
 		Method:   method,
 		Path:     full,
 		Handler:  handlerName,
 		In:       inType,
-		Out:      reflect.TypeOf((*Out)(nil)).Elem(),
+		Out:      outType,
 		Declared: declared,
 	})
-	routeIndexMu.Unlock()
 
 	app := r.app
 	var auditorOnce sync.Once
@@ -170,12 +175,16 @@ func typed[In, Out any](r *Router, method, p string, h func(context.Context, *Re
 			}
 		default:
 			bindErr = bind(req, &typedReq.Body)
+			if bindErr == nil && validates {
+				bindErr = validateInput(&typedReq.Body)
+			}
 		}
 
 		if bindErr != nil {
-			status = http.StatusBadRequest
+			var body any
+			status, body = inputErrorBody(bindErr)
 			handlerErr = bindErr
-			http.Error(w, bindErr.Error(), status)
+			writeJSON(w, status, body)
 		} else {
 			out, handlerErr = h(req.Context(), typedReq)
 			if handlerErr != nil {
@@ -186,7 +195,7 @@ func typed[In, Out any](r *Router, method, p string, h func(context.Context, *Re
 			}
 		}
 
-		recordObserved(method, full, status)
+		recordObserved(app, method, full, status)
 
 		if auditor != nil {
 			ev := AuditEvent{

@@ -6,12 +6,14 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
 
 	"github.com/bluebeard63/bosun/cmd/bosun/internal/clientgen"
+	"github.com/bluebeard63/bosun/cmd/bosun/internal/registrygen"
 	"github.com/bluebeard63/bosun/modules/manifestmod"
 )
 
@@ -20,7 +22,7 @@ func genCmd() *cobra.Command {
 		Use:   "gen",
 		Short: "Code generators",
 	}
-	gen.AddCommand(genClientCmd())
+	gen.AddCommand(genClientCmd(), genRegistryCmd())
 	return gen
 }
 
@@ -89,4 +91,73 @@ func readManifest(src string) ([]byte, error) {
 		return io.ReadAll(resp.Body)
 	}
 	return os.ReadFile(src)
+}
+
+func genRegistryCmd() *cobra.Command {
+	var dir, out string
+	var check bool
+	cmd := &cobra.Command{
+		Use:   "registry",
+		Short: "Generate blank imports for every package that registers with Bosun",
+		Long: "Scans the current Go module for packages with package-level Bosun registrations " +
+			"(var _ = bosun.Controller[...], Service, Middleware, Default, DefaultBind, DefaultDynamic) " +
+			"and writes a file that blank-imports them, so main.go needs no hand-maintained side-effect imports. " +
+			"Run it from the package that calls bosun.New(), usually via //go:generate bosun gen registry.",
+		Args: cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			root, err := registrygen.FindModuleRoot(dir)
+			if err != nil {
+				return err
+			}
+			mod, err := registrygen.Scan(root)
+			if err != nil {
+				return err
+			}
+			target, err := registrygen.TargetFor(mod, dir)
+			if err != nil {
+				return err
+			}
+			src, err := registrygen.Render(mod, target)
+			if err != nil {
+				return err
+			}
+			for _, s := range mod.Skipped {
+				if s == target.ImportPath {
+					continue // the target itself; it registers by being the binary
+				}
+				fmt.Fprintf(cmd.ErrOrStderr(), "bosun gen registry: skipping %s: package main can't be imported\n", s)
+			}
+
+			outPath := out
+			if !filepath.IsAbs(out) {
+				outPath = filepath.Join(dir, out)
+			}
+			if check {
+				current, err := os.ReadFile(outPath)
+				if err != nil || string(current) != string(src) {
+					return fmt.Errorf("%s is out of date; run bosun gen registry (or go generate)", outPath)
+				}
+				return nil
+			}
+			if err := os.WriteFile(outPath, src, 0o644); err != nil {
+				return err
+			}
+			fmt.Fprintf(cmd.ErrOrStderr(), "bosun gen registry: wrote %s (%d packages)\n", outPath, countImports(mod, target))
+			return nil
+		},
+	}
+	cmd.Flags().StringVar(&dir, "dir", ".", "package directory to write into (the one that calls bosun.New)")
+	cmd.Flags().StringVarP(&out, "out", "o", registrygen.FileName, "generated file name, relative to --dir")
+	cmd.Flags().BoolVar(&check, "check", false, "verify the file is up to date instead of writing it (for CI)")
+	return cmd
+}
+
+func countImports(m *registrygen.Module, target registrygen.Options) int {
+	n := 0
+	for _, p := range m.Packages {
+		if p.ImportPath != target.ImportPath {
+			n++
+		}
+	}
+	return n
 }

@@ -2,8 +2,8 @@
 // service's routes, health endpoints, required env and secrets, and the event
 // subjects it produces or consumes. The AmberStack deploy dashboard and a
 // Caddyfile generator consume it. The manifest is assembled from information the
-// framework already has: bosun.TypedRoutes, eventmod.Declarations, and any
-// registered Contributor.
+// framework already has: the app's typed routes (app.TypedRoutes),
+// eventmod.Declarations, and any registered Contributor.
 //
 // The runtime endpoint GET /.bosun/manifest serves the live manifest. For static
 // generation (in a build step), call EmitIfRequested after app.Start().
@@ -99,16 +99,28 @@ func Register(c Contributor) struct{} {
 	return struct{}{}
 }
 
-// Build assembles the manifest from the framework's live introspection. Call it
-// after app.Start(), when the route index is complete.
+// BuildFor assembles the manifest for app from the framework's live
+// introspection. Call it after app.Start(), when the app's routes are mounted.
+func BuildFor(app *bosun.App, info Info) Manifest {
+	return build(app.TypedRoutes(), info)
+}
+
+// Build assembles the manifest from every typed route mounted by any App in
+// the process.
+//
+// Deprecated: use BuildFor(app, info), which only includes app's routes.
 func Build(info Info) Manifest {
+	return build(bosun.TypedRoutes(), info) //nolint:staticcheck // deprecated aggregate
+}
+
+func build(routes []bosun.RouteInfo, info Info) Manifest {
 	m := Manifest{
 		Service: info.Service,
 		Version: info.Version,
 		Port:    info.Port,
 		Health:  HealthAdvert{Live: "/health/live", Ready: "/health/ready"},
 	}
-	for _, ri := range bosun.TypedRoutes() {
+	for _, ri := range routes {
 		statuses := append([]int{http.StatusOK}, ri.Declared...)
 		ra := RouteAdvert{Method: ri.Method, Path: ri.Path, Operation: ri.Handler, Statuses: statuses}
 		if ri.In != nil {
@@ -158,7 +170,8 @@ var _ = bosun.Default[*Options](func() *Options { return &Options{Service: "serv
 
 // ManifestController serves the live manifest at GET /.bosun/manifest.
 type ManifestController struct {
-	Opts *Options // injected
+	Opts *Options   // injected
+	App  *bosun.App // injected: the app this controller is mounted on
 }
 
 var _ = bosun.Controller[ManifestController]("")
@@ -168,25 +181,36 @@ func (c *ManifestController) Routes(r *bosun.Router) {
 }
 
 func (c *ManifestController) serve(w http.ResponseWriter, r *http.Request) {
-	m := Build(Info{Service: c.Opts.Service, Version: c.Opts.Version, Port: c.Opts.Port})
+	m := BuildFor(c.App, Info{Service: c.Opts.Service, Version: c.Opts.Version, Port: c.Opts.Port})
 	w.Header().Set("Content-Type", "application/json")
 	enc := json.NewEncoder(w)
 	enc.SetIndent("", "  ")
 	_ = enc.Encode(m)
 }
 
-// EmitIfRequested prints the manifest to stdout and exits when BOSUN_MANIFEST is
-// set. Call it in main after app.Start() so the route index is complete:
+// EmitIfRequestedFor prints app's manifest to stdout and exits when
+// BOSUN_MANIFEST is set. Call it in main after app.Start() so the routes are
+// mounted:
 //
 //	app := bosun.New()
 //	if err := app.Start(); err != nil { log.Fatal(err) }
-//	manifestmod.EmitIfRequested(manifestmod.Info{Service: "billing", Version: v, Port: 8080})
-//	log.Fatal(http.ListenAndServe(":8080", app.Mux))
+//	manifestmod.EmitIfRequestedFor(app, manifestmod.Info{Service: "billing", Version: v, Port: 8080})
+//	log.Fatal(http.ListenAndServe(":8080", app.Handler()))
+func EmitIfRequestedFor(app *bosun.App, info Info) {
+	emit(BuildFor(app, info))
+}
+
+// EmitIfRequested is EmitIfRequestedFor over every app in the process.
+//
+// Deprecated: use EmitIfRequestedFor(app, info).
 func EmitIfRequested(info Info) {
+	emit(Build(info)) //nolint:staticcheck // deprecated aggregate
+}
+
+func emit(m Manifest) {
 	if os.Getenv("BOSUN_MANIFEST") == "" {
 		return
 	}
-	m := Build(info)
 	enc := json.NewEncoder(os.Stdout)
 	enc.SetIndent("", "  ")
 	_ = enc.Encode(m)

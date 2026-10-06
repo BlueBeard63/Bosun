@@ -232,7 +232,7 @@ var sections = []struct {
 }{
 	{"Getting started", []navGroup{{"", []string{"index", "getting-started", "api-overview"}}}},
 	{"Core concepts", []navGroup{
-		{"", []string{"controllers", "services", "service-options"}},
+		{"", []string{"controllers", "registration", "services", "service-options"}},
 		{"Middleware", []string{"middleware", "auth-and-permissions"}},
 		{"", []string{"typed-handlers", "validation", "errors", "convert"}},
 	}},

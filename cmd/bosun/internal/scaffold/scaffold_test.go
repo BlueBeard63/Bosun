@@ -30,16 +30,26 @@ func TestWriteService(t *testing.T) {
 	if err != nil {
 		t.Fatalf("write: %v", err)
 	}
-	if len(written) != 4 {
-		t.Fatalf("wrote %d files, want 4", len(written))
+	if len(written) != 5 {
+		t.Fatalf("wrote %d files, want 5", len(written))
 	}
-	for _, rel := range []string{"go.mod", "main.go", "internal/api/api.go", "Dockerfile"} {
+	for _, rel := range []string{"go.mod", "main.go", "internal/api/api.go", "Dockerfile", "zz_bosun_registry.go"} {
 		if _, err := os.Stat(filepath.Join(dir, rel)); err != nil {
 			t.Fatalf("missing %s: %v", rel, err)
 		}
 	}
 	mustParse(t, filepath.Join(dir, "main.go"))
 	mustParse(t, filepath.Join(dir, "internal/api/api.go"))
+	mustParse(t, filepath.Join(dir, "zz_bosun_registry.go"))
+
+	mainSrc, _ := os.ReadFile(filepath.Join(dir, "main.go"))
+	if strings.Contains(string(mainSrc), "internal/api") || !strings.Contains(string(mainSrc), "//go:generate bosun gen registry") {
+		t.Fatalf("main.go should rely on the generated registry:\n%s", mainSrc)
+	}
+	reg, _ := os.ReadFile(filepath.Join(dir, "zz_bosun_registry.go"))
+	if !strings.Contains(string(reg), `_ "example.com/billing/internal/api" // Controller[HelloController]`) {
+		t.Fatalf("registry missing internal/api:\n%s", reg)
+	}
 
 	api, _ := os.ReadFile(filepath.Join(dir, "internal/api/api.go"))
 	if !strings.Contains(string(api), "eventmemmod.Default()") {

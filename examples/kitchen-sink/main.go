@@ -192,5 +192,7 @@ func main() {
 	config.Add(config.KVSource{Store: table, Decrypt: box.Open})
 
 	fmt.Println("listening on :8094")
-	log.Fatal(app.Run(":8094"))
+	if err := app.Run(":8094"); err != nil {
+		log.Fatal(err)
+	}
 }

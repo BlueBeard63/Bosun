@@ -48,7 +48,9 @@ var _ = config.Bind[RateLimitOptions]("ratelimit")
 func main() {
     app := bosun.New()
     config.Add(config.FileSource{Path: "config.json"})
-    log.Fatal(app.Run(":8080"))
+    if err := app.Run(":8080"); err != nil {
+        log.Fatal(err)
+    }
 }
 ```
 

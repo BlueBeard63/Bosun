@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"reflect"
+	"time"
 
 	"github.com/bluebeard63/bosun/registry"
 )
@@ -19,6 +20,9 @@ type App struct {
 	prefixes map[reflect.Type]string
 	mws      []MWRef      // app-wide middleware, set via WithMiddleware
 	handler  http.Handler // Mux wrapped in app-wide middleware; built by Start
+
+	shutdownTimeout time.Duration        // grace period for in-flight requests
+	serverConfig    []func(*http.Server) // set via WithHTTPServer
 }
 
 // New creates an App, applies options, then applies every enabled
@@ -31,6 +35,8 @@ func New(opts ...Option) *App {
 		Mux:      http.NewServeMux(),
 		disabled: map[string]bool{},
 		prefixes: map[reflect.Type]string{},
+
+		shutdownTimeout: DefaultShutdownTimeout,
 	}
 	for _, o := range opts {
 		o(app)
@@ -94,14 +100,6 @@ func (a *App) Start() error {
 		}
 	}
 	return nil
-}
-
-// Run is Start + ListenAndServe.
-func (a *App) Run(addr string) error {
-	if err := a.Start(); err != nil {
-		return err
-	}
-	return http.ListenAndServe(addr, a.Handler())
 }
 
 // Handler returns the app's root http.Handler: Mux wrapped in the app-wide

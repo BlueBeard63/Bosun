@@ -166,7 +166,9 @@ func main() {
 	registry.RegisterInstance[*manifestmod.Options](app.Reg, &manifestmod.Options{
 		Service: "{{.Name}}", Version: "dev", Port: {{.Port}},
 	})
-	log.Fatal(app.Run(":{{.Port}}"))
+	if err := app.Run(":{{.Port}}"); err != nil {
+		log.Fatal(err)
+	}
 }
 `
 

@@ -64,7 +64,9 @@ func main() {
     // set up the OTel SDK: exporter + TracerProvider + otel.SetTracerProvider(...)
     app := bosun.New()
     traceotelmod.Install(app.Reg)
-    log.Fatal(app.Run(":8080"))
+    if err := app.Run(":8080"); err != nil {
+        log.Fatal(err)
+    }
 }
 ```
 

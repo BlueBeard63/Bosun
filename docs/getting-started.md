@@ -70,7 +70,9 @@ func (c *HealthController) Health(ctx context.Context, _ *bosun.Req[struct{}]) (
 }
 
 func main() {
-    log.Fatal(bosun.New().Run(":8080"))
+    if err := bosun.New().Run(":8080"); err != nil {
+        log.Fatal(err)
+    }
 }
 ```
 
@@ -87,7 +89,7 @@ Four things happened, one per key line:
 - `var _ = bosun.Controller[HealthController]("")` registers the controller at package-init time. The `""` argument is the path prefix (empty here), and `var _ =` discards the placeholder return value.
 - `Routes(r *bosun.Router)` is the one method every controller implements. Inside it you mount routes with the typed generics `bosun.Get`, `bosun.Post`, and so on.
 - The handler signature is always `func(ctx context.Context, req *bosun.Req[In]) (Out, error)`. Here `In` is `struct{}` (no request body) and `Out` is `HealthOut`, which Bosun encodes as JSON.
-- `bosun.New().Run(":8080")` discovers every registered controller, validates the dependency graph, and starts listening. That is the entire `main`.
+- `bosun.New().Run(":8080")` discovers every registered controller, validates the dependency graph, and starts listening. On Ctrl+C or `SIGTERM` it drains in-flight requests and closes services, then returns `nil` ([details](./server.md)). That is the entire `main`.
 
 ## Step 2: inject a service
 
@@ -144,7 +146,9 @@ func main() {
 
     app := bosun.New()
     registry.RegisterInstance[*gorm.DB](app.Reg, db)
-    log.Fatal(app.Run(":8080"))
+    if err := app.Run(":8080"); err != nil {
+        log.Fatal(err)
+    }
 }
 ```
 

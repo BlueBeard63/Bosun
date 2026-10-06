@@ -126,7 +126,9 @@ func main() {
     redis := connectRedis()
     registry.RegisterInstance[*redis.Client](app.Reg, redis)
 
-    log.Fatal(app.Run(":8080"))
+    if err := app.Run(":8080"); err != nil {
+        log.Fatal(err)
+    }
 }
 ```
 

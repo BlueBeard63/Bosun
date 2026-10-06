@@ -75,7 +75,7 @@ App-wide middleware wraps the whole `ServeMux`, not individual routes. As a resu
 - It runs before routing, so `r.PathValue(...)` is not populated yet.
 - The full order is **app, then controller, then group, then route, then the typed adapter, then the handler**. Within each list, the first entry is outermost.
 
-App-wide middleware lives on the app's root handler. Serve the app through `app.Run`, `app.Handler()` or `app` itself, which implements `http.Handler`. Serving `app.Mux` directly bypasses app-wide middleware.
+App-wide middleware lives on the app's root handler. Serve the app through `app.Run`/`RunContext`/`Serve`, `app.Handler()` or `app` itself, which implements `http.Handler`. Serving `app.Mux` directly bypasses app-wide middleware.
 
 ```go
 srv := &http.Server{Addr: ":8080", Handler: app.Handler()}

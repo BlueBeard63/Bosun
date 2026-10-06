@@ -61,7 +61,9 @@ func (c *HelloController) Hello(ctx context.Context, req *bosun.Req[HelloIn]) (H
 }
 
 func main() {
-	log.Fatal(bosun.New().Run(":8080"))
+	if err := bosun.New().Run(":8080"); err != nil {
+		log.Fatal(err)
+	}
 }
 ```
 

@@ -17,7 +17,9 @@ func main() {
     app := bosun.New()
     registry.RegisterInstance[*pgxpool.Pool](app.Reg, pool)
     registry.RegisterInstance[*dbq.Queries](app.Reg, queries)
-    log.Fatal(app.Run(":8080"))
+    if err := app.Run(":8080"); err != nil {
+        log.Fatal(err)
+    }
 }
 ```
 

@@ -55,7 +55,9 @@ func main() {
             "stripe": webhookmod.StripeVerifier{Secret: os.Getenv("STRIPE_SECRET")},
         },
     })
-    log.Fatal(app.Run(":8080"))
+    if err := app.Run(":8080"); err != nil {
+        log.Fatal(err)
+    }
 }
 ```
 

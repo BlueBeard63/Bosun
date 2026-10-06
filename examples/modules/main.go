@@ -36,5 +36,7 @@ func main() {
 	})
 
 	fmt.Println("listening on :8091")
-	log.Fatal(app.Run(":8091"))
+	if err := app.Run(":8091"); err != nil {
+		log.Fatal(err)
+	}
 }

@@ -11,7 +11,9 @@
 //	        Environment: "prod",
 //	        Token:       os.Getenv("INFISICAL_TOKEN"),
 //	    })
-//	    log.Fatal(app.Run(":8080"))
+//	    if err := app.Run(":8080"); err != nil {
+//	        log.Fatal(err)
+//	    }
 //	}
 package infisicalmod
 

@@ -24,4 +24,4 @@ The [repo module](./repo.md) provides a generic `Repo[T]` with a query builder a
 
 ## Operations
 
-[Config and hot reload](./config.md) binds typed options to files, environment, and databases. [Testing](./testing.md) drives an app from a Go test with stubs.
+[Running and shutting down](./server.md) covers `Run`, graceful shutdown and custom servers. [Config and hot reload](./config.md) binds typed options to files, environment, and databases. [Testing](./testing.md) drives an app from a Go test with stubs.

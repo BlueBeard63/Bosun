@@ -14,7 +14,9 @@ func main() {
     }
     app := bosun.New()
     registry.RegisterInstance[*gorm.DB](app.Reg, db)
-    log.Fatal(app.Run(":8080"))
+    if err := app.Run(":8080"); err != nil {
+        log.Fatal(err)
+    }
 }
 ```
 

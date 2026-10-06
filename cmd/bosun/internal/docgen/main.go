@@ -248,7 +248,7 @@ var sections = []struct {
 	}},
 	{"Platform", []navGroup{{"", []string{"storage", "secrets-infisical", "health", "manifest", "multitenancy", "tracing"}}}},
 	{"CLI & tooling", []navGroup{{"", []string{"cli", "mcp", "client-gen", "microservices"}}}},
-	{"Operations", []navGroup{{"", []string{"config", "registry", "openapi", "testing"}}}},
+	{"Operations", []navGroup{{"", []string{"server", "config", "registry", "openapi", "testing"}}}},
 }
 
 type place struct {

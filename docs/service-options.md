@@ -30,7 +30,9 @@ var _ = bosun.Service[Hasher]()
 func main() {
     app := bosun.New()
     registry.RegisterInstance[*HasherOptions](app.Reg, &HasherOptions{SaltRounds: 12})
-    log.Fatal(app.Run(":8080"))
+    if err := app.Run(":8080"); err != nil {
+        log.Fatal(err)
+    }
 }
 ```
 

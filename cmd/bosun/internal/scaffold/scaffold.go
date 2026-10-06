@@ -52,7 +52,7 @@ const bosunModulePath = "github.com/bluebeard63/bosun"
 // fallbackBosunVersion pins the bosun version scaffolded go.mod files require
 // when the running binary carries no usable build info (e.g. `go run` from
 // source or a dev build). Keep in sync with cmd/bosun/go.mod's bosun require.
-const fallbackBosunVersion = "v0.6.0"
+const fallbackBosunVersion = "v0.7.0"
 
 // bosunVersion returns the github.com/bluebeard63/bosun version the bosun binary
 // was built against, so scaffolded projects pin the same release the CLI uses

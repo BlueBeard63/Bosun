@@ -3,7 +3,7 @@ module github.com/bluebeard63/bosun/modules/stores3mod
 go 1.25.0
 
 require (
-	github.com/bluebeard63/bosun v0.6.0
+	github.com/bluebeard63/bosun v0.7.0
 	github.com/minio/minio-go/v7 v7.0.80
 )
 

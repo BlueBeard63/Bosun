@@ -4,7 +4,7 @@ This is a tour of every exported symbol you call when building an app, grouped b
 
 ## Typed and untyped routes
 
-The most important distinction is between typed and untyped routes. The typed generics (`bosun.Get`, `Post`, `Put`, `Delete`, `Patch`) take a handler of the form `func(ctx context.Context, req *bosun.Req[In]) (Out, error)` and give you body binding, audit events, and OpenAPI entries; use them for almost everything. The untyped methods on `*Router` (`r.Get`, and so on) take a plain `func(w http.ResponseWriter, r *http.Request)` and hand you raw `net/http` for streaming, hijacking, or full control of the response. Passing a typed handler to `r.Get` is a compile error; call `bosun.Get(r, ...)` instead.
+The most important distinction is between typed and untyped routes. The typed generics (`bosun.Get`, `Post`, `Put`, `Delete`, `Patch`) take a handler of the form `func(ctx context.Context, req *bosun.Req[In]) (Out, error)` and give you body binding, [validation](./validation.md), audit events, and OpenAPI entries; use them for almost everything. The untyped methods on `*Router` (`r.Get`, and so on) take a plain `func(w http.ResponseWriter, r *http.Request)` and hand you raw `net/http` for streaming, hijacking, or full control of the response. Passing a typed handler to `r.Get` is a compile error; call `bosun.Get(r, ...)` instead.
 
 ```go
 bosun.Get(r, "/users/:id", c.Get)  // typed; :id and {id} both work

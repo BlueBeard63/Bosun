@@ -87,6 +87,16 @@ func mapDBErr(err error) error {
 
 The cause passed to `bosun.E` is captured in the audit event but never in the response. A plain error returned from a handler is collapsed to `"internal server error"`. The intent is that the client-facing response is chosen by the handler author, not determined by wherever in the call stack an error arose.
 
+## Input errors
+
+Requests that fail binding or [validation](./validation.md) never reach your handler. They are answered with a `400` whose body adds a `fields` list to the usual `error` key, so clients can show a message next to each input:
+
+```json
+{"error":"validation failed","fields":[{"field":"email","in":"body","rule":"required","message":"is required"}]}
+```
+
+Custom `Validate()` methods can return `bosun.E(...)` to use a different status, such as `422` for a business rule.
+
 ## Panics
 
 The typed adapter does not call `recover`. Without a safety net, `net/http` logs a panic in a handler and the client receives an empty response. Register the built-in `mw.Recover` app-wide to guarantee a JSON 500 and a logged stack trace.

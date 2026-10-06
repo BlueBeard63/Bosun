@@ -94,7 +94,7 @@ Alternatively, remount it under a prefix that your gateway only exposes internal
 
 ## Document error responses
 
-Every operation always lists `200` and `500`, and lists `400` when the handler binds input. Other error statuses come from three layers, which are merged together:
+Every operation always lists `200` and `500`, and lists `400` (with the field-level `ValidationError` body) when the handler binds input. Other error statuses come from three layers, which are merged together:
 
 | Layer | How | When it works |
 |---|---|---|
@@ -167,7 +167,8 @@ Schemas are generated from your `In` and `Out` types:
 
 - **Field names** follow `json` tags. Fields tagged `json:"-"` keep their Go name (see [limitations](./openapi-reference.md#limitations)), and unexported fields are skipped.
 - **Named structs** become reusable entries under `components/schemas`, referenced with `$ref`. Anonymous structs are written inline.
-- **`path:"..."` fields** become path parameters, and **`query:"..."` fields** become optional query parameters. Neither appears in the body schema.
+- **`path:"..."`, `query:"..."` and `header:"..."` fields** become path, query and header parameters, typed from the Go field. None of them appears in the body schema.
+- **[Validation rules](./validation.md)** become schema constraints: `required` fields are listed as required, `min`/`max` become length, range or item-count limits, and `oneof` becomes an `enum`.
 - **Request bodies** are documented for `POST`, `PUT` and `PATCH` when the `In` struct has at least one body field.
 
 Give request and response types distinct, descriptive names. Schemas are keyed by the bare type name, so two different `User` types in two packages would share one schema entry.

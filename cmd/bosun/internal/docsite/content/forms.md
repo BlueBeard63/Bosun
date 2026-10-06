@@ -48,7 +48,7 @@ func (c *Auth) Login(ctx context.Context, req *bosun.Req[LoginIn]) (LoginOut, er
 }
 ```
 
-The `form:` tag supports the same scalar kinds as the other binding tags: `string`, the signed integers, `bool`, and the floats.
+The `form:` tag supports the same scalar kinds as the other binding tags: `string`, the signed and unsigned integers, `bool`, and the floats. Form fields can carry [validation](./validation.md) rules like any other field. Failures are reported with `"in": "form"`.
 
 ## Multipart form fields
 

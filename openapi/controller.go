@@ -61,9 +61,8 @@ func (c *SpecController) Spec(w http.ResponseWriter, req *http.Request) {
 			responses[strconv.Itoa(code)] = errResponse(http.StatusText(code), schemas)
 		}
 		if rt.In.Kind() == reflect.Struct && rt.In.NumField() > 0 {
-			if _, ok := responses["400"]; !ok {
-				responses["400"] = errResponse("invalid request body or parameters", schemas)
-			}
+			// Binding and validation failures carry field-level detail.
+			responses["400"] = validationResponse(schemas)
 		}
 		if _, ok := responses["500"]; !ok {
 			responses["500"] = errResponse("internal server error", schemas)
@@ -76,19 +75,27 @@ func (c *SpecController) Spec(w http.ResponseWriter, req *http.Request) {
 
 		params := []any{}
 		for _, p := range pathParams {
+			schema := any(map[string]any{"type": "string"})
+			if sf, ok := fieldByTag(rt.In, "path", p); ok {
+				schema = constrain(schemaFor(sf.Type, schemas), sf.Type, fieldRules(sf))
+			}
 			params = append(params, map[string]any{
-				"name": p, "in": "path", "required": true,
-				"schema": map[string]any{"type": "string"},
+				"name": p, "in": "path", "required": true, "schema": schema,
 			})
 		}
-		// query params + request body from the In type
+		// query + header params from the In type
 		if rt.In.Kind() == reflect.Struct {
-			for i := 0; i < rt.In.NumField(); i++ {
-				sf := rt.In.Field(i)
-				if q := sf.Tag.Get("query"); q != "" {
+			for _, in := range []string{"query", "header"} {
+				for i := 0; i < rt.In.NumField(); i++ {
+					sf := rt.In.Field(i)
+					name := sf.Tag.Get(in)
+					if name == "" || sf.Tag.Get("path") != "" || (in == "header" && sf.Tag.Get("query") != "") {
+						continue // binding uses the first tag in path, query, header order
+					}
+					rules := fieldRules(sf)
 					params = append(params, map[string]any{
-						"name": q, "in": "query", "required": false,
-						"schema": schemaFor(sf.Type, schemas),
+						"name": name, "in": in, "required": hasRule(rules, "required"),
+						"schema": constrain(schemaFor(sf.Type, schemas), sf.Type, rules),
 					})
 				}
 			}
@@ -152,11 +159,24 @@ func hasBodyFields(t reflect.Type) bool {
 	}
 	for i := 0; i < t.NumField(); i++ {
 		sf := t.Field(i)
-		if sf.Tag.Get("path") == "" && sf.Tag.Get("query") == "" && sf.IsExported() {
+		if sf.IsExported() && !isParamField(sf) {
 			return true
 		}
 	}
 	return false
+}
+
+// fieldByTag finds the In field bound from source (path/query/header) name.
+func fieldByTag(t reflect.Type, source, name string) (reflect.StructField, bool) {
+	if t.Kind() != reflect.Struct {
+		return reflect.StructField{}, false
+	}
+	for i := 0; i < t.NumField(); i++ {
+		if sf := t.Field(i); sf.Tag.Get(source) == name {
+			return sf, true
+		}
+	}
+	return reflect.StructField{}, false
 }
 
 func writeJSON(w http.ResponseWriter, v any) {
@@ -168,6 +188,43 @@ func jsonEncoder(w http.ResponseWriter) *json.Encoder {
 	enc := json.NewEncoder(w)
 	enc.SetIndent("", "  ")
 	return enc
+}
+
+// validationResponse is the 400 a typed route returns when binding or
+// validation fails: ErrorResponse plus a list of field errors.
+func validationResponse(schemas map[string]any) map[string]any {
+	if _, ok := schemas["ValidationError"]; !ok {
+		str := map[string]any{"type": "string"}
+		schemas["ValidationError"] = map[string]any{
+			"type":     "object",
+			"required": []string{"error"},
+			"properties": map[string]any{
+				"error": str,
+				"fields": map[string]any{
+					"type": "array",
+					"items": map[string]any{
+						"type":     "object",
+						"required": []string{"field", "rule", "message"},
+						"properties": map[string]any{
+							"field":   str,
+							"in":      map[string]any{"type": "string", "enum": []string{"body", "path", "query", "header", "form"}},
+							"rule":    str,
+							"param":   str,
+							"message": str,
+						},
+					},
+				},
+			},
+		}
+	}
+	return map[string]any{
+		"description": "invalid request body or parameters",
+		"content": map[string]any{
+			"application/json": map[string]any{
+				"schema": map[string]any{"$ref": "#/components/schemas/ValidationError"},
+			},
+		},
+	}
 }
 
 // errResponse builds an OpenAPI response object pointing at the shared

@@ -9,6 +9,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/bluebeard63/bosun/registry"
 )
@@ -568,6 +569,59 @@ func TestRedactShapes(t *testing.T) {
 	}
 	if out["Nil"] != nil {
 		t.Fatal("nil pointer should redact to nil")
+	}
+}
+
+func TestRedactJSONTags(t *testing.T) {
+	type secret struct {
+		Password string `json:",omitempty"`
+		Name     string `json:",omitempty"`
+		Hidden   string `json:"-"`
+	}
+	out := Redact(secret{Password: "hunter2", Name: "n", Hidden: "h"}).(map[string]any)
+	if out["Password"] != "[REDACTED]" {
+		t.Fatalf("omitempty sensitive field not redacted: %v", out)
+	}
+	if out["Name"] != "n" {
+		t.Fatalf("omitempty field lost its Go name: %v", out)
+	}
+	if _, ok := out["Hidden"]; ok {
+		t.Fatalf(`json:"-" field included: %v`, out)
+	}
+	if _, ok := out[""]; ok {
+		t.Fatalf("empty key in output: %v", out)
+	}
+}
+
+func TestRedactCycle(t *testing.T) {
+	type node struct {
+		Name   string
+		Parent *node
+		Kids   []*node
+	}
+	root := &node{Name: "root"}
+	kid := &node{Name: "kid", Parent: root}
+	root.Kids = []*node{kid}
+	out := Redact(root).(map[string]any)
+	k := out["Kids"].([]any)[0].(map[string]any)
+	if k["Name"] != "kid" || k["Parent"] != "[CYCLE]" {
+		t.Fatalf("cycle not cut: %v", k)
+	}
+
+	// A pointer shared by siblings is not a cycle.
+	type pair struct{ A, B *node }
+	shared := &node{Name: "s"}
+	p := Redact(pair{A: shared, B: shared}).(map[string]any)
+	if p["B"].(map[string]any)["Name"] != "s" {
+		t.Fatalf("shared pointer treated as a cycle: %v", p)
+	}
+}
+
+func TestRedactTime(t *testing.T) {
+	ts := time.Date(2026, 10, 24, 12, 30, 0, 0, time.UTC)
+	out := Redact(struct{ At time.Time }{At: ts}).(map[string]any)
+	if out["At"] != ts.Format(time.RFC3339Nano) {
+		t.Fatalf("time rendered as %#v", out["At"])
 	}
 }
 

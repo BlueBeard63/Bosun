@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"mime"
 	"net/http"
 	"reflect"
 	"strconv"
@@ -13,24 +14,40 @@ import (
 // --- request binding ---
 
 // bind fills *In from the request body and from struct tags. Body decoding
-// depends on Content-Type: JSON for application/json (or empty), form for
-// application/x-www-form-urlencoded and multipart/form-data. Per-field
+// depends on Content-Type: JSON for application/json, any *+json type, or
+// none; form for application/x-www-form-urlencoded and multipart/form-data.
+// A body of any other type is refused with 415. Per-field
 // sources are selected by the first matching tag in this order:
 // `path:"x"`, `query:"x"`, `header:"X-Foo"`, `form:"x"`.
+//
+// `form:` fields take text values only. Uploaded files of a multipart body
+// are not bound; read them from the embedded request with req.FormFile,
+// which works because the multipart form has already been parsed.
 func bind(req *http.Request, in any) error {
 	ct := req.Header.Get("Content-Type")
 	hasBody := req.Body != nil && req.ContentLength != 0
-	isForm := strings.HasPrefix(ct, "application/x-www-form-urlencoded") ||
-		strings.HasPrefix(ct, "multipart/form-data")
+	mt, _, mtErr := mime.ParseMediaType(ct) // lower-cased, parameters dropped
 
-	if isForm {
-		if err := req.ParseForm(); err != nil {
+	switch {
+	case mtErr == nil && (mt == "multipart/form-data" || mt == "application/x-www-form-urlencoded"):
+		var err error
+		if mt == "multipart/form-data" {
+			// ParseForm ignores multipart bodies; this also fills PostForm.
+			err = req.ParseMultipartForm(multipartMemory)
+		} else {
+			err = req.ParseForm()
+		}
+		if err != nil {
 			return &ValidationError{Message: "invalid form body"}
 		}
-	} else if hasBody && (ct == "" || strings.HasPrefix(ct, "application/json")) {
+	case !hasBody:
+		// nothing to decode
+	case ct == "" || (mtErr == nil && (mt == "application/json" || strings.HasSuffix(mt, "+json"))):
 		if err := json.NewDecoder(req.Body).Decode(in); err != nil {
 			return jsonBindError(err)
 		}
+	default:
+		return E(http.StatusUnsupportedMediaType, "unsupported media type", fmt.Errorf("content type %q", ct))
 	}
 
 	v := reflect.ValueOf(in).Elem()
@@ -62,15 +79,21 @@ func bind(req *http.Request, in any) error {
 				return E(http.StatusInternalServerError, "internal server error", fmt.Errorf("field %s: %w", sf.Name, err))
 			}
 			name, src := clientName(sf)
-			return &ValidationError{Message: "invalid request", Fields: []FieldError{{
-				Field: name, In: src, Rule: "type", Message: "must be " + kindNoun(sf.Type),
-			}}}
+			fe := FieldError{Field: name, In: src, Rule: "type", Message: "must be " + kindNoun(sf.Type)}
+			if errors.Is(err, strconv.ErrRange) {
+				fe.Rule, fe.Message = "range", "is out of range for "+sf.Type.Kind().String()
+			}
+			return &ValidationError{Message: "invalid request", Fields: []FieldError{fe}}
 		}
 	}
 	return nil
 }
 
 var errUnsupportedKind = errors.New("unsupported bind kind")
+
+// multipartMemory is how much of a multipart body is held in memory; file
+// parts beyond it spill to temporary files, as with http.Request.FormFile.
+const multipartMemory = 32 << 20
 
 // jsonBindError turns a JSON decode failure into a client-safe error that
 // names the offending field when the decoder knows it.
@@ -112,13 +135,13 @@ func setFromString(f reflect.Value, raw string) error {
 	case reflect.String:
 		f.SetString(raw)
 	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
-		n, err := strconv.ParseInt(raw, 10, 64)
+		n, err := strconv.ParseInt(raw, 10, f.Type().Bits())
 		if err != nil {
 			return err
 		}
 		f.SetInt(n)
 	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
-		n, err := strconv.ParseUint(raw, 10, 64)
+		n, err := strconv.ParseUint(raw, 10, f.Type().Bits())
 		if err != nil {
 			return err
 		}
@@ -130,7 +153,7 @@ func setFromString(f reflect.Value, raw string) error {
 		}
 		f.SetBool(b)
 	case reflect.Float32, reflect.Float64:
-		fl, err := strconv.ParseFloat(raw, 64)
+		fl, err := strconv.ParseFloat(raw, f.Type().Bits())
 		if err != nil {
 			return err
 		}

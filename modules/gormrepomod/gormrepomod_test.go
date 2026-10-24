@@ -321,3 +321,73 @@ func TestNamedDB_Isolation(t *testing.T) {
 		t.Fatalf("event count want 1, got %d", n)
 	}
 }
+
+type tDoc struct {
+	ID    string `gorm:"primaryKey"`
+	Title string
+}
+
+// privateDB opens an unshared in-memory database so rows from other tests
+// can't affect counts.
+func privateDB(t *testing.T, models ...any) *gorm.DB {
+	t.Helper()
+	db, err := gorm.Open(sqlite.Open("file:"+t.Name()+"?mode=memory&cache=shared"), &gorm.Config{})
+	if err != nil {
+		t.Fatalf("open sqlite: %v", err)
+	}
+	if err := db.AutoMigrate(models...); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+	return db
+}
+
+func TestIDIsNeverRawSQL(t *testing.T) {
+	db := privateDB(t, &tUser{})
+	repo := &gormrepomod.GormRepo[tUser]{DB: db}
+	ctx := context.Background()
+	for _, u := range []tUser{{Email: "a@x"}, {Email: "b@x"}} {
+		if err := repo.Create(ctx, &u); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	if _, err := repo.Get(ctx, "1=1 OR 1"); !errors.Is(err, repomod.ErrNotFound) {
+		t.Fatalf("injection get = %v, want ErrNotFound", err)
+	}
+	if err := repo.Delete(ctx, "id > 0"); err != nil {
+		t.Fatalf("injection delete: %v", err)
+	}
+	var n int64
+	db.Model(&tUser{}).Count(&n)
+	if n != 2 {
+		t.Fatalf("rows after injection delete = %d, want 2", n)
+	}
+
+	for _, id := range []any{nil, ""} {
+		if _, err := repo.Get(ctx, id); !errors.Is(err, repomod.ErrNotFound) {
+			t.Fatalf("Get(%#v) = %v, want ErrNotFound", id, err)
+		}
+		if err := repo.Delete(ctx, id); !errors.Is(err, repomod.ErrNotFound) {
+			t.Fatalf("Delete(%#v) = %v, want ErrNotFound", id, err)
+		}
+	}
+}
+
+func TestStringPrimaryKey(t *testing.T) {
+	repo := &gormrepomod.GormRepo[tDoc]{DB: privateDB(t, &tDoc{})}
+	ctx := context.Background()
+	id := "0b6f7c1e-9d2a-4c7e-8f51-3a2d9e4b6c10"
+	if err := repo.Create(ctx, &tDoc{ID: id, Title: "t"}); err != nil {
+		t.Fatal(err)
+	}
+	got, err := repo.Get(ctx, id)
+	if err != nil || got.Title != "t" {
+		t.Fatalf("Get(uuid) = %+v, %v", got, err)
+	}
+	if err := repo.Delete(ctx, id); err != nil {
+		t.Fatalf("Delete(uuid): %v", err)
+	}
+	if _, err := repo.Get(ctx, id); !errors.Is(err, repomod.ErrNotFound) {
+		t.Fatalf("Get after delete = %v, want ErrNotFound", err)
+	}
+}

@@ -25,7 +25,7 @@ Importing the package registers the controller, the scanner service and the `Sca
 }
 ```
 
-The document is rebuilt on every request from the serving app's `app.TypedRoutes()`. The source scan runs once per app, on the first request.
+The document is built from the serving app's `app.TypedRoutes()` on the first request, which comes after `Start` when the route list is complete, and the encoded bytes are served from then on. It is rebuilt only when the observed layer (see [Error layers](#error-layers)) has recorded a new status since. The source scan runs once per app, on the first request.
 
 ## Operations
 
@@ -39,7 +39,7 @@ Each typed route (`bosun.Get`, `Post`, `Put`, `Delete`, `Patch`) becomes one ope
 | `parameters`, path | One per `{name}` or `{name...}` segment: `in: path`, `required: true`. The schema comes from the `In` field tagged `path:"name"` (type plus [validation](./validation.md) constraints), or `{"type":"string"}` when there's no such field. |
 | `parameters`, query | One per `In` field tagged `query:"name"`: `in: query`. `required` is `true` when the field has the `required` rule. The schema comes from the field type plus its constraints. |
 | `parameters`, header | One per `In` field tagged `header:"Name"`, in the same way as query parameters. |
-| `requestBody` | Only for `POST`, `PUT` and `PATCH`, when `In` has at least one exported field that is not tagged `path`, `query` or `header`. It is `required: true`, with content type `application/json` and the schema of `In`. |
+| `requestBody` | Only for `POST`, `PUT`, `PATCH` and `DELETE`, when `In` has at least one body property (an exported field that is not tagged `path`, `query`, `header` or `json:"-"`). It is `required: true`, with content type `application/json` and the schema of `In`. |
 | `responses` | See the next section. |
 
 Raw routes (`r.Get`, `r.Post` and so on) are not included.
@@ -110,7 +110,7 @@ Codes from the three layers are combined, and each code appears once.
 | `[]T`, `[N]T` | `{"type":"array","items":<T>}` |
 | `map[K]V` | `{"type":"object","additionalProperties":<V>}` |
 | `*T` | Same as `T` |
-| Named struct | `{"$ref":"#/components/schemas/<TypeName>"}`, with the definition stored once under its bare type name. Recursive types are supported. |
+| Named struct | `{"$ref":"#/components/schemas/<Name>"}`, with the definition stored once (see [Schema names](#schema-names)). Recursive types are supported. |
 | Anonymous struct | Inline `{"type":"object","properties":{...}}` |
 | Anything else (interfaces, `any`, channels) | `{}` (any value) |
 
@@ -124,6 +124,12 @@ Properties follow `encoding/json`'s naming rules:
 - The fields of an embedded struct without a `json` name are flattened into the outer object. When names conflict, the shallower field wins, then the one with a `json` tag; otherwise the name is left out.
 - A number or `bool` field with the `,string` option is `{"type":"string"}`.
 - Fields with the `required` validation rule are listed in the object's `required` array.
+
+### Schema names
+
+A named struct's `components/schemas` key is its package's last import path element followed by its type name, with each word capitalised and other characters removed: `users.Out` in `example.com/app/users` is `UsersOut`. Types in package `main` keep their bare name, so `NoteOut` stays `NoteOut`. A generic type's arguments are added the same way: `api.Page[users.Out]` is `ApiPageUsersOut`.
+
+When two types would get the same key, both are qualified with more import path elements until they differ: `example.com/app/v1/users.Out` and `example.com/app/v2/users.Out` become `V1UsersOut` and `V2UsersOut`. A key that is still shared, or that equals `ErrorResponse` or `ValidationError`, gets a numeric suffix (`2`, `3`, ...) in import path order. Keys depend only on the set of types the app's routes use, not on route order.
 
 ### Validation constraints
 
@@ -160,5 +166,4 @@ These describe the current generator. Use [declarations](./openapi.md#declare-st
 - **Success is always `200` with JSON.** A `string` or `[]byte` `Out` is still described as `application/json`, and an empty `struct{}` appears as an empty object. Bosun actually sends `text/plain`, `application/octet-stream` and no body respectively.
 - **Form bodies are described as JSON.** Fields tagged `form` appear as JSON body properties, and form and multipart request bodies get an `application/json` content type.
 - **Custom validation is invisible.** Checks made in `Validate()` methods aren't reflected in schemas.
-- **Schema names can collide.** Two different types with the same name in different packages share one `components/schemas` entry.
 - **Observed statuses reset on restart** and only include codes `>= 400`.

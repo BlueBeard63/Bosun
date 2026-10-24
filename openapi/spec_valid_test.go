@@ -244,7 +244,7 @@ func TestJSONFieldNaming(t *testing.T) {
 		t.Fatalf("fields = %v, want %v", names, want)
 	}
 
-	props := structSchema(reflect.TypeOf(ShapeIn{}), map[string]any{})["properties"].(map[string]any)
+	props := structSchema(reflect.TypeOf(ShapeIn{}), newSchemaSet(nil))["properties"].(map[string]any)
 	if b := props["blob"].(map[string]any); b["type"] != "string" || b["format"] != "byte" {
 		t.Fatalf("[]byte schema = %v", b)
 	}
@@ -254,7 +254,7 @@ func TestJSONFieldNaming(t *testing.T) {
 	// bosun's validator rejects oneof on slices at Start today, so the
 	// slice case is exercised on constrain directly.
 	roleT := reflect.TypeOf([]string{})
-	roles := constrain(schemaFor(roleT, map[string]any{}), roleT,
+	roles := constrain(schemaFor(roleT, newSchemaSet(nil)), roleT,
 		[]bosun.Rule{{Name: "oneof", Param: "admin user"}}).(map[string]any)
 	if _, ok := roles["enum"]; ok {
 		t.Fatal("oneof on a slice must not put enum on the array")

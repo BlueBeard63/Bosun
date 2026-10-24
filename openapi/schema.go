@@ -12,7 +12,7 @@ import (
 
 // schemaRef returns a $ref for named struct types (registering the schema),
 // or an inline schema otherwise.
-func schemaRef(t reflect.Type, schemas map[string]any) any {
+func schemaRef(t reflect.Type, schemas *schemaSet) any {
 	if t.Kind() == reflect.Pointer {
 		t = t.Elem()
 	}
@@ -21,16 +21,17 @@ func schemaRef(t reflect.Type, schemas map[string]any) any {
 			// anonymous struct: inline, no $ref possible
 			return structSchema(t, schemas)
 		}
-		if _, done := schemas[t.Name()]; !done {
-			schemas[t.Name()] = nil // reserve to break recursion
-			schemas[t.Name()] = structSchema(t, schemas)
+		name := schemas.nameOf(t)
+		if _, done := schemas.defs[name]; !done {
+			schemas.defs[name] = nil // reserve to break recursion
+			schemas.defs[name] = structSchema(t, schemas)
 		}
-		return map[string]any{"$ref": "#/components/schemas/" + t.Name()}
+		return map[string]any{"$ref": "#/components/schemas/" + name}
 	}
 	return schemaFor(t, schemas)
 }
 
-func structSchema(t reflect.Type, schemas map[string]any) map[string]any {
+func structSchema(t reflect.Type, schemas *schemaSet) map[string]any {
 	props := map[string]any{}
 	var required []string
 	for _, f := range jsonFields(t) {
@@ -254,7 +255,7 @@ func number(s string) any {
 	return f
 }
 
-func schemaFor(t reflect.Type, schemas map[string]any) any {
+func schemaFor(t reflect.Type, schemas *schemaSet) any {
 	if t.Kind() == reflect.Pointer {
 		t = t.Elem()
 	}

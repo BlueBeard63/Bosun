@@ -110,7 +110,7 @@ func TestSpecGeneration(t *testing.T) {
 		t.Fatal("path/query parameters missing")
 	}
 	schemas := spec["components"].(map[string]any)["schemas"].(map[string]any)
-	if schemas["FixIn"] == nil || schemas["FixOut"] == nil || schemas["ErrorResponse"] == nil {
+	if schemas["OpenapiFixIn"] == nil || schemas["OpenapiFixOut"] == nil || schemas["ErrorResponse"] == nil {
 		t.Fatalf("schemas missing: %v", schemas)
 	}
 
@@ -130,7 +130,7 @@ func TestSpecGeneration(t *testing.T) {
 }
 
 func TestSchemaForKinds(t *testing.T) {
-	schemas := map[string]any{}
+	schemas := newSchemaSet(nil)
 	cases := map[reflect.Type]string{
 		reflect.TypeOf(""):               "string",
 		reflect.TypeOf(true):             "boolean",
@@ -294,7 +294,7 @@ func TestSpecValidationConstraints(t *testing.T) {
 		t.Fatalf("header param missing or not required: %v", h)
 	}
 
-	body := spec["components"].(map[string]any)["schemas"].(map[string]any)["ValIn"].(map[string]any)
+	body := spec["components"].(map[string]any)["schemas"].(map[string]any)["OpenapiValIn"].(map[string]any)
 	props := body["properties"].(map[string]any)
 	if _, leaked := props["Tenant"]; leaked {
 		t.Fatal("header field must not appear in the JSON body schema")

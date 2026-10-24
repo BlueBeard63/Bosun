@@ -5,7 +5,7 @@ Bosun generates an OpenAPI 3.0 spec from your typed handlers and serves it at `G
 <figure class="diagram">
 <svg viewBox="0 0 620 250" role="img" aria-labelledby="oa-title oa-desc" xmlns="http://www.w3.org/2000/svg">
 <title id="oa-title">How the OpenAPI spec is built</title>
-<desc id="oa-desc">The app's typed routes give paths, parameters and schemas. Three error layers, declared, scanned and observed, add error responses. The spec controller merges them on each request to /openapi.json.</desc>
+<desc id="oa-desc">The app's typed routes give paths, parameters and schemas. Three error layers, declared, scanned and observed, add error responses. The spec controller merges them into the document served at /openapi.json.</desc>
 <defs>
 <marker id="oa-arw" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="var(--fg-muted)"/></marker>
 </defs>
@@ -30,7 +30,7 @@ Bosun generates an OpenAPI 3.0 spec from your typed handlers and serves it at `G
 <rect x="490" y="104" width="112" height="48" rx="6" fill="var(--bg)" stroke="var(--fg)" stroke-width="1"/>
 <text x="546" y="132" text-anchor="middle" font-family="'JetBrains Mono',ui-monospace,monospace" font-size="10" fill="var(--fg)">/openapi.json</text>
 </svg>
-<figcaption>Routes and schemas come from the app's typed handlers. Error responses are merged from three layers every time the spec is requested.</figcaption>
+<figcaption>Routes and schemas come from the app's typed handlers. Error responses are merged from three layers when the spec is built.</figcaption>
 </figure>
 
 ## Enable the spec
@@ -41,7 +41,7 @@ Import the package for its side effects, anywhere in your binary:
 import _ "github.com/bluebeard63/bosun/openapi"
 ```
 
-The package registers `openapi.SpecController`, which mounts `GET /openapi.json` when the app starts. The spec is built fresh on every request from the typed routes of the app that serves it (`app.TypedRoutes()`), so it always matches the running code. Raw routes registered with `r.Get` and similar methods are not included.
+The package registers `openapi.SpecController`, which mounts `GET /openapi.json` when the app starts. The spec is built from the typed routes of the app that serves it (`app.TypedRoutes()`) on the first request and then served from memory, so it always matches the running code. It is rebuilt when the app observes a new error status. Raw routes registered with `r.Get` and similar methods are not included.
 
 ## Serve the spec at another path
 
@@ -169,9 +169,9 @@ Schemas are generated from your `In` and `Out` types:
 - **Named structs** become reusable entries under `components/schemas`, referenced with `$ref`. Anonymous structs are written inline.
 - **`path:"..."`, `query:"..."` and `header:"..."` fields** become path, query and header parameters, typed from the Go field. None of them appears in the body schema.
 - **[Validation rules](./validation.md)** become schema constraints: `required` fields are listed as required, `min`/`max` become length, range or item-count limits, and `oneof` becomes an `enum`.
-- **Request bodies** are documented for `POST`, `PUT` and `PATCH` when the `In` struct has at least one body field.
+- **Request bodies** are documented for `POST`, `PUT`, `PATCH` and `DELETE` when the `In` struct has at least one body field.
 
-Give request and response types distinct, descriptive names. Schemas are keyed by the bare type name, so two different `User` types in two packages would share one schema entry.
+Schemas are keyed by package and type name, so `users.Out` is `UsersOut` and two `Out` types in different packages get separate entries. Types in package `main` keep their bare name. The [reference](./openapi-reference.md#schema-names) has the exact rules.
 
 ## Add an interactive documentation page
 

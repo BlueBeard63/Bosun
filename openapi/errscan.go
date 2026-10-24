@@ -51,14 +51,16 @@ func buildStatusNames() map[string]int {
 	return names
 }
 
-// identFromText turns "Unsupported Media Type" into "UnsupportedMediaType"
-// and "Multi-Status" into "MultiStatus", the way net/http names constants.
+// identFromText joins the letter-and-digit runs of text, capitalising
+// each: "Unsupported Media Type" becomes "UnsupportedMediaType" and
+// "Multi-Status" becomes "MultiStatus", the way net/http names constants.
 func identFromText(text string) string {
 	var b strings.Builder
 	for _, word := range strings.FieldsFunc(text, func(r rune) bool {
 		return !unicode.IsLetter(r) && !unicode.IsDigit(r)
 	}) {
-		b.WriteString(strings.ToUpper(word[:1]) + word[1:])
+		r := []rune(word)
+		b.WriteString(string(unicode.ToUpper(r[0])) + string(r[1:]))
 	}
 	return b.String()
 }

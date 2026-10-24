@@ -4,11 +4,15 @@
 package openapi
 
 import (
+	"bytes"
 	"encoding/json"
 	"net/http"
 	"reflect"
+	"sort"
 	"strconv"
 	"strings"
+	"sync"
+	"unicode"
 
 	"github.com/bluebeard63/bosun"
 )
@@ -16,6 +20,11 @@ import (
 type SpecController struct {
 	app     *bosun.App  // injected: the app this controller is mounted on
 	scanner *errScanner // injected (has injected ScanOptions itself)
+
+	mu     sync.Mutex
+	doc    []byte // cached spec document
+	docKey string // routes and observed statuses doc was built from
+	builds int    // times the document was built, for tests
 }
 
 var _ = bosun.Service[errScanner]()
@@ -26,10 +35,58 @@ func (c *SpecController) Routes(r *bosun.Router) {
 }
 
 func (c *SpecController) Spec(w http.ResponseWriter, req *http.Request) {
-	schemas := map[string]any{}
+	w.Header().Set("Content-Type", "application/json")
+	_, _ = w.Write(c.document())
+}
+
+// document returns the encoded spec. The route list is complete once the
+// app has started, so the spec is built on the first request and the bytes
+// are reused; it is rebuilt only when the observed-status layer has
+// learned a new code since.
+func (c *SpecController) document() []byte {
+	routes := c.app.TypedRoutes()
+	var key strings.Builder
+	key.WriteString(strconv.Itoa(len(routes)))
+	for _, rt := range routes {
+		key.WriteByte(';')
+		for _, code := range c.app.ObservedStatuses(rt.Method, rt.Path) {
+			if code >= 400 {
+				key.WriteString(strconv.Itoa(code) + ",")
+			}
+		}
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.doc == nil || c.docKey != key.String() {
+		var buf bytes.Buffer
+		enc := json.NewEncoder(&buf)
+		enc.SetIndent("", "  ")
+		_ = enc.Encode(c.build(routes))
+		c.doc, c.docKey = buf.Bytes(), key.String()
+		c.builds++
+	}
+	return c.doc
+}
+
+func (c *SpecController) build(routes []bosun.RouteInfo) map[string]any {
 	paths := map[string]map[string]any{}
 
-	for _, rt := range c.app.TypedRoutes() {
+	// Sorted so de-duplicated operationIds don't depend on mount order.
+	sort.SliceStable(routes, func(i, j int) bool {
+		if routes[i].Path != routes[j].Path {
+			return routes[i].Path < routes[j].Path
+		}
+		return routes[i].Method < routes[j].Method
+	})
+	opIDs := map[string]bool{}
+
+	var roots []reflect.Type
+	for _, rt := range routes {
+		roots = append(roots, rt.In, rt.Out)
+	}
+	schemas := newSchemaSet(roots)
+
+	for _, rt := range routes {
 		oaPath, pathParams := convertPath(rt.Path)
 		responses := map[string]any{
 			"200": map[string]any{
@@ -69,7 +126,7 @@ func (c *SpecController) Spec(w http.ResponseWriter, req *http.Request) {
 		}
 
 		op := map[string]any{
-			"operationId": shortHandler(rt.Handler),
+			"operationId": uniqueID(operationID(rt), opIDs),
 			"responses":   responses,
 		}
 
@@ -103,7 +160,8 @@ func (c *SpecController) Spec(w http.ResponseWriter, req *http.Request) {
 		if len(params) > 0 {
 			op["parameters"] = params
 		}
-		if rt.Method == "POST" || rt.Method == "PUT" || rt.Method == "PATCH" {
+		// bind decodes a JSON body for any method; GET has no body semantics.
+		if rt.Method == "POST" || rt.Method == "PUT" || rt.Method == "PATCH" || rt.Method == "DELETE" {
 			if hasBodyFields(rt.In) {
 				op["requestBody"] = map[string]any{
 					"required": true,
@@ -122,48 +180,68 @@ func (c *SpecController) Spec(w http.ResponseWriter, req *http.Request) {
 		paths[oaPath][strings.ToLower(rt.Method)] = op
 	}
 
-	spec := map[string]any{
+	return map[string]any{
 		"openapi": "3.0.3",
 		"info":    map[string]any{"title": "bosun API", "version": "1.0.0"},
 		"paths":   paths,
 		"components": map[string]any{
-			"schemas": schemas,
+			"schemas": schemas.defs,
 		},
 	}
-	w.Header().Set("Content-Type", "application/json")
-	writeJSON(w, spec)
 }
 
-// convertPath turns Go 1.22 patterns (/users/{id}) into OpenAPI form (same
-// syntax, conveniently) and extracts param names.
+// convertPath turns Go 1.22 patterns into OpenAPI form and extracts param
+// names. {name} is the same in both; the {name...} wildcard becomes {name},
+// the name the router binds, and the {$} end anchor is dropped.
 func convertPath(p string) (string, []string) {
 	params := []string{}
-	for _, seg := range strings.Split(p, "/") {
+	segs := strings.Split(p, "/")
+	for i, seg := range segs {
+		if seg == "{$}" {
+			segs[i] = ""
+			continue
+		}
 		if strings.HasPrefix(seg, "{") && strings.HasSuffix(seg, "}") {
-			params = append(params, strings.Trim(seg, "{}"))
+			name := strings.TrimSuffix(seg[1:len(seg)-1], "...")
+			segs[i] = "{" + name + "}"
+			params = append(params, name)
 		}
 	}
-	return p, params
+	return strings.Join(segs, "/"), params
 }
 
-func shortHandler(full string) string {
-	if idx := strings.LastIndex(full, "."); idx >= 0 {
-		full = full[idx+1:]
+// operationID names an operation <Controller><Method>, e.g. NotesGet for
+// (*NotesController).Get. Handlers that aren't methods fall back to the
+// HTTP method and path: get_files_path for GET /files/{path...}.
+func operationID(rt bosun.RouteInfo) string {
+	if _, recv, method, ok := parseHandler(rt.Handler); ok {
+		if base := strings.TrimSuffix(recv, "Controller"); base != "" {
+			recv = base
+		}
+		return recv + method
 	}
-	return strings.TrimSuffix(full, "-fm")
+	id := strings.ToLower(rt.Method)
+	for _, word := range strings.FieldsFunc(rt.Path, func(r rune) bool {
+		return !unicode.IsLetter(r) && !unicode.IsDigit(r)
+	}) {
+		id += "_" + word
+	}
+	return id
+}
+
+// uniqueID returns id, or id with the first free numeric suffix (id2,
+// id3, ...) when another operation already uses it.
+func uniqueID(id string, used map[string]bool) string {
+	out := id
+	for n := 2; used[out]; n++ {
+		out = id + strconv.Itoa(n)
+	}
+	used[out] = true
+	return out
 }
 
 func hasBodyFields(t reflect.Type) bool {
-	if t.Kind() != reflect.Struct {
-		return false
-	}
-	for i := 0; i < t.NumField(); i++ {
-		sf := t.Field(i)
-		if sf.IsExported() && !isParamField(sf) {
-			return true
-		}
-	}
-	return false
+	return len(jsonFields(t)) > 0
 }
 
 // fieldByTag finds the In field bound from source (path/query/header) name.
@@ -179,23 +257,12 @@ func fieldByTag(t reflect.Type, source, name string) (reflect.StructField, bool)
 	return reflect.StructField{}, false
 }
 
-func writeJSON(w http.ResponseWriter, v any) {
-	enc := jsonEncoder(w)
-	_ = enc.Encode(v)
-}
-
-func jsonEncoder(w http.ResponseWriter) *json.Encoder {
-	enc := json.NewEncoder(w)
-	enc.SetIndent("", "  ")
-	return enc
-}
-
 // validationResponse is the 400 a typed route returns when binding or
 // validation fails: ErrorResponse plus a list of field errors.
-func validationResponse(schemas map[string]any) map[string]any {
-	if _, ok := schemas["ValidationError"]; !ok {
+func validationResponse(schemas *schemaSet) map[string]any {
+	if _, ok := schemas.defs["ValidationError"]; !ok {
 		str := map[string]any{"type": "string"}
-		schemas["ValidationError"] = map[string]any{
+		schemas.defs["ValidationError"] = map[string]any{
 			"type":     "object",
 			"required": []string{"error"},
 			"properties": map[string]any{
@@ -229,9 +296,9 @@ func validationResponse(schemas map[string]any) map[string]any {
 
 // errResponse builds an OpenAPI response object pointing at the shared
 // ErrorResponse schema (the {"error": "..."} shape bosun returns).
-func errResponse(desc string, schemas map[string]any) map[string]any {
-	if _, ok := schemas["ErrorResponse"]; !ok {
-		schemas["ErrorResponse"] = map[string]any{
+func errResponse(desc string, schemas *schemaSet) map[string]any {
+	if _, ok := schemas.defs["ErrorResponse"]; !ok {
+		schemas.defs["ErrorResponse"] = map[string]any{
 			"type": "object",
 			"properties": map[string]any{
 				"error": map[string]any{"type": "string"},

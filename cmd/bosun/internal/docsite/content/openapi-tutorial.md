@@ -158,7 +158,7 @@ Look at the operation for `GET /notes/{id}`. Shortened, it reads:
 ```json
 "/notes/{id}": {
   "get": {
-    "operationId": "Get",
+    "operationId": "NotesGet",
     "parameters": [
       { "name": "id", "in": "path", "required": true, "schema": { "type": "integer" } }
     ],

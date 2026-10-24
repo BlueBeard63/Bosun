@@ -24,12 +24,16 @@ var _ = bosun.DefaultDynamic[RateLimitOptions](func() *RateLimitOptions {
 })
 
 // RateLimit is a fixed-window per-IP limiter. For multi-node deployments
-// replace it with a shared-store implementation.
+// replace it with a shared-store implementation. Expired windows are swept
+// from the map at most once per window length, so idle clients don't
+// accumulate.
 type RateLimit struct {
 	opts *bosun.Dynamic[RateLimitOptions] // injected, hot-reloadable
 
-	mu      sync.Mutex
-	windows map[string]*window
+	mu        sync.Mutex
+	windows   map[string]*window
+	lastSweep time.Time
+	now       func() time.Time // test hook; nil means time.Now
 }
 
 type window struct {
@@ -63,6 +67,12 @@ func (m *RateLimit) take(ip string) (remaining int, ok bool) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	now := time.Now()
+	if m.now != nil {
+		now = m.now()
+	}
+	if now.Sub(m.lastSweep) > time.Minute {
+		m.sweep(now)
+	}
 	win := m.windows[ip]
 	if win == nil || now.Sub(win.start) > time.Minute {
 		win = &window{start: now}
@@ -74,6 +84,16 @@ func (m *RateLimit) take(ip string) (remaining int, ok bool) {
 	}
 	win.count++
 	return limit - win.count, true
+}
+
+// sweep deletes windows that have expired. Callers hold m.mu.
+func (m *RateLimit) sweep(now time.Time) {
+	for k, win := range m.windows {
+		if now.Sub(win.start) > time.Minute {
+			delete(m.windows, k)
+		}
+	}
+	m.lastSweep = now
 }
 
 var _ = bosun.Middleware[RateLimit]()

@@ -10,6 +10,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/xml"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -47,10 +48,45 @@ func (s *WebDAVStore) client() *http.Client {
 	return http.DefaultClient
 }
 
+// ErrInvalidKey is returned for keys that hide a path traversal or a
+// separator behind percent-encoding, which some servers decode.
+var ErrInvalidKey = errors.New("webdav: invalid key")
+
 func cleanKey(key string) string { return strings.TrimPrefix(path.Clean("/"+key), "/") }
 
-func (s *WebDAVStore) urlFor(key string) string {
-	return strings.TrimRight(s.Opts.BaseURL, "/") + "/" + cleanKey(key)
+// checkKey rejects keys whose percent-decoded form has a "." or ".."
+// segment or more separators than the key itself.
+func checkKey(key string) error {
+	dec, err := url.PathUnescape(key)
+	if err != nil || dec == key {
+		return nil // nothing decodes; a literal % is escaped on the wire
+	}
+	if strings.Count(dec, "/") != strings.Count(key, "/") || strings.Contains(dec, "\\") {
+		return fmt.Errorf("%w: %q", ErrInvalidKey, key)
+	}
+	for _, seg := range strings.Split(dec, "/") {
+		if seg == "." || seg == ".." {
+			return fmt.Errorf("%w: %q", ErrInvalidKey, key)
+		}
+	}
+	return nil
+}
+
+// urlFor joins the cleaned key onto BaseURL, escaping each segment so
+// characters such as "?", "#" and "%" stay part of the key.
+func (s *WebDAVStore) urlFor(key string) (string, error) {
+	if err := checkKey(key); err != nil {
+		return "", err
+	}
+	return s.join(cleanKey(key)), nil
+}
+
+func (s *WebDAVStore) join(key string) string {
+	segs := strings.Split(key, "/")
+	for i, seg := range segs {
+		segs[i] = url.PathEscape(seg)
+	}
+	return strings.TrimRight(s.Opts.BaseURL, "/") + "/" + strings.Join(segs, "/")
 }
 
 func (s *WebDAVStore) do(ctx context.Context, method, u string, body io.Reader, headers map[string]string) (*http.Response, error) {
@@ -69,13 +105,17 @@ func (s *WebDAVStore) do(ctx context.Context, method, u string, body io.Reader, 
 
 // Put uploads the object, creating parent collections first.
 func (s *WebDAVStore) Put(ctx context.Context, key string, r io.Reader, opts ...storemod.PutOption) error {
+	u, err := s.urlFor(key)
+	if err != nil {
+		return err
+	}
 	cfg := storemod.ResolvePut(opts)
 	s.mkcolParents(ctx, cleanKey(key))
 	hdr := map[string]string{}
 	if cfg.ContentType != "" {
 		hdr["Content-Type"] = cfg.ContentType
 	}
-	resp, err := s.do(ctx, http.MethodPut, s.urlFor(key), r, hdr)
+	resp, err := s.do(ctx, http.MethodPut, u, r, hdr)
 	if err != nil {
 		return err
 	}
@@ -94,7 +134,7 @@ func (s *WebDAVStore) mkcolParents(ctx context.Context, key string) {
 	dir := ""
 	for _, p := range parts[:len(parts)-1] {
 		dir = path.Join(dir, p)
-		resp, err := s.do(ctx, "MKCOL", strings.TrimRight(s.Opts.BaseURL, "/")+"/"+dir, nil, nil)
+		resp, err := s.do(ctx, "MKCOL", s.join(dir), nil, nil)
 		if err == nil {
 			_ = resp.Body.Close()
 		}
@@ -103,7 +143,11 @@ func (s *WebDAVStore) mkcolParents(ctx context.Context, key string) {
 
 // Get downloads the object and its metadata.
 func (s *WebDAVStore) Get(ctx context.Context, key string) (io.ReadCloser, *storemod.Object, error) {
-	resp, err := s.do(ctx, http.MethodGet, s.urlFor(key), nil, nil)
+	u, err := s.urlFor(key)
+	if err != nil {
+		return nil, nil, err
+	}
+	resp, err := s.do(ctx, http.MethodGet, u, nil, nil)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -126,7 +170,11 @@ func (s *WebDAVStore) Get(ctx context.Context, key string) (io.ReadCloser, *stor
 
 // Delete removes the object; a missing key is not an error.
 func (s *WebDAVStore) Delete(ctx context.Context, key string) error {
-	resp, err := s.do(ctx, http.MethodDelete, s.urlFor(key), nil, nil)
+	u, err := s.urlFor(key)
+	if err != nil {
+		return err
+	}
+	resp, err := s.do(ctx, http.MethodDelete, u, nil, nil)
 	if err != nil {
 		return err
 	}
@@ -139,8 +187,12 @@ func (s *WebDAVStore) Delete(ctx context.Context, key string) error {
 
 // List returns objects whose key begins with prefix, via a Depth:1 PROPFIND.
 func (s *WebDAVStore) List(ctx context.Context, prefix string) ([]storemod.Object, error) {
+	u, err := s.urlFor(prefix)
+	if err != nil {
+		return nil, err
+	}
 	body := strings.NewReader(propfindBody)
-	resp, err := s.do(ctx, "PROPFIND", s.urlFor(prefix), body, map[string]string{"Depth": "1", "Content-Type": "application/xml"})
+	resp, err := s.do(ctx, "PROPFIND", u, body, map[string]string{"Depth": "1", "Content-Type": "application/xml"})
 	if err != nil {
 		return nil, err
 	}

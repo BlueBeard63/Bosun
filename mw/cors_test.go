@@ -2,6 +2,7 @@ package mw
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -146,16 +147,35 @@ func TestCORSWildcardOriginWithoutCredentials(t *testing.T) {
 	}
 }
 
-func TestCORSCredentialsEchoOriginNeverStar(t *testing.T) {
-	h, _ := corsHandler(CORSOptions{AllowedOrigins: []string{"*"}, AllowCredentials: true})
-	for _, r := range []*http.Request{corsReq("GET", frontend, nil), preflight(frontend, "POST", "")} {
-		rec := serve(h, r)
-		if rec.Header().Get("Access-Control-Allow-Origin") != frontend {
-			t.Fatalf("%s: Allow-Origin = %q, want echoed origin", r.Method, rec.Header().Get("Access-Control-Allow-Origin"))
+func TestCORSAnyOriginWithCredentialsFailsAtStartup(t *testing.T) {
+	defer func() {
+		r := recover()
+		if r == nil {
+			t.Fatal(`"*" with AllowCredentials did not panic`)
 		}
-		if rec.Header().Get("Access-Control-Allow-Credentials") != "true" {
-			t.Fatalf("%s: missing Allow-Credentials", r.Method)
+		if !strings.Contains(fmt.Sprint(r), "AllowCredentials") {
+			t.Fatalf("panic message %q doesn't explain the problem", r)
 		}
+	}()
+	corsHandler(CORSOptions{AllowedOrigins: []string{"*"}, AllowCredentials: true})
+}
+
+func TestCORSDynamicAnyOriginWithCredentialsAllowsNothing(t *testing.T) {
+	d := &bosun.Dynamic[CORSOptions]{}
+	d.Set(&CORSOptions{AllowedOrigins: []string{"*"}, AllowCredentials: true})
+	m := &CORS{opts: d}
+	h := m.Handle(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+	rec := serve(h, corsReq("GET", frontend, nil))
+	if got := rec.Header().Get("Access-Control-Allow-Origin"); got != "" {
+		t.Fatalf("Allow-Origin = %q, want none", got)
+	}
+}
+
+func TestCORSSubSecondMaxAgeRoundsUp(t *testing.T) {
+	h, _ := corsHandler(CORSOptions{AllowedOrigins: []string{frontend}, MaxAge: 500 * time.Millisecond})
+	rec := serve(h, preflight(frontend, "GET", ""))
+	if got := rec.Header().Get("Access-Control-Max-Age"); got != "1" {
+		t.Fatalf("Max-Age = %q, want 1", got)
 	}
 }
 

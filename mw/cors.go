@@ -1,6 +1,7 @@
 package mw
 
 import (
+	"errors"
 	"net/http"
 	"slices"
 	"strconv"
@@ -35,9 +36,11 @@ type CORSOptions struct {
 	ExposedHeaders []string
 	// AllowCredentials permits cookies / HTTP auth on cross-origin requests.
 	// With credentials the response echoes the request origin, never "*".
+	// It cannot be combined with the "*" origin: list the trusted origins.
 	AllowCredentials bool
 	// MaxAge is how long browsers may cache a preflight result. Zero omits
-	// the header (browser default, typically 5s); it is sent in whole seconds.
+	// the header (browser default, typically 5s); it is sent in whole seconds,
+	// rounded up so a positive value never becomes 0.
 	MaxAge time.Duration
 }
 
@@ -75,9 +78,13 @@ type corsCacheEntry struct {
 }
 
 // Configure returns a CORS handler with a fixed policy, used by
-// bosun.Use[mw.CORS](opts).
+// bosun.Use[mw.CORS](opts). It panics on an unsafe policy (see
+// errCORSAnyOriginCredentials) so the mistake fails at startup.
 func (m *CORS) Configure(opts CORSOptions) bosun.MiddlewareHandler {
-	pol := compileCORS(&opts)
+	pol, err := compileCORS(&opts)
+	if err != nil {
+		panic(err)
+	}
 	return bosun.MiddlewareFunc(func(next http.Handler) http.Handler {
 		return pol.handle(next)
 	})
@@ -102,7 +109,12 @@ func (m *CORS) policy() *corsPolicy {
 	if e := m.cache.Load(); e != nil && e.src == src {
 		return e.pol
 	}
-	pol := compileCORS(src)
+	pol, err := compileCORS(src)
+	if err != nil {
+		// A hot-reloaded policy can't fail startup; allow no origins
+		// rather than every origin with credentials.
+		pol = &corsPolicy{}
+	}
 	m.cache.Store(&corsCacheEntry{src: src, pol: pol})
 	return pol
 }
@@ -130,7 +142,12 @@ var (
 	defaultCORSHeaders = []string{"Accept", "Authorization", "Content-Type", bosun.HeaderCorrelationID}
 )
 
-func compileCORS(o *CORSOptions) *corsPolicy {
+// errCORSAnyOriginCredentials rejects "*" with credentials: browsers forbid
+// it, and echoing the origin instead would let any site make credentialed
+// requests and read the responses.
+var errCORSAnyOriginCredentials = errors.New(`mw.CORS: AllowedOrigins "*" cannot be combined with AllowCredentials; list the trusted origins instead`)
+
+func compileCORS(o *CORSOptions) (*corsPolicy, error) {
 	p := &corsPolicy{
 		origins:     map[string]bool{},
 		headers:     map[string]bool{},
@@ -148,6 +165,10 @@ func compileCORS(o *CORSOptions) *corsPolicy {
 		case origin != "":
 			p.origins[origin] = true
 		}
+	}
+
+	if p.anyOrigin && p.credentials {
+		return nil, errCORSAnyOriginCredentials
 	}
 
 	methods := o.AllowedMethods
@@ -174,9 +195,9 @@ func compileCORS(o *CORSOptions) *corsPolicy {
 
 	p.exposed = strings.Join(o.ExposedHeaders, ", ")
 	if o.MaxAge > 0 {
-		p.maxAge = strconv.Itoa(int(o.MaxAge / time.Second))
+		p.maxAge = strconv.Itoa(int((o.MaxAge + time.Second - 1) / time.Second))
 	}
-	return p
+	return p, nil
 }
 
 func (p *corsPolicy) handle(next http.Handler) http.Handler {
@@ -217,7 +238,7 @@ func (p *corsPolicy) serve(w http.ResponseWriter, r *http.Request, next http.Han
 }
 
 func (p *corsPolicy) setOrigin(h http.Header, origin string) {
-	if p.anyOrigin && !p.credentials {
+	if p.anyOrigin {
 		h.Set("Access-Control-Allow-Origin", "*")
 	} else {
 		h.Set("Access-Control-Allow-Origin", origin)

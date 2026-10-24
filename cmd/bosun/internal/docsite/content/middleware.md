@@ -208,7 +208,7 @@ await fetch("http://localhost:8080/api/items", {
 | `AllowedMethods` | `GET, HEAD, POST, PUT, PATCH, DELETE` | Checked against `Access-Control-Request-Method`. |
 | `AllowedHeaders` | `Accept, Authorization, Content-Type, X-Correlation-ID` | `"*"` allows any requested header. |
 | `ExposedHeaders` | none | Response headers that scripts may read. |
-| `AllowCredentials` | `false` | When true, the request origin is echoed back and `*` is never sent. |
+| `AllowCredentials` | `false` | When true, the request origin is echoed back and `*` is never sent. Combining it with the `*` origin panics at startup; list the trusted origins instead. |
 | `MaxAge` | `0` (header omitted) | How long a preflight result may be cached, in whole seconds. |
 
 How it behaves:

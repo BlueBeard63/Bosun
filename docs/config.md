@@ -71,7 +71,7 @@ func (m *RateLimit) Handle(next http.Handler) http.Handler {
 
 ## Built-in sources
 
-`config.FileSource` reads a JSON document of `{key: object}` from disk, where a missing file is fine but a malformed one is an error. `config.EnvSource` reads variables prefixed `BOSUN_CONFIG_<KEY>`, each holding a JSON document for that key. `config.KVSource` reads from a key/value store you provide, typically a database table, with an optional `Decrypt` hook to unseal stored bytes on read.
+`config.FileSource` reads a JSON document of `{key: object}` from disk, where a missing file is fine but a malformed one is an error. `config.EnvSource` reads variables prefixed `<KEY>_` and decodes each one into a field of the bound type (covered below). `config.KVSource` reads from a key/value store you provide, typically a database table, with an optional `Decrypt` hook to unseal stored bytes on read.
 
 ```go
 config.Add(config.KVSource{
@@ -80,9 +80,40 @@ config.Add(config.KVSource{
 })
 ```
 
+## Environment variables
+
+For a bind key such as `"ratelimit"`, `config.EnvSource` collects variables that start with `RATELIMIT_`. The rest of the name selects a field of the bound type. It matches the field's `json` tag or Go name case-insensitively, ignoring underscores, so `RATELIMIT_PER_MINUTE` and `RATELIMIT_PERMINUTE` both set `PerMinute`. A double underscore steps into a nested struct, so `APP_DB__POOL__MAX=10` sets `DB.Pool.Max` under the `"app"` key. Fields of embedded structs are promoted, as in `encoding/json`.
+
+Each value is parsed for its field's type instead of being guessed from the text:
+
+| Field type | Accepted value |
+| --- | --- |
+| `string` | taken as-is, so `APP_PASSWORD=123456` stays a string |
+| `time.Duration` | `time.ParseDuration` syntax, such as `5s` or `1m30s`. A bare `5` is rejected. |
+| integers, floats | strict `strconv` parsing. `NaN` and `Inf` are rejected. |
+| `bool` | `strconv.ParseBool`: `true`, `false`, `1`, `0` |
+| `encoding.TextUnmarshaler` (e.g. `time.Time`) | the raw string |
+| slices, maps, structs | a JSON document, e.g. `APP_TAGS=["a","b"]` |
+
+```go
+type AppOptions struct {
+    Timeout time.Duration
+    DB      struct {
+        Pool struct {
+            Max int `json:"max"`
+        } `json:"pool"`
+    } `json:"db"`
+}
+
+var _ = config.Bind[AppOptions]("app")
+// APP_TIMEOUT=5s APP_DB__POOL__MAX=10
+```
+
+Variables that name no field are ignored. A value that fails to parse makes the source return an error that names the variable, such as `config: env APP_TIMEOUT: time: missing unit in duration "5"`.
+
 ## Layering sources
 
-Register several sources and later ones override earlier ones for the same key. A common arrangement is a file for baseline defaults, environment variables for an infrastructure override, and a database row for a live admin override, all applied without restarts.
+Register several sources and later ones override earlier ones for the same key. JSON objects are deep-merged, so a later source overrides only the fields it sets: with `{"ratelimit":{"per_minute":100,"burst":10}}` in the file and `RATELIMIT_BURST=20` in the environment, the key resolves to `{"per_minute":100,"burst":20}`. Non-object values, such as arrays, are replaced whole. A common arrangement is a file for baseline defaults, environment variables for an infrastructure override, and a database row for a live admin override, all applied without restarts.
 
 ```go
 config.Add(config.FileSource{Path: "config.json"})
@@ -92,7 +123,9 @@ config.Add(config.KVSource{Store: table, Decrypt: box.Open})
 
 ## The watcher
 
-The watcher is itself a `bosun.Service` that starts a goroutine in `Init()` and polls every source. The default interval is one second, overridable through a `*config.Options` instance. Do not disable the `config` package while using `config.Bind`, since nothing would reload.
+The watcher is itself a `bosun.Service` that starts a goroutine in `Init()` and polls every source. The default interval is one second, overridable through a `*config.Options` instance. Do not disable the `config` package while using `config.Bind`, since nothing would reload. The watcher implements `io.Closer`, so `app.Shutdown()` stops the poll goroutine.
+
+When a key disappears from every source, the watcher restores the value the `Dynamic` held before config was first applied, which is normally the `bosun.DefaultDynamic` default.
 
 ```go
 registry.RegisterInstance[*config.Options](app.Reg, &config.Options{Poll: 500 * time.Millisecond})
@@ -110,7 +143,7 @@ opts.OnChange(func(v *RateLimitOptions) {
 
 ## Failure semantics
 
-At startup, an error from any source or a failed unmarshal makes `app.Start()` return the error, so the process fails fast. During a runtime reload, polling errors are logged and the previous good config stays in place, so you never get a half-applied configuration.
+At startup, an error from any source or a failed unmarshal makes `app.Start()` return the error, so the process fails fast. Every key is still attempted, and the error names each key that failed. During a runtime reload, a source error is logged and the whole poll is skipped, so a partial view of the sources is never applied. A key whose value fails to unmarshal is logged once with its key and keeps its previous value, while every other key still updates.
 
 ## Custom sources and encryption
 

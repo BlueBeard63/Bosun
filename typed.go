@@ -54,7 +54,8 @@ func (r *Req[In]) Query() url.Values {
 //
 // In controls body parsing: a struct gets JSON/form decode + path/query/
 // header/form tag binding, string takes the raw body verbatim, struct{}
-// skips parsing, and any decodes loose JSON.
+// skips parsing, and any decodes loose JSON. In must not be a pointer;
+// mounting Req[*T] fails app.Start.
 //
 // Out controls response encoding: structs/maps/etc are JSON, string is
 // text/plain, []byte is application/octet-stream (json.RawMessage, or any
@@ -108,6 +109,12 @@ func typed[In, Out any](r *Router, method, p string, h func(context.Context, *Re
 	handlerName := runtime.FuncForPC(reflect.ValueOf(h).Pointer()).Name()
 
 	inType := reflect.TypeOf((*In)(nil)).Elem()
+	if inType.Kind() == reflect.Pointer {
+		// Binding and validation fill a value, not a pointer to one; a pointer
+		// In would skip both and could leave Body nil.
+		*r.errs = append(*r.errs, fmt.Errorf("%s %s: In type %s must not be a pointer; use Req[%s]", method, p, inType, inType.Elem()))
+		return
+	}
 	isString := inType.Kind() == reflect.String
 	isEmptyStruct := inType.Kind() == reflect.Struct && inType.NumField() == 0
 

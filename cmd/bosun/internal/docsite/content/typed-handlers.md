@@ -104,7 +104,7 @@ For a custom `Content-Type` or streaming, use the raw router methods instead; th
 
 ## Body content types
 
-The body decoder chooses its strategy from the request `Content-Type`. `application/json` (or an empty content type) is JSON-decoded into the body. `application/x-www-form-urlencoded` is parsed with `ParseForm` and `multipart/form-data` with `ParseMultipartForm`; both populate `form:` tags but do not JSON-decode. Any other content type skips body decoding, though tag-based fields are still bound. File uploads are read through `req.MultipartReader()` or `req.FormFile(...)` yourself, since `form:` tags bind only string fields.
+The body decoder chooses its strategy from the request `Content-Type`. `application/json`, any `+json` type such as `application/merge-patch+json`, or an empty content type is JSON-decoded into the body; media types are matched case-insensitively and parameters such as `charset` are ignored. `application/x-www-form-urlencoded` is parsed with `ParseForm` and `multipart/form-data` with `ParseMultipartForm`; both populate `form:` tags but do not JSON-decode. A body with any other content type is refused with `415 Unsupported Media Type`; a request with no body is not checked, so tag-based fields still bind. File uploads are read through `req.MultipartReader()` or `req.FormFile(...)` yourself, since `form:` tags bind only string fields.
 
 ## Tag binding reference
 

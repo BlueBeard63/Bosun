@@ -96,6 +96,8 @@ The pages also live as plain Markdown under [`docs/`](./docs); start at [`docs/g
 - **Platform**: correlation IDs and OpenTelemetry [tracing](./docs/tracing.md), health readiness probes, [object storage](./docs/storage.md) (local, S3, WebDAV), [Infisical secrets](./docs/secrets-infisical.md), [multi-tenancy](./docs/multitenancy.md), [webhooks](./docs/webhooks.md) and a [transactional outbox](./docs/outbox.md), and a [deploy manifest](./docs/manifest.md) with Caddyfile generation.
 - **Tooling**: the [`bosun` CLI](./docs/cli.md) serves docs, exposes them over [MCP](./docs/mcp.md), fetches manifests, [generates typed clients](./docs/client-gen.md), and [scaffolds services](./docs/microservices.md).
 
+> **`modules/authmod` is a demo, not authentication.** It logs a user in with an email and no credential, and its `/auth/check/{email}` route lets anyone enumerate users. It exists to show how a module is built; do not import it into a production service. See [auth and permissions](./docs/auth-and-permissions.md) for real authentication.
+
 ## CLI commands
 
 | Command | Purpose |

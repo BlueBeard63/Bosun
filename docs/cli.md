@@ -36,7 +36,7 @@ bosun mcp
 
 ## bosun manifest
 
-Fetches a running service's deploy manifest from `GET <service-url>/.bosun/manifest` and prints the JSON. With `--caddy`, it prints a Caddy reverse-proxy site block derived from the manifest instead. The [manifest guide](./manifest.md) describes the manifest itself.
+Fetches a running service's deploy manifest from `GET <service-url>/.bosun/manifest` and prints the JSON. The service must opt in to serving it with `manifestmod.Options{Expose: true}`. With `--caddy`, it prints a Caddy reverse-proxy site block derived from the manifest instead. The [manifest guide](./manifest.md) describes the manifest itself.
 
 ```bash
 bosun manifest http://localhost:8080

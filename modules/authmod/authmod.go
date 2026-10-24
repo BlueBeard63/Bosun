@@ -1,5 +1,10 @@
-// Package authmod is an installable bosun module. Importing it mounts
-// login routes into the host app:
+// Package authmod is a DEMO of an installable bosun module. It is NOT
+// authentication and is NOT safe for production: POST /auth/login "logs in"
+// with an email and no credential, and GET /auth/check/{email} lets anyone
+// enumerate users. It exists to show how a module ships controllers,
+// overridable Options and an extension point; never import it into a service
+// that is reachable by untrusted clients. Importing it mounts its routes into
+// the host app:
 //
 //	import _ "github.com/bluebeard63/bosun/modules/authmod"
 //

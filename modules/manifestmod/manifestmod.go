@@ -5,8 +5,11 @@
 // framework already has: the app's typed routes (app.TypedRoutes),
 // eventmod.Declarations, and any registered Contributor.
 //
-// The runtime endpoint GET /.bosun/manifest serves the live manifest. For static
-// generation (in a build step), call EmitIfRequested after app.Start().
+// The runtime endpoint GET /.bosun/manifest serves the live manifest. It lists
+// every route, env var name and secret name, so it is off by default: set
+// Options.Expose to mount it, and keep it off the public internet (for example
+// behind an app middleware or a proxy rule). For static generation (in a build
+// step), call EmitIfRequestedFor after app.Start(); that needs no endpoint.
 package manifestmod
 
 import (
@@ -164,11 +167,16 @@ type Options struct {
 	Service string
 	Version string
 	Port    int
+	// Expose mounts GET /.bosun/manifest. It is false by default because the
+	// manifest describes the service's internals; protect the endpoint when
+	// you enable it.
+	Expose bool
 }
 
 var _ = bosun.Default[*Options](func() *Options { return &Options{Service: "service", Version: "dev"} })
 
-// ManifestController serves the live manifest at GET /.bosun/manifest.
+// ManifestController serves the live manifest at GET /.bosun/manifest when
+// Options.Expose is set.
 type ManifestController struct {
 	Opts *Options   // injected
 	App  *bosun.App // injected: the app this controller is mounted on
@@ -177,6 +185,9 @@ type ManifestController struct {
 var _ = bosun.Controller[ManifestController]("")
 
 func (c *ManifestController) Routes(r *bosun.Router) {
+	if !c.Opts.Expose {
+		return
+	}
 	r.Get("/.bosun/manifest", c.serve) // raw handler so it does not appear in its own manifest
 }
 

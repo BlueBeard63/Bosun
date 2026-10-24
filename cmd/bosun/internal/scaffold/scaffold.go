@@ -196,8 +196,10 @@ import (
 
 func main() {
 	app := bosun.New()
+	// Expose serves GET /.bosun/manifest, which lists every route, env var and
+	// secret name. Keep it off the public internet in production.
 	registry.RegisterInstance[*manifestmod.Options](app.Reg, &manifestmod.Options{
-		Service: "{{.Name}}", Version: "dev", Port: {{.Port}},
+		Service: "{{.Name}}", Version: "dev", Port: {{.Port}}, Expose: true,
 	})
 	if err := app.Run(":{{.Port}}"); err != nil {
 		log.Fatal(err)

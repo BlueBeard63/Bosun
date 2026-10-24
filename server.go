@@ -38,7 +38,8 @@ func (a *App) Run(addr string) error {
 // RunContext starts the app, listens on addr and serves until ctx is done,
 // then shuts down gracefully:
 //
-//  1. the server stops accepting new connections and idle ones are closed;
+//  1. the server stops accepting new connections, idle ones are closed and
+//     request contexts are cancelled;
 //  2. in-flight requests get up to the shutdown timeout (WithShutdownTimeout)
 //     to finish, after which remaining connections are closed;
 //  3. services are closed (io.Closer) in reverse dependency order.
@@ -48,7 +49,7 @@ func (a *App) Run(addr string) error {
 // RunContext does not handle OS signals itself; use Run for that.
 func (a *App) RunContext(ctx context.Context, addr string) error {
 	if err := a.Start(); err != nil {
-		return err
+		return errors.Join(err, a.Shutdown()) // release services Start already built
 	}
 	ln, err := net.Listen("tcp", addr)
 	if err != nil {
@@ -64,7 +65,7 @@ func (a *App) RunContext(ctx context.Context, addr string) error {
 func (a *App) Serve(ctx context.Context, ln net.Listener) error {
 	if err := a.Start(); err != nil {
 		_ = ln.Close()
-		return err
+		return errors.Join(err, a.Shutdown())
 	}
 	return a.serve(ctx, ln)
 }
@@ -74,6 +75,20 @@ func (a *App) serve(ctx context.Context, ln net.Listener) error {
 	srv := &http.Server{Handler: a.Handler()}
 	for _, configure := range a.serverConfig {
 		configure(srv)
+	}
+	// Request contexts derive from base, which is cancelled as shutdown
+	// begins so streaming and long-poll handlers can return early. A
+	// BaseContext set via WithHTTPServer is kept and wrapped.
+	base, cancelBase := context.WithCancel(context.Background())
+	defer cancelBase()
+	userBase := srv.BaseContext
+	srv.BaseContext = func(l net.Listener) context.Context {
+		if userBase == nil {
+			return base
+		}
+		ctx, cancel := context.WithCancel(userBase(l))
+		context.AfterFunc(base, cancel)
+		return ctx
 	}
 
 	serveErr := make(chan error, 1)
@@ -86,6 +101,7 @@ func (a *App) serve(ctx context.Context, ln net.Listener) error {
 	case <-ctx.Done():
 	}
 
+	cancelBase()
 	sctx, cancel := context.WithTimeout(context.Background(), a.shutdownTimeout)
 	defer cancel()
 	var errs []error

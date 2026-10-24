@@ -17,14 +17,25 @@ import (
 // application/x-www-form-urlencoded and multipart/form-data. Per-field
 // sources are selected by the first matching tag in this order:
 // `path:"x"`, `query:"x"`, `header:"X-Foo"`, `form:"x"`.
+//
+// `form:` fields take text values only. Uploaded files of a multipart body
+// are not bound; read them from the embedded request with req.FormFile,
+// which works because the multipart form has already been parsed.
 func bind(req *http.Request, in any) error {
 	ct := req.Header.Get("Content-Type")
 	hasBody := req.Body != nil && req.ContentLength != 0
-	isForm := strings.HasPrefix(ct, "application/x-www-form-urlencoded") ||
-		strings.HasPrefix(ct, "multipart/form-data")
+	isMultipart := strings.HasPrefix(ct, "multipart/form-data")
+	isForm := isMultipart || strings.HasPrefix(ct, "application/x-www-form-urlencoded")
 
 	if isForm {
-		if err := req.ParseForm(); err != nil {
+		var err error
+		if isMultipart {
+			// ParseForm ignores multipart bodies; this also fills PostForm.
+			err = req.ParseMultipartForm(multipartMemory)
+		} else {
+			err = req.ParseForm()
+		}
+		if err != nil {
 			return &ValidationError{Message: "invalid form body"}
 		}
 	} else if hasBody && (ct == "" || strings.HasPrefix(ct, "application/json")) {
@@ -71,6 +82,10 @@ func bind(req *http.Request, in any) error {
 }
 
 var errUnsupportedKind = errors.New("unsupported bind kind")
+
+// multipartMemory is how much of a multipart body is held in memory; file
+// parts beyond it spill to temporary files, as with http.Request.FormFile.
+const multipartMemory = 32 << 20
 
 // jsonBindError turns a JSON decode failure into a client-safe error that
 // names the offending field when the decoder knows it.

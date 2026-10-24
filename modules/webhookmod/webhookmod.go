@@ -1,7 +1,9 @@
 // Package webhookmod receives inbound webhooks. It mounts a route per provider,
 // verifies the signature, and dispatches to handlers registered for a provider
 // and event type. Verifiers for GitHub, Stripe, and a generic HMAC scheme ship
-// in the box; register your own by adding to Options.Verifiers.
+// in the box; register your own by adding to Options.Verifiers. A provider with
+// no verifier is rejected with 401; use Unverified() to accept a provider's
+// events without verification during local development.
 //
 //	var _ = webhookmod.Handle("github", "push", func(ctx context.Context, e webhookmod.Event) error {
 //	    return deploy(ctx, e.Payload)
@@ -17,12 +19,19 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"strconv"
 	"strings"
+	"time"
 
 	"github.com/bluebeard63/bosun"
 )
 
-const maxBody = 1 << 20 // 1 MiB
+// DefaultMaxBody is the request body limit used when Options.MaxBody is zero.
+const DefaultMaxBody = 1 << 20 // 1 MiB
+
+// DefaultStripeTolerance is the maximum age of a Stripe-Signature timestamp
+// used when StripeVerifier.Tolerance is zero, matching Stripe's own libraries.
+const DefaultStripeTolerance = 5 * time.Minute
 
 // Event is a received webhook.
 type Event struct {
@@ -46,8 +55,12 @@ type Options struct {
 	// Path is the mount prefix; the provider is appended, e.g. /webhooks/github.
 	Path string
 	// Verifiers maps a provider to its signature verifier. A provider with no
-	// verifier is accepted without verification (use only behind a trusted proxy).
+	// verifier is rejected with 401; map it to Unverified() to accept its
+	// events without verification (local development only).
 	Verifiers map[string]Verifier
+	// MaxBody is the largest accepted request body in bytes; a larger body is
+	// rejected with 413. Zero means DefaultMaxBody.
+	MaxBody int64
 }
 
 var _ = bosun.Default[*Options](func() *Options { return &Options{Path: "/webhooks"} })
@@ -88,16 +101,28 @@ func (c *WebhookController) Routes(r *bosun.Router) {
 // Receive verifies and dispatches an inbound webhook.
 func (c *WebhookController) Receive(w http.ResponseWriter, r *http.Request) {
 	provider := r.PathValue("provider")
-	body, err := io.ReadAll(io.LimitReader(r.Body, maxBody))
+	limit := c.Opts.MaxBody
+	if limit <= 0 {
+		limit = DefaultMaxBody
+	}
+	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, limit))
 	if err != nil {
+		var tooLarge *http.MaxBytesError
+		if errors.As(err, &tooLarge) {
+			http.Error(w, "request body too large", http.StatusRequestEntityTooLarge)
+			return
+		}
 		http.Error(w, "read error", http.StatusBadRequest)
 		return
 	}
-	if v, ok := c.Opts.Verifiers[provider]; ok {
-		if err := v.Verify(r.Header, body); err != nil {
-			http.Error(w, "invalid signature", http.StatusUnauthorized)
-			return
-		}
+	v, ok := c.Opts.Verifiers[provider]
+	if !ok || v == nil {
+		http.Error(w, "no verifier configured", http.StatusUnauthorized)
+		return
+	}
+	if err := v.Verify(r.Header, body); err != nil {
+		http.Error(w, "invalid signature", http.StatusUnauthorized)
+		return
 	}
 	e := Event{
 		Provider: provider,
@@ -145,6 +170,16 @@ func idFor(provider string, h http.Header) string {
 
 // --- verifiers ---
 
+// Unverified returns a verifier that accepts every request without checking a
+// signature. It is the explicit opt-out for local development and for a
+// provider that is already authenticated by a trusted proxy; never use it for
+// a public endpoint.
+func Unverified() Verifier { return unverified{} }
+
+type unverified struct{}
+
+func (unverified) Verify(http.Header, []byte) error { return nil }
+
 // HMACVerifier checks a hex HMAC-SHA256 of the body against a header value,
 // optionally with a prefix such as "sha256=".
 type HMACVerifier struct {
@@ -170,13 +205,20 @@ func GitHubVerifier(secret string) Verifier {
 }
 
 // StripeVerifier verifies a Stripe-Signature header (the timestamp and v1 scheme).
+// The request is accepted if any v1 signature matches, so verification keeps
+// working while a secret is being rolled.
 type StripeVerifier struct {
 	Secret string
+	// Tolerance is the maximum age (or clock skew) of the signed timestamp;
+	// older events are rejected to prevent replay. Zero means
+	// DefaultStripeTolerance.
+	Tolerance time.Duration
 }
 
 func (v StripeVerifier) Verify(h http.Header, body []byte) error {
 	sig := h.Get("Stripe-Signature")
-	var ts, v1 string
+	var ts string
+	var v1s []string
 	for _, part := range strings.Split(sig, ",") {
 		k, val, ok := strings.Cut(strings.TrimSpace(part), "=")
 		if !ok {
@@ -186,18 +228,31 @@ func (v StripeVerifier) Verify(h http.Header, body []byte) error {
 		case "t":
 			ts = val
 		case "v1":
-			v1 = val
+			v1s = append(v1s, val)
 		}
 	}
-	if ts == "" || v1 == "" {
+	if ts == "" || len(v1s) == 0 {
 		return errors.New("webhookmod: malformed Stripe-Signature")
+	}
+	secs, err := strconv.ParseInt(ts, 10, 64)
+	if err != nil {
+		return errors.New("webhookmod: malformed Stripe-Signature timestamp")
+	}
+	tolerance := v.Tolerance
+	if tolerance <= 0 {
+		tolerance = DefaultStripeTolerance
+	}
+	if age := time.Since(time.Unix(secs, 0)); age > tolerance || age < -tolerance {
+		return errors.New("webhookmod: Stripe-Signature timestamp outside tolerance")
 	}
 	mac := hmac.New(sha256.New, []byte(v.Secret))
 	mac.Write([]byte(ts + "."))
 	mac.Write(body)
 	want := hex.EncodeToString(mac.Sum(nil))
-	if !hmac.Equal([]byte(want), []byte(v1)) {
-		return errors.New("webhookmod: signature mismatch")
+	for _, v1 := range v1s {
+		if hmac.Equal([]byte(want), []byte(v1)) {
+			return nil
+		}
 	}
-	return nil
+	return errors.New("webhookmod: signature mismatch")
 }

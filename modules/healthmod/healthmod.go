@@ -4,6 +4,9 @@
 // (/health/ready) runs every registered Probe — database pings, broker
 // connectivity, downstream checks — and returns 503 with the failing probe
 // names until they all pass, so an orchestrator (Docker/Caddy) can gate traffic.
+// The endpoints are unauthenticated, so a failing probe is reported as
+// "failed" (or "timeout") rather than with its error text, which can include
+// hosts and other internals; set DetailedErrors to include the error text.
 //
 // Register a probe from any module or from main:
 //
@@ -45,8 +48,15 @@ func (p ProbeFunc) Check(ctx context.Context) error { return p.F(ctx) }
 
 var _ Probe = ProbeFunc{}
 
-// ReadyTimeout bounds how long the readiness handler waits for all probes.
+// ReadyTimeout bounds how long the readiness handler waits for all probes. A
+// probe still running when it expires is reported as "timeout", even if it
+// ignores its context.
 var ReadyTimeout = 3 * time.Second
+
+// DetailedErrors reports each failing probe's error text in /health/ready
+// instead of a generic "failed". Leave it off when the endpoint is reachable
+// by untrusted clients.
+var DetailedErrors = false
 
 var (
 	probeMu      sync.Mutex
@@ -124,23 +134,41 @@ func (c *HealthController) Ready(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), ReadyTimeout)
 	defer cancel()
 
-	var (
-		mu     sync.Mutex
-		failed = map[string]string{}
-		wg     sync.WaitGroup
-	)
-	for _, p := range all {
-		wg.Add(1)
-		go func(p Probe) {
-			defer wg.Done()
-			if err := p.Check(ctx); err != nil {
-				mu.Lock()
-				failed[p.Name()] = err.Error()
-				mu.Unlock()
-			}
-		}(p)
+	type result struct {
+		i   int
+		err error
 	}
-	wg.Wait()
+	// Buffered so probes that finish after the timeout don't block forever.
+	results := make(chan result, len(all))
+	for i, p := range all {
+		go func(i int, p Probe) {
+			results <- result{i: i, err: p.Check(ctx)}
+		}(i, p)
+	}
+
+	failed := map[string]string{}
+	done := make([]bool, len(all))
+wait:
+	for range all {
+		select {
+		case res := <-results:
+			done[res.i] = true
+			if res.err != nil {
+				msg := "failed"
+				if DetailedErrors {
+					msg = res.err.Error()
+				}
+				failed[all[res.i].Name()] = msg
+			}
+		case <-ctx.Done():
+			for i, p := range all {
+				if !done[i] {
+					failed[p.Name()] = "timeout"
+				}
+			}
+			break wait
+		}
+	}
 
 	if len(failed) > 0 {
 		writeJSON(w, http.StatusServiceUnavailable, map[string]any{"status": "unready", "failed": failed})

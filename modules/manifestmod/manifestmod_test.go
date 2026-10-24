@@ -37,7 +37,7 @@ func (c *sampleController) create(ctx context.Context, _ *bosun.Req[struct{}]) (
 
 func TestManifestEndpoint(t *testing.T) {
 	app := bosun.New()
-	registry.RegisterInstance[*manifestmod.Options](app.Reg, &manifestmod.Options{Service: "billing", Version: "v1.2.3", Port: 8080})
+	registry.RegisterInstance[*manifestmod.Options](app.Reg, &manifestmod.Options{Service: "billing", Version: "v1.2.3", Port: 8080, Expose: true})
 	if err := app.Start(); err != nil {
 		t.Fatal(err)
 	}
@@ -76,6 +76,26 @@ func TestManifestEndpoint(t *testing.T) {
 	}
 	if !found {
 		t.Fatalf("missing queue declaration; queues = %+v", m.Queues)
+	}
+}
+
+func TestManifestNotExposedByDefault(t *testing.T) {
+	for name, opts := range map[string]*manifestmod.Options{
+		"default options": nil,
+		"without Expose":  {Service: "billing", Version: "v1", Port: 8080},
+	} {
+		app := bosun.New()
+		if opts != nil {
+			registry.RegisterInstance[*manifestmod.Options](app.Reg, opts)
+		}
+		if err := app.Start(); err != nil {
+			t.Fatal(err)
+		}
+		rec := httptest.NewRecorder()
+		app.Mux.ServeHTTP(rec, httptest.NewRequest("GET", "/.bosun/manifest", nil))
+		if rec.Code != http.StatusNotFound {
+			t.Fatalf("%s: code = %d, want 404", name, rec.Code)
+		}
 	}
 }
 

@@ -1,8 +1,10 @@
 package bosun
 
 import (
+	"fmt"
 	"net/http"
 	"path"
+	"reflect"
 	"strings"
 )
 
@@ -13,6 +15,7 @@ import (
 // from app.Start() regardless of which group raised it.
 type Router struct {
 	app    *App
+	ctrl   reflect.Type // controller mounting these routes, for error messages
 	prefix string
 	base   []MiddlewareHandler
 	errs   *[]error
@@ -39,6 +42,7 @@ type Router struct {
 func (r *Router) Group(prefix string, mws ...MWRef) *Router {
 	sub := &Router{
 		app:    r.app,
+		ctrl:   r.ctrl,
 		prefix: r.prefix,
 		base:   append([]MiddlewareHandler{}, r.base...),
 		errs:   r.errs,
@@ -94,7 +98,26 @@ func (r *Router) handle(method, p string, h http.HandlerFunc, refs []MWRef) {
 	for i := len(all) - 1; i >= 0; i-- {
 		handler = all[i].Handle(handler)
 	}
-	r.app.Mux.Handle(method+" "+r.fullPath(p), handler)
+	r.mount(method+" "+r.fullPath(p), handler)
+}
+
+// mount registers pattern on the mux, turning a duplicate or conflicting
+// pattern into a Start error instead of the mux's panic.
+func (r *Router) mount(pattern string, h http.Handler) {
+	if prev, ok := r.app.mounted[pattern]; ok {
+		*r.errs = append(*r.errs, fmt.Errorf("bosun: duplicate route %q registered by %v and %v", pattern, prev, r.ctrl))
+		return
+	}
+	defer func() {
+		if p := recover(); p != nil {
+			*r.errs = append(*r.errs, fmt.Errorf("bosun: route %q on %v: %v", pattern, r.ctrl, p))
+		}
+	}()
+	r.app.Mux.Handle(pattern, h)
+	if r.app.mounted == nil {
+		r.app.mounted = map[string]reflect.Type{}
+	}
+	r.app.mounted[pattern] = r.ctrl
 }
 
 // fullPath is the mux pattern path for p mounted on this router. It is the

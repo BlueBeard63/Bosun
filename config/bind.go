@@ -13,6 +13,7 @@ import (
 
 type binding struct {
 	key   string
+	typ   reflect.Type // the bound option type T; EnvSource decodes against it
 	apply func(reg *registry.Registry, raw json.RawMessage) error
 	// snapshot captures the Dynamic's current value and returns a func that
 	// restores it; the watcher calls it before a key's first apply so the
@@ -37,6 +38,7 @@ func Bind[T any](key string) struct{} {
 	}
 	bindings = append(bindings, binding{
 		key: key,
+		typ: reflect.TypeOf((*T)(nil)).Elem(),
 		apply: func(reg *registry.Registry, raw json.RawMessage) error {
 			v := new(T)
 			if err := json.Unmarshal(raw, v); err != nil {

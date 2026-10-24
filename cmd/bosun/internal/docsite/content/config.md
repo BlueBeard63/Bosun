@@ -71,7 +71,7 @@ func (m *RateLimit) Handle(next http.Handler) http.Handler {
 
 ## Built-in sources
 
-`config.FileSource` reads a JSON document of `{key: object}` from disk, where a missing file is fine but a malformed one is an error. `config.EnvSource` reads variables prefixed `BOSUN_CONFIG_<KEY>`, each holding a JSON document for that key. `config.KVSource` reads from a key/value store you provide, typically a database table, with an optional `Decrypt` hook to unseal stored bytes on read.
+`config.FileSource` reads a JSON document of `{key: object}` from disk, where a missing file is fine but a malformed one is an error. `config.EnvSource` reads variables prefixed `<KEY>_` and decodes each one into a field of the bound type (covered below). `config.KVSource` reads from a key/value store you provide, typically a database table, with an optional `Decrypt` hook to unseal stored bytes on read.
 
 ```go
 config.Add(config.KVSource{
@@ -79,6 +79,37 @@ config.Add(config.KVSource{
     Decrypt: secretBox.Open,
 })
 ```
+
+## Environment variables
+
+For a bind key such as `"ratelimit"`, `config.EnvSource` collects variables that start with `RATELIMIT_`. The rest of the name selects a field of the bound type. It matches the field's `json` tag or Go name case-insensitively, ignoring underscores, so `RATELIMIT_PER_MINUTE` and `RATELIMIT_PERMINUTE` both set `PerMinute`. A double underscore steps into a nested struct, so `APP_DB__POOL__MAX=10` sets `DB.Pool.Max` under the `"app"` key. Fields of embedded structs are promoted, as in `encoding/json`.
+
+Each value is parsed for its field's type instead of being guessed from the text:
+
+| Field type | Accepted value |
+| --- | --- |
+| `string` | taken as-is, so `APP_PASSWORD=123456` stays a string |
+| `time.Duration` | `time.ParseDuration` syntax, such as `5s` or `1m30s`. A bare `5` is rejected. |
+| integers, floats | strict `strconv` parsing. `NaN` and `Inf` are rejected. |
+| `bool` | `strconv.ParseBool`: `true`, `false`, `1`, `0` |
+| `encoding.TextUnmarshaler` (e.g. `time.Time`) | the raw string |
+| slices, maps, structs | a JSON document, e.g. `APP_TAGS=["a","b"]` |
+
+```go
+type AppOptions struct {
+    Timeout time.Duration
+    DB      struct {
+        Pool struct {
+            Max int `json:"max"`
+        } `json:"pool"`
+    } `json:"db"`
+}
+
+var _ = config.Bind[AppOptions]("app")
+// APP_TIMEOUT=5s APP_DB__POOL__MAX=10
+```
+
+Variables that name no field are ignored. A value that fails to parse makes the source return an error that names the variable, such as `config: env APP_TIMEOUT: time: missing unit in duration "5"`.
 
 ## Layering sources
 

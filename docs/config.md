@@ -82,7 +82,7 @@ config.Add(config.KVSource{
 
 ## Layering sources
 
-Register several sources and later ones override earlier ones for the same key. A common arrangement is a file for baseline defaults, environment variables for an infrastructure override, and a database row for a live admin override, all applied without restarts.
+Register several sources and later ones override earlier ones for the same key. JSON objects are deep-merged, so a later source overrides only the fields it sets: with `{"ratelimit":{"per_minute":100,"burst":10}}` in the file and `RATELIMIT_BURST=20` in the environment, the key resolves to `{"per_minute":100,"burst":20}`. Non-object values, such as arrays, are replaced whole. A common arrangement is a file for baseline defaults, environment variables for an infrastructure override, and a database row for a live admin override, all applied without restarts.
 
 ```go
 config.Add(config.FileSource{Path: "config.json"})
@@ -92,7 +92,9 @@ config.Add(config.KVSource{Store: table, Decrypt: box.Open})
 
 ## The watcher
 
-The watcher is itself a `bosun.Service` that starts a goroutine in `Init()` and polls every source. The default interval is one second, overridable through a `*config.Options` instance. Do not disable the `config` package while using `config.Bind`, since nothing would reload.
+The watcher is itself a `bosun.Service` that starts a goroutine in `Init()` and polls every source. The default interval is one second, overridable through a `*config.Options` instance. Do not disable the `config` package while using `config.Bind`, since nothing would reload. The watcher implements `io.Closer`, so `app.Shutdown()` stops the poll goroutine.
+
+When a key disappears from every source, the watcher restores the value the `Dynamic` held before config was first applied, which is normally the `bosun.DefaultDynamic` default.
 
 ```go
 registry.RegisterInstance[*config.Options](app.Reg, &config.Options{Poll: 500 * time.Millisecond})
@@ -110,7 +112,7 @@ opts.OnChange(func(v *RateLimitOptions) {
 
 ## Failure semantics
 
-At startup, an error from any source or a failed unmarshal makes `app.Start()` return the error, so the process fails fast. During a runtime reload, polling errors are logged and the previous good config stays in place, so you never get a half-applied configuration.
+At startup, an error from any source or a failed unmarshal makes `app.Start()` return the error, so the process fails fast. Every key is still attempted, and the error names each key that failed. During a runtime reload, a source error is logged and the whole poll is skipped, so a partial view of the sources is never applied. A key whose value fails to unmarshal is logged once with its key and keeps its previous value, while every other key still updates.
 
 ## Custom sources and encryption
 

@@ -4,7 +4,7 @@
 // implementing Source.
 //
 // Sources are layered in registration order — later sources override earlier
-// ones per key:
+// ones field by field (JSON objects are deep-merged):
 //
 //	var _ = config.Bind[mw.RateLimitOptions]("ratelimit")
 //

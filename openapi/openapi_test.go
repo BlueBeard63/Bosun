@@ -164,11 +164,31 @@ func TestPathHelpers(t *testing.T) {
 	if p != "/a/{x}/b/{y}" || len(params) != 2 || params[0] != "x" || params[1] != "y" {
 		t.Fatalf("convertPath wrong: %s %v", p, params)
 	}
-	if shortHandler("pkg.(*C).Login-fm") != "Login" {
-		t.Fatal("shortHandler wrong")
+	p, params = convertPath("/files/{path...}")
+	if p != "/files/{path}" || len(params) != 1 || params[0] != "path" {
+		t.Fatalf("wildcard: %s %v", p, params)
+	}
+	if p, params = convertPath("/a/{$}"); p != "/a/" || len(params) != 0 {
+		t.Fatalf("end anchor: %s %v", p, params)
+	}
+	ids := map[string]string{
+		"pkg.(*NotesController).Login-fm": "NotesLogin",
+		"pkg.(*Controller).Login-fm":      "ControllerLogin",
+		"pkg.(*Repo[...]).Get-fm":         "RepoGet",
+		"pkg.listNotes":                   "get_notes_id",
+	}
+	for handler, want := range ids {
+		if got := operationID(bosun.RouteInfo{Method: "GET", Path: "/notes/{id}", Handler: handler}); got != want {
+			t.Errorf("operationID(%s) = %s, want %s", handler, got, want)
+		}
+	}
+	used := map[string]bool{}
+	if a, b := uniqueID("X", used), uniqueID("X", used); a != "X" || b != "X2" {
+		t.Fatalf("uniqueID: %s %s", a, b)
 	}
 	if hasBodyFields(reflect.TypeOf(struct {
 		A string `path:"a"`
+		B string `json:"-"`
 	}{})) {
 		t.Fatal("path-only struct has no body fields")
 	}

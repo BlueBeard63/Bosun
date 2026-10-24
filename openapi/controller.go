@@ -7,8 +7,10 @@ import (
 	"encoding/json"
 	"net/http"
 	"reflect"
+	"sort"
 	"strconv"
 	"strings"
+	"unicode"
 
 	"github.com/bluebeard63/bosun"
 )
@@ -29,7 +31,17 @@ func (c *SpecController) Spec(w http.ResponseWriter, req *http.Request) {
 	schemas := map[string]any{}
 	paths := map[string]map[string]any{}
 
-	for _, rt := range c.app.TypedRoutes() {
+	// Sorted so de-duplicated operationIds don't depend on mount order.
+	routes := c.app.TypedRoutes()
+	sort.SliceStable(routes, func(i, j int) bool {
+		if routes[i].Path != routes[j].Path {
+			return routes[i].Path < routes[j].Path
+		}
+		return routes[i].Method < routes[j].Method
+	})
+	opIDs := map[string]bool{}
+
+	for _, rt := range routes {
 		oaPath, pathParams := convertPath(rt.Path)
 		responses := map[string]any{
 			"200": map[string]any{
@@ -69,7 +81,7 @@ func (c *SpecController) Spec(w http.ResponseWriter, req *http.Request) {
 		}
 
 		op := map[string]any{
-			"operationId": shortHandler(rt.Handler),
+			"operationId": uniqueID(operationID(rt), opIDs),
 			"responses":   responses,
 		}
 
@@ -134,36 +146,58 @@ func (c *SpecController) Spec(w http.ResponseWriter, req *http.Request) {
 	writeJSON(w, spec)
 }
 
-// convertPath turns Go 1.22 patterns (/users/{id}) into OpenAPI form (same
-// syntax, conveniently) and extracts param names.
+// convertPath turns Go 1.22 patterns into OpenAPI form and extracts param
+// names. {name} is the same in both; the {name...} wildcard becomes {name},
+// the name the router binds, and the {$} end anchor is dropped.
 func convertPath(p string) (string, []string) {
 	params := []string{}
-	for _, seg := range strings.Split(p, "/") {
+	segs := strings.Split(p, "/")
+	for i, seg := range segs {
+		if seg == "{$}" {
+			segs[i] = ""
+			continue
+		}
 		if strings.HasPrefix(seg, "{") && strings.HasSuffix(seg, "}") {
-			params = append(params, strings.Trim(seg, "{}"))
+			name := strings.TrimSuffix(seg[1:len(seg)-1], "...")
+			segs[i] = "{" + name + "}"
+			params = append(params, name)
 		}
 	}
-	return p, params
+	return strings.Join(segs, "/"), params
 }
 
-func shortHandler(full string) string {
-	if idx := strings.LastIndex(full, "."); idx >= 0 {
-		full = full[idx+1:]
+// operationID names an operation <Controller><Method>, e.g. NotesGet for
+// (*NotesController).Get. Handlers that aren't methods fall back to the
+// HTTP method and path: get_files_path for GET /files/{path...}.
+func operationID(rt bosun.RouteInfo) string {
+	if _, recv, method, ok := parseHandler(rt.Handler); ok {
+		if base := strings.TrimSuffix(recv, "Controller"); base != "" {
+			recv = base
+		}
+		return recv + method
 	}
-	return strings.TrimSuffix(full, "-fm")
+	id := strings.ToLower(rt.Method)
+	for _, word := range strings.FieldsFunc(rt.Path, func(r rune) bool {
+		return !unicode.IsLetter(r) && !unicode.IsDigit(r)
+	}) {
+		id += "_" + word
+	}
+	return id
+}
+
+// uniqueID returns id, or id with the first free numeric suffix (id2,
+// id3, ...) when another operation already uses it.
+func uniqueID(id string, used map[string]bool) string {
+	out := id
+	for n := 2; used[out]; n++ {
+		out = id + strconv.Itoa(n)
+	}
+	used[out] = true
+	return out
 }
 
 func hasBodyFields(t reflect.Type) bool {
-	if t.Kind() != reflect.Struct {
-		return false
-	}
-	for i := 0; i < t.NumField(); i++ {
-		sf := t.Field(i)
-		if sf.IsExported() && !isParamField(sf) {
-			return true
-		}
-	}
-	return false
+	return len(jsonFields(t)) > 0
 }
 
 // fieldByTag finds the In field bound from source (path/query/header) name.

@@ -2,6 +2,7 @@ package openapi
 
 import (
 	"reflect"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -32,19 +33,15 @@ func schemaRef(t reflect.Type, schemas map[string]any) any {
 func structSchema(t reflect.Type, schemas map[string]any) map[string]any {
 	props := map[string]any{}
 	var required []string
-	for i := 0; i < t.NumField(); i++ {
-		sf := t.Field(i)
-		if !sf.IsExported() || isParamField(sf) {
-			continue
+	for _, f := range jsonFields(t) {
+		rules := fieldRules(f.sf)
+		schema := schemaFor(f.sf.Type, schemas)
+		if f.quoted {
+			schema = map[string]any{"type": "string"}
 		}
-		name := sf.Name
-		if jt := sf.Tag.Get("json"); jt != "" && jt != "-" {
-			name = strings.Split(jt, ",")[0]
-		}
-		rules := fieldRules(sf)
-		props[name] = constrain(schemaFor(sf.Type, schemas), sf.Type, rules)
+		props[f.name] = constrain(schema, f.sf.Type, rules)
 		if hasRule(rules, "required") {
-			required = append(required, name)
+			required = append(required, f.name)
 		}
 	}
 	out := map[string]any{"type": "object", "properties": props}
@@ -52,6 +49,130 @@ func structSchema(t reflect.Type, schemas map[string]any) map[string]any {
 		out["required"] = required
 	}
 	return out
+}
+
+// jsonField is one property of a struct as encoding/json sees it.
+type jsonField struct {
+	name   string
+	sf     reflect.StructField
+	index  []int
+	tagged bool // name came from the json tag
+	quoted bool // ",string" option on a number or bool: sent as a string
+}
+
+// jsonFields lists t's body properties following encoding/json's rules:
+// unexported and `json:"-"` fields are skipped, an empty tag name falls
+// back to the Go name, and untagged embedded structs are flattened, with
+// shallower and tagged fields winning name conflicts. Fields bound from
+// the path, query or headers are left out.
+func jsonFields(t reflect.Type) []jsonField {
+	if t.Kind() == reflect.Pointer {
+		t = t.Elem()
+	}
+	if t.Kind() != reflect.Struct {
+		return nil
+	}
+	type level struct {
+		t     reflect.Type
+		index []int
+	}
+	var fields []jsonField
+	depth := map[string]int{} // name -> shallowest depth seen
+	visited := map[reflect.Type]bool{}
+	next := []level{{t: t}}
+	for d := 0; len(next) > 0; d++ {
+		current := next
+		next = nil
+		var found []jsonField
+		for _, lv := range current {
+			if visited[lv.t] {
+				continue
+			}
+			visited[lv.t] = true
+			for i := 0; i < lv.t.NumField(); i++ {
+				sf := lv.t.Field(i)
+				ft := sf.Type
+				if ft.Kind() == reflect.Pointer && ft.Name() == "" {
+					ft = ft.Elem()
+				}
+				if sf.Anonymous {
+					if !sf.IsExported() && ft.Kind() != reflect.Struct {
+						continue
+					}
+				} else if !sf.IsExported() {
+					continue
+				}
+				tag := sf.Tag.Get("json")
+				if tag == "-" || isParamField(sf) {
+					continue
+				}
+				name, opts, _ := strings.Cut(tag, ",")
+				index := append(append([]int(nil), lv.index...), i)
+				if name == "" && sf.Anonymous && ft.Kind() == reflect.Struct {
+					next = append(next, level{t: ft, index: index})
+					continue
+				}
+				f := jsonField{name: name, sf: sf, index: index, tagged: name != ""}
+				if name == "" {
+					f.name = sf.Name
+				}
+				if hasOpt(opts, "string") {
+					switch ft.Kind() {
+					case reflect.Bool, reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64,
+						reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64,
+						reflect.Float32, reflect.Float64:
+						f.quoted = true
+					}
+				}
+				found = append(found, f)
+			}
+		}
+		// Within one depth, a name used more than once survives only if
+		// exactly one of the uses is tagged; names already taken at a
+		// shallower depth are hidden.
+		byName := map[string][]jsonField{}
+		for _, f := range found {
+			byName[f.name] = append(byName[f.name], f)
+		}
+		for name, fs := range byName {
+			if _, shallower := depth[name]; shallower {
+				continue
+			}
+			depth[name] = d
+			if len(fs) == 1 {
+				fields = append(fields, fs[0])
+				continue
+			}
+			var tagged []jsonField
+			for _, f := range fs {
+				if f.tagged {
+					tagged = append(tagged, f)
+				}
+			}
+			if len(tagged) == 1 {
+				fields = append(fields, tagged[0])
+			}
+		}
+	}
+	sort.Slice(fields, func(i, j int) bool {
+		a, b := fields[i].index, fields[j].index
+		for k := 0; k < len(a) && k < len(b); k++ {
+			if a[k] != b[k] {
+				return a[k] < b[k]
+			}
+		}
+		return len(a) < len(b)
+	})
+	return fields
+}
+
+func hasOpt(opts, want string) bool {
+	for _, o := range strings.Split(opts, ",") {
+		if o == want {
+			return true
+		}
+	}
+	return false
 }
 
 // isParamField reports fields bound from the URL or headers rather than the
@@ -100,15 +221,25 @@ func constrain(schema any, t reflect.Type, rules []bosun.Rule) any {
 			}
 			m[key] = number(r.Param)
 		case "oneof":
+			// On a slice the rule applies to each element, so the enum
+			// belongs on items.
+			target, et := m, t
+			if items, ok := m["items"].(map[string]any); ok && items["$ref"] == nil &&
+				(t.Kind() == reflect.Slice || t.Kind() == reflect.Array) {
+				target, et = items, t.Elem()
+				if et.Kind() == reflect.Pointer {
+					et = et.Elem()
+				}
+			}
 			var enum []any
 			for _, v := range strings.Fields(r.Param) {
-				if t.Kind() == reflect.String {
+				if et.Kind() == reflect.String {
 					enum = append(enum, v)
 				} else {
 					enum = append(enum, number(v))
 				}
 			}
-			m["enum"] = enum
+			target["enum"] = enum
 		}
 	}
 	return m
@@ -141,6 +272,10 @@ func schemaFor(t reflect.Type, schemas map[string]any) any {
 	case reflect.Float32, reflect.Float64:
 		return map[string]any{"type": "number"}
 	case reflect.Slice, reflect.Array:
+		if t.Kind() == reflect.Slice && t.Elem().Kind() == reflect.Uint8 {
+			// encoding/json sends []byte as a base64 string.
+			return map[string]any{"type": "string", "format": "byte"}
+		}
 		return map[string]any{"type": "array", "items": schemaFor(t.Elem(), schemas)}
 	case reflect.Map:
 		return map[string]any{"type": "object", "additionalProperties": schemaFor(t.Elem(), schemas)}

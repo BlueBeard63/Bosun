@@ -33,10 +33,10 @@ Each typed route (`bosun.Get`, `Post`, `Put`, `Delete`, `Patch`) becomes one ope
 
 | Spec field | Source |
 |---|---|
-| Path key | `RouteInfo.Path`: the controller prefix, group prefixes and the route path, with `:name` written as `{name}`. A route at `"/"` under `/notes` is `/notes`. |
+| Path key | `RouteInfo.Path`: the controller prefix, group prefixes and the route path, with `:name` written as `{name}`. A route at `"/"` under `/notes` is `/notes`. A `{name...}` wildcard is written as `{name}`, and a `{$}` end anchor is dropped, so `/files/{path...}` becomes `/files/{path}` and `/notes/{$}` becomes `/notes/`. |
 | Method key | The HTTP method, in lower case. |
-| `operationId` | The handler's method name, e.g. `Get` for `(*NotesController).Get`. |
-| `parameters`, path | One per `{name}` segment: `in: path`, `required: true`. The schema comes from the `In` field tagged `path:"name"` (type plus [validation](./validation.md) constraints), or `{"type":"string"}` when there's no such field. |
+| `operationId` | `<Controller><Method>`: the receiver type name without a `Controller` suffix, then the method name, e.g. `NotesGet` for `(*NotesController).Get`. Handlers that aren't methods use the lower-case HTTP method and the path's words, e.g. `get_notes_id`. Operations are numbered in path and method order, and an ID that is already taken gets the first free numeric suffix (`NotesGet2`), so every ID is unique. |
+| `parameters`, path | One per `{name}` or `{name...}` segment: `in: path`, `required: true`. The schema comes from the `In` field tagged `path:"name"` (type plus [validation](./validation.md) constraints), or `{"type":"string"}` when there's no such field. |
 | `parameters`, query | One per `In` field tagged `query:"name"`: `in: query`. `required` is `true` when the field has the `required` rule. The schema comes from the field type plus its constraints. |
 | `parameters`, header | One per `In` field tagged `header:"Name"`, in the same way as query parameters. |
 | `requestBody` | Only for `POST`, `PUT` and `PATCH`, when `In` has at least one exported field that is not tagged `path`, `query` or `header`. It is `required: true`, with content type `application/json` and the schema of `In`. |
@@ -106,6 +106,7 @@ Codes from the three layers are combined, and each code appears once.
 | `int`, `int8` ... `int64`, `uint`, `uint8` ... `uint64` | `{"type":"integer"}` |
 | `float32`, `float64` | `{"type":"number"}` |
 | `time.Time` | `{"type":"string","format":"date-time"}` |
+| `[]byte` | `{"type":"string","format":"byte"}` (base64, as `encoding/json` sends it) |
 | `[]T`, `[N]T` | `{"type":"array","items":<T>}` |
 | `map[K]V` | `{"type":"object","additionalProperties":<V>}` |
 | `*T` | Same as `T` |
@@ -115,9 +116,13 @@ Codes from the three layers are combined, and each code appears once.
 
 Struct properties:
 
-- Only exported fields are included.
+Properties follow `encoding/json`'s naming rules:
+
+- Only exported fields are included. Fields tagged `json:"-"` are left out.
 - Fields tagged `path`, `query` or `header` are left out of object schemas; they are documented as parameters instead.
-- The property name is the first part of the `json` tag (`json:"created_at,omitempty"` becomes `created_at`), or the Go field name when there is no tag.
+- The property name is the first part of the `json` tag (`json:"created_at,omitempty"` becomes `created_at`), or the Go field name when the tag has no name (`json:",omitempty"`) or there is no tag.
+- The fields of an embedded struct without a `json` name are flattened into the outer object. When names conflict, the shallower field wins, then the one with a `json` tag; otherwise the name is left out.
+- A number or `bool` field with the `,string` option is `{"type":"string"}`.
 - Fields with the `required` validation rule are listed in the object's `required` array.
 
 ### Validation constraints
@@ -152,10 +157,8 @@ The scanner links recorded statuses to a route by matching the package import pa
 These describe the current generator. Use [declarations](./openapi.md#declare-statuses-on-the-route) or your own tooling where they matter.
 
 - **Fixed document info.** `info.title` is always `bosun API` and `info.version` is always `1.0.0`. There are no `servers`, `tags` or `securitySchemes`.
-- **Success is always `200` with JSON.** A `string` or `[]byte` `Out` is still described as `application/json`, a `[]byte` appears as an array of integers, and an empty `struct{}` appears as an empty object. Bosun actually sends `text/plain`, `application/octet-stream` and no body respectively.
+- **Success is always `200` with JSON.** A `string` or `[]byte` `Out` is still described as `application/json`, and an empty `struct{}` appears as an empty object. Bosun actually sends `text/plain`, `application/octet-stream` and no body respectively.
 - **Form bodies are described as JSON.** Fields tagged `form` appear as JSON body properties, and form and multipart request bodies get an `application/json` content type.
 - **Custom validation is invisible.** Checks made in `Validate()` methods aren't reflected in schemas.
-- **`operationId` can repeat.** It is the bare method name, so two controllers that both have a `Get` handler produce duplicate IDs. Some client generators reject that.
 - **Schema names can collide.** Two different types with the same name in different packages share one `components/schemas` entry.
-- **`json:"-"` fields are included** under their Go field name.
 - **Observed statuses reset on restart** and only include codes `>= 400`.

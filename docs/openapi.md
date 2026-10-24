@@ -165,7 +165,7 @@ Every typed response records its status against its route. Any status `>= 400` t
 
 Schemas are generated from your `In` and `Out` types:
 
-- **Field names** follow `json` tags. Fields tagged `json:"-"` keep their Go name (see [limitations](./openapi-reference.md#limitations)), and unexported fields are skipped.
+- **Field names** follow `encoding/json`: `json` tag names are used, fields tagged `json:"-"` and unexported fields are skipped, and embedded structs are flattened.
 - **Named structs** become reusable entries under `components/schemas`, referenced with `$ref`. Anonymous structs are written inline.
 - **`path:"..."`, `query:"..."` and `header:"..."` fields** become path, query and header parameters, typed from the Go field. None of them appears in the body schema.
 - **[Validation rules](./validation.md)** become schema constraints: `required` fields are listed as required, `min`/`max` become length, range or item-count limits, and `oneof` becomes an `enum`.

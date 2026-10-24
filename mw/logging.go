@@ -40,6 +40,9 @@ func (m *Logging) Handle(next http.Handler) http.Handler {
 
 var _ = bosun.Middleware[Logging]()
 
+// statusRecorder captures the response status for the log line. It forwards
+// Flush and supports http.ResponseController via Unwrap, so streaming
+// handlers (SSE, chunked) keep working behind Logging.
 type statusRecorder struct {
 	http.ResponseWriter
 	status int
@@ -49,3 +52,11 @@ func (r *statusRecorder) WriteHeader(code int) {
 	r.status = code
 	r.ResponseWriter.WriteHeader(code)
 }
+
+func (r *statusRecorder) Flush() {
+	if f, ok := r.ResponseWriter.(http.Flusher); ok {
+		f.Flush()
+	}
+}
+
+func (r *statusRecorder) Unwrap() http.ResponseWriter { return r.ResponseWriter }

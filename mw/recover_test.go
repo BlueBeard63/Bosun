@@ -136,6 +136,41 @@ func TestRecoverDropsHandlerContentHeaders(t *testing.T) {
 	}
 }
 
+func TestRecoverClearsHandlerHeadersAfterGzip(t *testing.T) {
+	m, _ := newRecover(t)
+	h := m.Handle(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Encoding", "gzip")
+		w.Header().Set("Set-Cookie", "session=abc")
+		w.Header().Set("ETag", `"v1"`)
+		w.Header().Set("Cache-Control", "public, max-age=3600")
+		w.Header().Set("Content-Disposition", "attachment")
+		panic("x")
+	}))
+	rec := httptest.NewRecorder()
+	rec.Header().Set("Access-Control-Allow-Origin", "https://app.example")
+	rec.Header().Set("Vary", "Origin")
+	rec.Header().Set(bosun.HeaderCorrelationID, "corr-1")
+	h.ServeHTTP(rec, httptest.NewRequest("GET", "/x", nil))
+
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d", rec.Code)
+	}
+	for _, k := range []string{"Content-Encoding", "Set-Cookie", "Etag", "Cache-Control", "Content-Disposition"} {
+		if v := rec.Header().Get(k); v != "" {
+			t.Errorf("%s = %q leaked onto the 500", k, v)
+		}
+	}
+	var body map[string]string
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil || body["error"] != "internal server error" {
+		t.Fatalf("body is not plain JSON: %q (%v)", rec.Body, err)
+	}
+	if rec.Header().Get("Access-Control-Allow-Origin") != "https://app.example" ||
+		rec.Header().Get("Vary") != "Origin" ||
+		rec.Header().Get(bosun.HeaderCorrelationID) != "corr-1" {
+		t.Fatalf("allow-listed headers dropped: %v", rec.Header())
+	}
+}
+
 func TestRecoverNoPanicIsTransparent(t *testing.T) {
 	m, logs := newRecover(t)
 	h := m.Handle(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {

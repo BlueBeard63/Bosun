@@ -27,6 +27,7 @@ import (
 	"github.com/bluebeard63/bosun"
 	"github.com/bluebeard63/bosun/modules/repomod"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 // GormDB is the contract that named-DB wrapper types must satisfy. The
@@ -53,9 +54,31 @@ func session(db *gorm.DB, ctx context.Context) *gorm.DB {
 
 // --- shared CRUD helpers used by both GormRepo and GormRepoWith ---
 
+// byPK filters on the model's primary key with id as a bound value. Passing
+// id straight to First/Delete would let GORM treat a string as raw SQL.
+func byPK(db *gorm.DB, id any) *gorm.DB {
+	return db.Where(clause.Eq{
+		Column: clause.Column{Table: clause.CurrentTable, Name: clause.PrimaryKey},
+		Value:  id,
+	})
+}
+
+// emptyID reports whether id is nil or an empty string, which would
+// otherwise match the first row.
+func emptyID(id any) bool {
+	if id == nil {
+		return true
+	}
+	s, ok := id.(string)
+	return ok && s == ""
+}
+
 func crudGet[T any](db *gorm.DB, id any) (*T, error) {
+	if emptyID(id) {
+		return nil, repomod.ErrNotFound
+	}
 	var v T
-	if err := db.First(&v, id).Error; err != nil {
+	if err := byPK(db, id).First(&v).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, repomod.ErrNotFound
 		}
@@ -68,8 +91,11 @@ func crudCreate[T any](db *gorm.DB, e *T) error { return db.Create(e).Error }
 func crudUpdate[T any](db *gorm.DB, e *T) error { return db.Save(e).Error }
 
 func crudDelete[T any](db *gorm.DB, id any) error {
+	if emptyID(id) {
+		return repomod.ErrNotFound
+	}
 	var zero T
-	return db.Delete(&zero, id).Error
+	return byPK(db, id).Delete(&zero).Error
 }
 
 func runTx(db *gorm.DB, ctx context.Context, fn func(context.Context) error) error {

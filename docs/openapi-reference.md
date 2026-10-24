@@ -141,13 +141,11 @@ The scanner reads `.go` files from two places:
 
 A status is recorded only when all of these are true:
 
-- The call is written inside the body of a **method with a pointer receiver**, such as `func (c *NotesController) Get(...)`. Plain functions and closures aren't scanned, and neither are value-receiver methods.
+- The call is written inside the body of a **method**, such as `func (c *NotesController) Get(...)`. Pointer and value receivers both count, including receivers of generic types (`func (c *Repo[T]) Get(...)`). Plain functions and closures aren't scanned.
 - The call has the form `<anything>.E(status, ...)`, for example `bosun.E(...)`.
-- The status argument is an **integer literal** (`409`) or one of these `http` constants:
+- The status argument is an **integer literal** (`409`) or any `Status...` constant defined by `net/http`, such as `http.StatusUnsupportedMediaType`.
 
-  `StatusBadRequest`, `StatusUnauthorized`, `StatusPaymentRequired`, `StatusForbidden`, `StatusNotFound`, `StatusMethodNotAllowed`, `StatusNotAcceptable`, `StatusRequestTimeout`, `StatusConflict`, `StatusGone`, `StatusUnprocessableEntity`, `StatusTooManyRequests`, `StatusInternalServerError`, `StatusNotImplemented`, `StatusBadGateway`, `StatusServiceUnavailable`.
-
-The scanner links recorded statuses to a route by matching `(*Type).Method` against the route's handler name. Files that fail to parse are skipped without an error.
+The scanner links recorded statuses to a route by matching the package import path, receiver type and method name exactly against the route's handler. The import path of an on-disk file comes from the nearest `go.mod`. Files at the root of an embedded tree belong to the package that called `openapi.Sources`, and files in its subdirectories to the packages below it. If a handler's package wasn't scanned under its import path, the scanner falls back to matching by package name, unless two scanned packages share that name. Files that fail to parse are skipped without an error.
 
 ## Limitations
 

@@ -180,7 +180,7 @@ func TestPathHelpers(t *testing.T) {
 func TestStatusArgAndDiskScan(t *testing.T) {
 	s := &errScanner{opts: &ScanOptions{SourceDir: ""}}
 	s.scan() // embedded fixtureSrc only
-	codes := s.statusesFor("openapi.(*FixtureController).Create-fm")
+	codes := s.statusesFor("github.com/bluebeard63/bosun/openapi.(*FixtureController).Create-fm")
 	if len(codes) != 2 || codes[0] != 404 || codes[1] != 422 {
 		t.Fatalf("embedded scan wrong: %v", codes)
 	}

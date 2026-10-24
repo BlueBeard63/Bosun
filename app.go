@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"reflect"
+	"sync"
 	"time"
 
 	"github.com/bluebeard63/bosun/registry"
@@ -21,7 +22,11 @@ type App struct {
 	mws      []MWRef      // app-wide middleware, set via WithMiddleware
 	handler  http.Handler // Mux wrapped in app-wide middleware; built by Start
 
-	routes routeTable // typed-route metadata mounted on this app
+	routes  routeTable              // typed-route metadata mounted on this app
+	mounted map[string]reflect.Type // "METHOD /path" -> controller that mounted it
+
+	startOnce sync.Once
+	startErr  error
 
 	shutdownTimeout time.Duration        // grace period for in-flight requests
 	serverConfig    []func(*http.Server) // set via WithHTTPServer
@@ -55,8 +60,14 @@ func New(opts ...Option) *App {
 }
 
 // Start applies module defaults (host registrations win), validates the full
-// dependency graph, and mounts all controller routes.
+// dependency graph, and mounts all controller routes. It runs once: later
+// calls, including the one Run and Serve make, return the first result.
 func (a *App) Start() error {
+	a.startOnce.Do(func() { a.startErr = a.start() })
+	return a.startErr
+}
+
+func (a *App) start() error {
 	for _, d := range pendingDefaults {
 		if a.disabled[d.pkg] {
 			continue
@@ -96,7 +107,7 @@ func (a *App) Start() error {
 			prefix = p
 		}
 		var errs []error
-		router := &Router{app: a, prefix: prefix, base: base, errs: &errs}
+		router := &Router{app: a, ctrl: c.typ, prefix: prefix, base: base, errs: &errs}
 		inst.(BaseController).Routes(router)
 		if err := errors.Join(errs...); err != nil {
 			return err

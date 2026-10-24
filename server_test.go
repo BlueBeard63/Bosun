@@ -101,12 +101,14 @@ func waitReady(t *testing.T, addr string) {
 	t.Fatalf("server at %s never became ready", addr)
 }
 
+// waitResult waits for Serve to return. The limit only matters when a test
+// fails, so it is well above every shutdown timeout used here.
 func waitResult(t *testing.T, ch <-chan error) error {
 	t.Helper()
 	select {
 	case err := <-ch:
 		return err
-	case <-time.After(5 * time.Second):
+	case <-time.After(20 * time.Second):
 		t.Fatal("timed out waiting for server to return")
 		return nil
 	}
@@ -119,7 +121,10 @@ func TestServeDrainsInFlightThenClosesServices(t *testing.T) {
 	started, release := make(chan struct{}), make(chan struct{})
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	s := serveApp(t, ctx, log, WithShutdownTimeout(5*time.Second), slowRoute(log, started, release))
+	// http.Server.Shutdown counts a connection that was accepted but hasn't
+	// sent a request (such as a probe dial below landing just before the
+	// listener closed) as active for up to 5s, so leave room above that.
+	s := serveApp(t, ctx, log, WithShutdownTimeout(10*time.Second), slowRoute(log, started, release))
 
 	type result struct {
 		code int

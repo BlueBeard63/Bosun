@@ -1,6 +1,7 @@
 package bosun
 
 import (
+	"errors"
 	"fmt"
 	"net/http"
 	"runtime"
@@ -45,9 +46,11 @@ func E(status int, msg string, cause error) *Error {
 	return &Error{Status: status, Msg: msg, Cause: cause, origin: origin}
 }
 
+// errStatus is the HTTP status for err: an *Error's Status, or 500 when err
+// carries no *Error or its Status isn't a code WriteHeader accepts.
 func errStatus(err error) int {
 	var e *Error
-	if asErr(err, &e) {
+	if asErr(err, &e) && e.Status >= 100 && e.Status <= 999 {
 		return e.Status
 	}
 	return http.StatusInternalServerError
@@ -69,17 +72,8 @@ func errOrigin(err error) string {
 	return ""
 }
 
+// asErr finds the first *Error in err's tree, following both Unwrap() error
+// and Unwrap() []error (errors.Join, fmt.Errorf with several %w).
 func asErr(err error, target **Error) bool {
-	for err != nil {
-		if e, ok := err.(*Error); ok {
-			*target = e
-			return true
-		}
-		u, ok := err.(interface{ Unwrap() error })
-		if !ok {
-			return false
-		}
-		err = u.Unwrap()
-	}
-	return false
+	return errors.As(err, target)
 }

@@ -57,8 +57,9 @@ func (r *Req[In]) Query() url.Values {
 // skips parsing, and any decodes loose JSON.
 //
 // Out controls response encoding: structs/maps/etc are JSON, string is
-// text/plain, []byte is application/octet-stream, struct{} writes status
-// only with no body.
+// text/plain, []byte is application/octet-stream (json.RawMessage, or any
+// byte slice that implements json.Marshaler, is JSON), struct{} writes status
+// only with no body. A value that fails to encode becomes a 500.
 //
 // Use bosun.Get(r, ...) — not r.Get(...), which is the untyped escape hatch.
 func Get[In, Out any](r *Router, p string, h func(context.Context, *Req[In]) (Out, error), opts ...RouteOpt) {
@@ -121,7 +122,8 @@ func typed[In, Out any](r *Router, method, p string, h func(context.Context, *Re
 
 	outType := reflect.TypeOf((*Out)(nil)).Elem()
 	outIsString := outType.Kind() == reflect.String
-	outIsBytes := outType.Kind() == reflect.Slice && outType.Elem().Kind() == reflect.Uint8
+	outIsBytes := outType.Kind() == reflect.Slice && outType.Elem().Kind() == reflect.Uint8 &&
+		!outType.Implements(reflect.TypeFor[json.Marshaler]())
 	outIsEmptyStruct := outType.Kind() == reflect.Struct && outType.NumField() == 0
 
 	recordRoute(r.app, RouteInfo{
@@ -170,7 +172,7 @@ func typed[In, Out any](r *Router, method, p string, h func(context.Context, *Re
 				if err != nil {
 					bindErr = err
 				} else {
-					*(any(&typedReq.Body).(*string)) = string(b)
+					reflect.ValueOf(&typedReq.Body).Elem().SetString(string(b))
 				}
 			}
 		default:
@@ -190,8 +192,9 @@ func typed[In, Out any](r *Router, method, p string, h func(context.Context, *Re
 			if handlerErr != nil {
 				status = errStatus(handlerErr)
 				writeJSON(w, status, map[string]string{"error": publicMessage(handlerErr)})
-			} else {
-				writeOut(w, status, out, outIsString, outIsBytes, outIsEmptyStruct)
+			} else if err := writeOut(w, status, out, outIsString, outIsBytes, outIsEmptyStruct); err != nil {
+				status = http.StatusInternalServerError
+				handlerErr = fmt.Errorf("encoding response: %w", err)
 			}
 		}
 
@@ -226,31 +229,44 @@ func joinPrefix(prefix, p string) string {
 	return strings.TrimSuffix(prefix, "/") + "/" + strings.TrimPrefix(p, "/")
 }
 
-func writeJSON(w http.ResponseWriter, status int, v any) {
+// writeJSON encodes v before writing the status line, so a value that can't
+// be encoded is sent as a 500 rather than a success with an empty body. The
+// encoding error is returned.
+func writeJSON(w http.ResponseWriter, status int, v any) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		status = http.StatusInternalServerError
+		b, _ = json.Marshal(map[string]string{"error": "internal server error"})
+	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
-	_ = json.NewEncoder(w).Encode(v)
+	_, _ = w.Write(append(b, '\n'))
+	return err
 }
 
 // writeOut emits the handler's Out value. Symmetric with In:
 //
 //   - string  → text/plain; charset=utf-8, verbatim bytes
-//   - []byte  → application/octet-stream, verbatim bytes
+//   - []byte  → application/octet-stream, verbatim bytes (json.RawMessage is JSON)
 //   - struct{} → no body, status only
 //   - any other type → JSON
-func writeOut[Out any](w http.ResponseWriter, status int, v Out, isString, isBytes, isEmptyStruct bool) {
+//
+// Named string and byte-slice types are handled through reflection, so
+// `type Raw string` works like string. Only JSON encoding can fail.
+func writeOut[Out any](w http.ResponseWriter, status int, v Out, isString, isBytes, isEmptyStruct bool) error {
 	switch {
 	case isEmptyStruct:
 		w.WriteHeader(status)
 	case isString:
 		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 		w.WriteHeader(status)
-		_, _ = io.WriteString(w, *(any(&v).(*string)))
+		_, _ = io.WriteString(w, reflect.ValueOf(&v).Elem().String())
 	case isBytes:
 		w.Header().Set("Content-Type", "application/octet-stream")
 		w.WriteHeader(status)
-		_, _ = w.Write(*(any(&v).(*[]byte)))
+		_, _ = w.Write(reflect.ValueOf(&v).Elem().Bytes())
 	default:
-		writeJSON(w, status, v)
+		return writeJSON(w, status, v)
 	}
+	return nil
 }

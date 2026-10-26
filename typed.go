@@ -145,6 +145,7 @@ func typed[In, Out any](r *Router, method, p string, h func(context.Context, *Re
 	app := r.app
 	var auditorOnce sync.Once
 	var auditor Auditor
+	var auditFilter AuditFilter
 
 	adapter := func(w http.ResponseWriter, req *http.Request) {
 		start := time.Now()
@@ -154,6 +155,7 @@ func typed[In, Out any](r *Router, method, p string, h func(context.Context, *Re
 			if app.Reg.Has(t) {
 				if v, err := app.Reg.ResolveType(t); err == nil {
 					auditor = v.(Auditor)
+					auditFilter, _ = auditor.(AuditFilter)
 				}
 			}
 		})
@@ -216,16 +218,21 @@ func typed[In, Out any](r *Router, method, p string, h func(context.Context, *Re
 				Status:      status,
 				RemoteAddr:  req.RemoteAddr,
 				Duration:    time.Since(start),
-				Request:     Redact(typedReq.Body),
 				Correlation: CorrelationID(req.Context()),
 			}
-			if handlerErr == nil {
-				ev.Response = Redact(out)
-			} else {
+			if handlerErr != nil {
 				ev.Err = handlerErr.Error()
 				ev.ErrOrigin = errOrigin(handlerErr)
 			}
-			auditor.Audit(req.Context(), ev)
+			// Redaction copies the whole request and response, so ask a
+			// filtering auditor first and skip the copies for dropped events.
+			if auditFilter == nil || auditFilter.ShouldAudit(req.Context(), ev) {
+				ev.Request = Redact(typedReq.Body)
+				if handlerErr == nil {
+					ev.Response = Redact(out)
+				}
+				auditor.Audit(req.Context(), ev)
+			}
 		}
 	}
 

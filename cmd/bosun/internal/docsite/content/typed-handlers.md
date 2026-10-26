@@ -133,3 +133,11 @@ The [validation guide](./validation.md) covers the rules, optional fields, neste
 ## Auditing
 
 When an `Auditor` is registered, every typed request emits an `AuditEvent` containing request metadata, a redacted snapshot of `req.Body`, and either a redacted snapshot of the response or the full error with its origin. A field is redacted when it is tagged `audit:"-"` or when its name contains a sensitive word such as `password`, `secret`, `token`, or `authorization`. Only `req.Body` is walked, so headers and cookies never leak unless you copy them into the body through a binding tag. The [errors guide](./errors.md) covers the error side of the audit event.
+
+Redacting copies the whole body and response, which is costly for large list endpoints. An auditor that keeps only some events can also implement `bosun.AuditFilter`. Its `ShouldAudit(ctx, ev)` method runs first, with every event field set except `Request` and `Response`. When it returns `false` the event is dropped and nothing is redacted.
+
+```go
+func (a *DBAuditor) ShouldAudit(_ context.Context, ev bosun.AuditEvent) bool {
+    return ev.Method != http.MethodGet || ev.Status >= 400 // skip successful reads
+}
+```

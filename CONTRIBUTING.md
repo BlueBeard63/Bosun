@@ -28,7 +28,11 @@ CI runs these checks; you can run the same ones yourself before opening a PR:
 gofmt -l $(git ls-files '*.go' | grep -v /testdata/)    # must print nothing
 go vet ./... && go test -race ./...                      # root module
 (cd cmd/bosun && go generate .)                          # after editing docs/
+scripts/govulncheck.sh . cmd/bosun modules/eventamqpmod  # known vulnerabilities (latest Go)
+go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.15.0 run ./...
 ```
+
+The linters are configured in `.golangci.yml`, shared by every module. `scripts/govulncheck.sh` fails on any vulnerability the code reaches unless it is listed, with the reason, in `.github/govulncheck-allow.txt`. Fix a finding by bumping the dependency; allowlist it only when the fix can't be taken yet.
 
 To test the nested modules against your local changes rather than the published root, use a Go workspace. `go.work` is gitignored.
 
@@ -53,16 +57,31 @@ export BOSUN_REDIS_ADDR=localhost:6379
 export BOSUN_S3_ENDPOINT=localhost:8333 BOSUN_S3_KEY=bosun BOSUN_S3_SECRET=bosun-secret BOSUN_S3_BUCKET=bosun-dev
 ```
 
+For the WebDAV store (`modules/storewebdavmod`, in the root module):
+
+```sh
+docker run -d -p 8090:8080 --tmpfs /data:rw,mode=1777 rclone/rclone:1.75.2 \
+  serve webdav /data --addr :8080 --user bosun --pass bosun-secret
+export BOSUN_WEBDAV_URL=http://localhost:8090 BOSUN_WEBDAV_USER=bosun BOSUN_WEBDAV_PASS=bosun-secret
+go test ./modules/storewebdavmod/
+```
+
 ## Continuous integration
 
-`.github/workflows/ci.yml` runs on every pull request into `master` or a `v*` integration branch, on pushes to `master`, and on manual dispatch. It has four jobs:
+`.github/workflows/ci.yml` runs on every pull request into `master` or a `v*` integration branch, on pushes to `master`, and on manual dispatch. Its jobs:
 
 | Job | What it checks |
 |---|---|
 | **Root module** | `go mod verify`, `go vet` and `go test -race` on Go 1.22 (the minimum in `go.mod`) and on the latest stable Go. |
 | **Formatting, tidiness and generated docs** | `gofmt`, `go mod tidy` for every module, and that `cmd/bosun/internal/docsite/content` matches `docs/` after `go generate`. |
-| **Nested modules** | `go vet` and `go test -race` for `cmd/bosun` and each driver module, linked to the PR's root module through a Go workspace, so changes that break a nested module fail before release. |
-| **Integration** | The RabbitMQ, NATS, Redis and S3 tests against real services. S3 is served by SeaweedFS, because MinIO no longer publishes community images. |
+| **govulncheck** | `scripts/govulncheck.sh` over every module, on the latest Go, against the dependency versions users get. |
+| **golangci-lint** | The linters in `.golangci.yml`, over every module. |
+| **Example registries and OpenAPI validity** | `bosun gen registry --check` for every example that keeps a generated registry, and a full OpenAPI validator (Redocly, `spec` rules) over the spec the `openapi` package's test fixtures produce. |
+| **Nested modules** | `go vet` and `go test -race` for `cmd/bosun` and each driver module, linked to the PR's root module through a Go workspace, so changes that break a nested module fail before release. Modules whose `go.mod` says `go 1.22` also run on Go 1.22. |
+| **Scaffold** | `bosun new service` for every event backend, then build, vet and `docker build` the result. |
+| **Integration** | The RabbitMQ, NATS, Redis, S3, WebDAV and Postgres (outbox) tests against real services. S3 is served by SeaweedFS, because MinIO no longer publishes community images; WebDAV by `rclone serve webdav`. |
+
+Every third-party action and tool is pinned to a version: actions by commit, Go tools with `go run`/`go install` at a version (never added to a `go.mod`), and container images by tag.
 
 ## Releasing
 
@@ -102,10 +121,28 @@ scripts/release.sh v0.7.0 --execute --from-step tag-modules  # after the bump co
 
 If `master` is protected against direct pushes, the bump step's push will fail. Push the bump commit through a PR, pull it, then resume with `--from-step tag-modules`.
 
+### The release workflow
+
+Pushing the `cmd/bosun/vX.Y.Z` tag (step 5) starts `.github/workflows/release.yml`. It never creates tags or commits; it:
+
+1. **Verifies the tags.** `vX.Y.Z` exists and is an ancestor of the bump commit, and every nested module's `vX.Y.Z` tag points at that commit.
+2. **Verifies the bump.** Every nested `go.mod` requires `github.com/bluebeard63/bosun vX.Y.Z` with no `replace`, and the scaffold's `fallbackBosunVersion` is `vX.Y.Z`.
+3. **Tests every module** at the tag without a workspace, so each nested module builds against the released root exactly as users get it.
+4. **Creates the GitHub release** for `vX.Y.Z`: the `CHANGELOG.md` section (if any) followed by GitHub's generated notes. A version with a suffix (`-rc.1`) is marked as a prerelease. If the release already exists, it is left alone.
+
+It runs on the module tag rather than the root tag because the bump commit only exists after the root tag is pushed. If it fails, fix the cause and re-run the workflow from the Actions tab; nothing needs re-tagging unless the tags themselves are wrong.
+
 ### After the release
 
+Check that the release workflow passed and the release is published, then:
+
 ```sh
-gh release create v0.7.0 --title v0.7.0 --notes "$(scripts/release.sh v0.7.0 --print-notes)"
 GOPRIVATE=github.com/bluebeard63/* go install github.com/bluebeard63/bosun/cmd/bosun@v0.7.0
 bosun --version   # v0.7.0
+```
+
+If the workflow can't run (for example, Actions is disabled), create the release by hand:
+
+```sh
+gh release create v0.7.0 --title v0.7.0 --generate-notes --notes "$(scripts/release.sh v0.7.0 --print-notes)"
 ```

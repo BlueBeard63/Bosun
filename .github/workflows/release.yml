@@ -1,0 +1,170 @@
+name: Release
+
+# scripts/release.sh tags a release in three steps: the root module (vX.Y.Z),
+# a commit bumping every nested module to it, then the nested module tags
+# (cmd/bosun/vX.Y.Z, modules/<name>/vX.Y.Z) on that commit. This workflow
+# runs when the last step pushes cmd/bosun/vX.Y.Z: it checks the tags and the
+# bump are consistent, tests every module against the released root, and
+# publishes the GitHub release for vX.Y.Z. It never creates tags or commits.
+on:
+  push:
+    tags: ["cmd/bosun/v*"]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  ROOT_MODULE: github.com/bluebeard63/bosun
+  # Keep in sync with scripts/release.sh and ci.yml.
+  NESTED_MODULES: >-
+    cmd/bosun
+    modules/eventamqpmod
+    modules/eventnatsmod
+    modules/eventredismod
+    modules/stores3mod
+    modules/traceotelmod
+  # Resolve the new tags straight from GitHub, as release.sh does, so the
+  # module proxy's delay doesn't matter.
+  GOPRIVATE: github.com/bluebeard63/*
+
+jobs:
+  verify:
+    name: Verify ${{ github.ref_name }}
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-go@v5
+        with:
+          go-version: stable
+          cache-dependency-path: "**/go.sum"
+      - name: Version
+        id: version
+        run: |
+          version="${GITHUB_REF_NAME#cmd/bosun/}"
+          if ! [[ "$version" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
+            echo "::error::tag $GITHUB_REF_NAME doesn't carry a vX.Y.Z version"
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+      - name: Tags are consistent
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          # release.sh pushes all module tags in one push, but they may land
+          # a moment apart; give the rest a minute to arrive.
+          for attempt in $(seq 1 6); do
+            git fetch --quiet --force --tags origin
+            missing=""
+            for m in $NESTED_MODULES; do
+              git rev-parse -q --verify "refs/tags/$m/$VERSION" >/dev/null || missing="$missing $m/$VERSION"
+            done
+            [ -z "$missing" ] && break
+            echo "waiting for:$missing"
+            sleep 10
+          done
+          status=0
+          git rev-parse -q --verify "refs/tags/$VERSION" >/dev/null ||
+            { echo "::error::root tag $VERSION does not exist"; status=1; }
+          head="$(git rev-parse "$GITHUB_SHA^{commit}")"
+          for m in $NESTED_MODULES; do
+            t="$m/$VERSION"
+            if ! git rev-parse -q --verify "refs/tags/$t" >/dev/null; then
+              echo "::error::tag $t does not exist"; status=1; continue
+            fi
+            [ "$(git rev-parse "$t^{commit}")" = "$head" ] ||
+              { echo "::error::$t is not on the same commit as $GITHUB_REF_NAME"; status=1; }
+          done
+          # The bump commit must come after the root tag.
+          if git rev-parse -q --verify "refs/tags/$VERSION" >/dev/null; then
+            git merge-base --is-ancestor "$VERSION" "$head" ||
+              { echo "::error::$VERSION is not an ancestor of the module tags"; status=1; }
+          fi
+          exit $status
+      - name: Nested modules require ${{ steps.version.outputs.version }}
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          status=0
+          for m in $NESTED_MODULES; do
+            got="$(cd "$m" && GOWORK=off go list -m -f '{{.Version}}' "$ROOT_MODULE")"
+            if [ "$got" != "$VERSION" ]; then
+              echo "::error file=$m/go.mod::$m requires $ROOT_MODULE $got, want $VERSION"
+              status=1
+            fi
+            if (cd "$m" && GOWORK=off go list -m -f '{{if .Replace}}replaced{{end}}' "$ROOT_MODULE") | grep -q replaced; then
+              echo "::error file=$m/go.mod::$m replaces $ROOT_MODULE"
+              status=1
+            fi
+          done
+          scaffold=cmd/bosun/internal/scaffold/scaffold.go
+          if ! grep -q "^const fallbackBosunVersion = \"$VERSION\"" "$scaffold"; then
+            echo "::error file=$scaffold::fallbackBosunVersion is not $VERSION"
+            status=1
+          fi
+          exit $status
+
+  test:
+    name: Test ${{ matrix.module }} at ${{ needs.verify.outputs.version }}
+    needs: verify
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        module:
+          - "."
+          - cmd/bosun
+          - modules/eventamqpmod
+          - modules/eventnatsmod
+          - modules/eventredismod
+          - modules/stores3mod
+          - modules/traceotelmod
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: stable
+          cache-dependency-path: "**/go.sum"
+      # No workspace: every nested module builds against the released root,
+      # exactly as users get it.
+      - name: Test
+        working-directory: ${{ matrix.module }}
+        env:
+          GOWORK: "off"
+        run: |
+          go mod verify
+          go vet ./...
+          go test -race -count=1 ./...
+
+  release:
+    name: GitHub release ${{ needs.verify.outputs.version }}
+    needs: [verify, test]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Create release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.verify.outputs.version }}
+        run: |
+          if gh release view "$VERSION" >/dev/null 2>&1; then
+            echo "release $VERSION already exists; nothing to do"
+            exit 0
+          fi
+          # The CHANGELOG.md section (if any) goes above GitHub's generated
+          # list of merged pull requests.
+          args=(--verify-tag --title "$VERSION" --generate-notes)
+          if notes="$(scripts/release.sh "$VERSION" --print-notes 2>/dev/null)"; then
+            args+=(--notes "$notes")
+          fi
+          case "$VERSION" in *-*) args+=(--prerelease) ;; esac
+          gh release create "$VERSION" "${args[@]}"

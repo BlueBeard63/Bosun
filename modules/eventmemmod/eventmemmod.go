@@ -18,6 +18,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/bluebeard63/bosun"
 	"github.com/bluebeard63/bosun/modules/eventmod"
@@ -36,9 +37,10 @@ type Bus struct {
 }
 
 var (
-	_ eventmod.Bus       = (*Bus)(nil)
-	_ eventmod.Requester = (*Bus)(nil)
-	_ eventmod.Responder = (*Bus)(nil)
+	_ eventmod.DelayedNacker = (*delivery)(nil)
+	_ eventmod.Bus           = (*Bus)(nil)
+	_ eventmod.Requester     = (*Bus)(nil)
+	_ eventmod.Responder     = (*Bus)(nil)
 )
 
 // New returns a ready in-memory bus (for tests and manual wiring).
@@ -160,6 +162,14 @@ type subscription struct {
 	handler  eventmod.Handler
 	ch       chan eventmod.Message
 	quit     chan struct{}
+
+	// overflow holds messages that arrived while ch was full, in order; a
+	// single pump goroutine feeds them into ch. It replaces a goroutine per
+	// overflowing message, so a hot retry loop can't grow the goroutine count.
+	omu      sync.Mutex
+	overflow []eventmod.Message
+	wake     chan struct{} // cap 1: overflow is non-empty
+
 	stopOnce sync.Once
 	wg       sync.WaitGroup
 	bus      *Bus
@@ -184,8 +194,9 @@ func (b *Bus) Subscribe(ctx context.Context, subject string, h eventmod.Handler,
 		tokens:  strings.Split(subject, "."),
 		group:   cfg.Group,
 		handler: h,
-		ch:      make(chan eventmod.Message, 1024),
+		ch:      make(chan eventmod.Message, bufferSize),
 		quit:    make(chan struct{}),
+		wake:    make(chan struct{}, 1),
 		bus:     b,
 	}
 	if cfg.Group == "" {
@@ -197,10 +208,11 @@ func (b *Bus) Subscribe(ctx context.Context, subject string, h eventmod.Handler,
 	b.mu.Unlock()
 
 	workers := max(cfg.MaxInFlight, 1)
+	s.wg.Add(workers + 1)
 	for i := 0; i < workers; i++ {
-		s.wg.Add(1)
 		go s.run()
 	}
+	go s.pump()
 	return &subHandle{bus: b, sub: s}, nil
 }
 
@@ -217,19 +229,63 @@ func (s *subscription) run() {
 	}
 }
 
+// bufferSize is each subscription's channel capacity.
+const bufferSize = 1024
+
 // enqueue hands a message to the subscription without ever blocking a caller:
-// if the buffer is full it retries in a goroutine that respects quit.
+// if the buffer is full (or earlier messages are already waiting) it joins the
+// overflow queue, which the subscription's pump goroutine drains in order.
 func (s *subscription) enqueue(m eventmod.Message) {
 	select {
-	case s.ch <- m:
 	case <-s.quit:
+		return
 	default:
-		go func() {
+	}
+	s.omu.Lock()
+	if len(s.overflow) == 0 {
+		select {
+		case s.ch <- m:
+			s.omu.Unlock()
+			return
+		default:
+		}
+	}
+	s.overflow = append(s.overflow, m)
+	s.omu.Unlock()
+	select {
+	case s.wake <- struct{}{}:
+	default:
+	}
+}
+
+// pump moves overflowed messages into ch as workers free up buffer space.
+func (s *subscription) pump() {
+	defer s.wg.Done()
+	for {
+		select {
+		case <-s.quit:
+			return
+		case <-s.wake:
+		}
+		for {
+			s.omu.Lock()
+			if len(s.overflow) == 0 {
+				s.overflow = nil // release the drained backing array
+				s.omu.Unlock()
+				break
+			}
+			m := s.overflow[0]
+			s.omu.Unlock()
 			select {
 			case s.ch <- m:
 			case <-s.quit:
+				return
 			}
-		}()
+			s.omu.Lock()
+			s.overflow[0] = eventmod.Message{}
+			s.overflow = s.overflow[1:]
+			s.omu.Unlock()
+		}
 	}
 }
 
@@ -278,12 +334,28 @@ func (d *delivery) Ack(ctx context.Context) error {
 func (d *delivery) Nack(ctx context.Context, requeue bool) error {
 	d.once.Do(func() {
 		if requeue {
-			m := d.msg
-			m.Attempt++
-			d.sub.enqueue(m)
+			d.sub.enqueue(d.retry())
 		}
 	})
 	return nil
+}
+
+// NackAfter re-enqueues the message once delay has passed, using a timer
+// rather than holding the worker, so other messages keep flowing while it
+// waits (implements eventmod.DelayedNacker). A message still waiting when
+// the subscription stops is dropped, like any undelivered in-memory message.
+func (d *delivery) NackAfter(ctx context.Context, delay time.Duration) error {
+	d.once.Do(func() {
+		m := d.retry()
+		time.AfterFunc(delay, func() { d.sub.enqueue(m) })
+	})
+	return nil
+}
+
+func (d *delivery) retry() eventmod.Message {
+	m := d.msg
+	m.Attempt++
+	return m
 }
 
 // --- lifecycle ---

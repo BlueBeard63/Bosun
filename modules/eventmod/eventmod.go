@@ -70,7 +70,8 @@ type Delivery interface {
 }
 
 // Handler processes a single delivery. Returning an error signals failure;
-// under auto-ack the delivery is Nacked with requeue.
+// under auto-ack the delivery is redelivered after a backoff until its
+// attempts run out, then dead-lettered (see WithMaxAttempts).
 type Handler func(ctx context.Context, d Delivery) error
 
 // Publisher publishes raw payloads to a subject.
@@ -139,6 +140,16 @@ type SubConfig struct {
 	Manual bool
 	// MaxInFlight bounds unacked deliveries dispatched concurrently (0 = driver default).
 	MaxInFlight int
+	// MaxAttempts caps deliveries of a failing message under auto-ack
+	// (0 = DefaultMaxAttempts, negative = unlimited). See WithMaxAttempts.
+	MaxAttempts int
+	// Backoff is the delay before each redelivery under auto-ack (nil = the
+	// default exponential backoff). See WithBackoff.
+	Backoff Backoff
+	// DeadLetter is the subject a message is published to once it exhausts
+	// its attempts or cannot be decoded (empty = drop with an error log).
+	// See WithDeadLetter.
+	DeadLetter string
 }
 
 // SubOption configures a subscription.

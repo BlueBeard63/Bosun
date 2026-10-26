@@ -82,4 +82,11 @@ registry.RegisterInstance[*eventamqpmod.Options](app.Reg, &eventamqpmod.Options{
 
 ## Delivery and redelivery
 
-Every driver provides at-least-once delivery. On a handler error the message is redelivered: RabbitMQ and the in-memory bus re-enqueue with an incremented `Attempt`, NATS re-publishes, and Redis leaves the entry pending until it is re-added. Because redelivery is always possible, handlers must be idempotent, as described on the [events](./events.md) page.
+On a handler error (a nack with requeue) the message is redelivered to the subscriber or consumer group that failed, and only to it: other subscribers and groups on the same subject do not receive it again.
+
+- **RabbitMQ** puts a copy with an incremented `Attempt` on the subscription's own queue and acks the original only after the broker confirms the copy. If the copy cannot be published, the original is returned to the broker and the nack returns the error, so the message is not lost.
+- **Redis** leaves the entry pending in the group and claims it back, so `Attempt` is the entry's delivery count. The stream itself is not touched.
+- **In-memory** re-enqueues the message with an incremented `Attempt`.
+- **NATS** re-publishes the message with an incremented `Attempt` to a retry subject that only the failing subscription, or the members of its queue group, listen on. Core NATS stores nothing, so this is best effort: a message that is being handled when the process stops is not redelivered. Back the subject with JetStream if you need durable delivery.
+
+RabbitMQ, Redis, and the in-memory bus are at-least-once. Because redelivery is always possible, handlers must be idempotent, as described on the [events](./events.md) page.

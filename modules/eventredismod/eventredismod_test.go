@@ -10,6 +10,7 @@ import (
 
 	"github.com/bluebeard63/bosun/modules/eventmod"
 	"github.com/bluebeard63/bosun/modules/eventredismod"
+	"github.com/redis/go-redis/v9"
 )
 
 // Integration tests run only when BOSUN_REDIS_ADDR points at a Redis server,
@@ -82,6 +83,60 @@ func TestGroupCompetes(t *testing.T) {
 	time.Sleep(200 * time.Millisecond)
 	if got := total.Load(); got != n {
 		t.Fatalf("group delivered %d, want %d", got, n)
+	}
+}
+
+// A Nack in group A keeps the entry pending in A and claims it back there;
+// group B and an ungrouped subscriber each see the message once.
+func TestNackDoesNotRedeliverToOtherGroups(t *testing.T) {
+	b := newBus(t)
+	subj := uniqueSubject()
+	retried := make(chan eventmod.Message, 4)
+	var bCount, plainCount atomic.Int64
+	if _, err := b.Subscribe(context.Background(), subj, func(_ context.Context, d eventmod.Delivery) error {
+		if d.Message().Attempt == 1 {
+			return d.Nack(context.Background(), true)
+		}
+		retried <- d.Message()
+		return d.Ack(context.Background())
+	}, eventmod.WithGroup("a")); err != nil {
+		t.Fatalf("subscribe a: %v", err)
+	}
+	if _, err := b.Subscribe(context.Background(), subj, func(_ context.Context, d eventmod.Delivery) error {
+		bCount.Add(1)
+		return d.Ack(context.Background())
+	}, eventmod.WithGroup("b")); err != nil {
+		t.Fatalf("subscribe b: %v", err)
+	}
+	if _, err := b.Subscribe(context.Background(), subj, func(_ context.Context, d eventmod.Delivery) error {
+		plainCount.Add(1)
+		return d.Ack(context.Background())
+	}); err != nil {
+		t.Fatalf("subscribe plain: %v", err)
+	}
+	time.Sleep(50 * time.Millisecond)
+	if err := b.Publish(context.Background(), subj, []byte("x")); err != nil {
+		t.Fatalf("publish: %v", err)
+	}
+	select {
+	case m := <-retried:
+		if m.Attempt != 2 {
+			t.Fatalf("redelivered with attempt %d, want 2", m.Attempt)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("group A never got the redelivery")
+	}
+	time.Sleep(300 * time.Millisecond)
+	if got := bCount.Load(); got != 1 {
+		t.Fatalf("group B received %d copies, want 1", got)
+	}
+	if got := plainCount.Load(); got != 1 {
+		t.Fatalf("ungrouped subscriber received %d copies, want 1", got)
+	}
+	rdb := redis.NewClient(&redis.Options{Addr: os.Getenv("BOSUN_REDIS_ADDR")})
+	defer rdb.Close()
+	if n, err := rdb.XLen(context.Background(), subj).Result(); err != nil || n != 1 {
+		t.Fatalf("stream length %d (err %v), want 1: a Nack must not re-add the entry", n, err)
 	}
 }
 

@@ -54,20 +54,12 @@ func (b *Bus) Respond(ctx context.Context, subject string, h eventmod.RequestHan
 		}
 		_ = b.nc.PublishMsg(rm)
 	}
-	var (
-		sub *nats.Subscription
-		err error
-	)
-	if cfg.Group != "" {
-		sub, err = b.nc.QueueSubscribe(subject, cfg.Group, cb)
-	} else {
-		sub, err = b.nc.Subscribe(subject, cb)
-	}
+	sub, err := b.subscribe(subject, cfg.Group, cb)
 	if err != nil {
 		return nil, err
 	}
 	b.mu.Lock()
 	b.subs = append(b.subs, sub)
 	b.mu.Unlock()
-	return &subHandle{sub: sub}, nil
+	return &subHandle{subs: []*nats.Subscription{sub}}, nil
 }

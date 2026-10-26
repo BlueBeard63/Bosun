@@ -3,8 +3,10 @@
 // queue to that exchange. A named group (WithGroup) binds a shared durable
 // queue named "<group>.<subject>" so members compete; a subscription with no
 // group gets an exclusive auto-delete queue so it receives every message
-// (fan-out). Delivery is manual ack; a handler error re-publishes with an
-// incremented attempt (at-least-once). Publish waits for a publisher confirm,
+// (fan-out). Delivery is manual ack; a Nack with requeue re-enqueues the message
+// on that subscription's own queue only, with an incremented attempt
+// (at-least-once), so other groups bound to the subject never see it twice.
+// Publish waits for a publisher confirm,
 // so it returns nil only once the broker has taken the message.
 //
 //	import _ "github.com/bluebeard63/bosun/modules/eventamqpmod"
@@ -29,7 +31,12 @@ import (
 	amqp "github.com/rabbitmq/amqp091-go"
 )
 
-const hdrAttempt = "Bosun-Attempt"
+const (
+	hdrAttempt = "Bosun-Attempt"
+	// hdrSubject carries the original subject on a requeued copy, whose
+	// routing key is the queue name.
+	hdrSubject = "Bosun-Subject"
+)
 
 var (
 	// ErrNacked is returned by Publish when the broker rejects the message, or
@@ -368,7 +375,7 @@ func (b *Bus) establish(s *subscription) error {
 	}
 	go func() {
 		for m := range deliveries {
-			d := &delivery{bus: b, subject: s.subject, amqpDel: m, msg: toMessage(m)}
+			d := &delivery{bus: b, queue: qname, amqpDel: m, msg: toMessage(m)}
 			_ = s.handler(context.Background(), d)
 		}
 	}()
@@ -376,7 +383,8 @@ func (b *Bus) establish(s *subscription) error {
 }
 
 // toMessage converts a delivery. Subject is the routing key the message was
-// published with, not the (possibly wildcard) subscription pattern.
+// published with (or, for a requeued copy, the one it was first published
+// with), not the (possibly wildcard) subscription pattern.
 func toMessage(m amqp.Delivery) eventmod.Message {
 	hdr := make(map[string]string, len(m.Headers))
 	for k, v := range m.Headers {
@@ -390,12 +398,16 @@ func toMessage(m amqp.Delivery) eventmod.Message {
 			attempt = n
 		}
 	}
-	return eventmod.Message{Subject: m.RoutingKey, Data: m.Body, Headers: hdr, ID: m.MessageId, Attempt: attempt}
+	subject := m.RoutingKey
+	if s := hdr[hdrSubject]; s != "" {
+		subject = s
+	}
+	return eventmod.Message{Subject: subject, Data: m.Body, Headers: hdr, ID: m.MessageId, Attempt: attempt}
 }
 
 type delivery struct {
 	bus     *Bus
-	subject string
+	queue   string // the queue it was consumed from; a requeue goes back here only
 	amqpDel amqp.Delivery
 	msg     eventmod.Message
 	once    sync.Once
@@ -404,23 +416,45 @@ type delivery struct {
 func (d *delivery) Message() eventmod.Message { return d.msg }
 
 func (d *delivery) Ack(ctx context.Context) error {
-	d.once.Do(func() { _ = d.amqpDel.Ack(false) })
-	return nil
+	var err error
+	d.once.Do(func() { err = d.amqpDel.Ack(false) })
+	return err
 }
 
+// Nack with requeue publishes a copy with an incremented attempt straight to
+// this subscription's queue (default exchange, routing key = queue name), so
+// only the failing subscriber or group sees it again, then acks the original.
+// The original is acked only once the broker has confirmed the copy; if the
+// copy can't be published, the original is handed back to the broker instead
+// (basic.nack with requeue) and the error is returned, so it is never lost.
+// Without requeue the message is rejected, which dead-letters it if the queue
+// has a dead-letter exchange configured.
 func (d *delivery) Nack(ctx context.Context, requeue bool) error {
+	var err error
 	d.once.Do(func() {
-		if requeue {
-			hdr := make(map[string]string, len(d.msg.Headers)+1)
-			for k, v := range d.msg.Headers {
-				hdr[k] = v
-			}
-			hdr[hdrAttempt] = strconv.Itoa(d.msg.Attempt + 1)
-			_ = d.bus.Publish(ctx, d.subject, d.msg.Data, eventmod.WithHeaders(hdr))
+		if !requeue {
+			err = d.amqpDel.Nack(false, false)
+			return
 		}
-		_ = d.amqpDel.Ack(false)
+		hdr := make(amqp.Table, len(d.msg.Headers)+2)
+		for k, v := range d.msg.Headers {
+			hdr[k] = v
+		}
+		hdr[hdrAttempt] = strconv.Itoa(d.msg.Attempt + 1)
+		hdr[hdrSubject] = d.msg.Subject
+		err = d.bus.publish(ctx, "", d.queue, true, amqp.Publishing{
+			ContentType: d.amqpDel.ContentType,
+			MessageId:   d.amqpDel.MessageId,
+			Body:        d.msg.Data,
+			Headers:     hdr,
+		})
+		if err != nil {
+			_ = d.amqpDel.Nack(false, true)
+			return
+		}
+		err = d.amqpDel.Ack(false)
 	})
-	return nil
+	return err
 }
 
 type subHandle struct {

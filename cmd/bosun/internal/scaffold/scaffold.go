@@ -42,6 +42,10 @@ type Service struct {
 	// Force allows writing into a directory that already has files in it,
 	// overwriting any the scaffold generates.
 	Force bool
+
+	// Bare writes only the wiring (go.mod, main.go, modules.go, Dockerfile
+	// and the registry) without the demo HelloController.
+	Bare bool
 }
 
 type serviceData struct {
@@ -241,15 +245,66 @@ func WriteService(dir string, s Service) ([]string, error) {
 		"internal/api/api.go": tmplAPI,
 		"Dockerfile":          tmplDockerfile,
 	}
+	if s.Bare {
+		// No demo package to carry the module imports, so package main does.
+		delete(files, "internal/api/api.go")
+		files["modules.go"] = tmplModules
+	}
 	if d.WorkspaceDir != "" {
 		files["Dockerfile"] = tmplWorkspaceDockerfile
 	}
+	return renderWithRegistry(dir, files, d)
+}
+
+// renderWithRegistry renders files into dir and then generates its registry.
+func renderWithRegistry(dir string, files map[string]string, d any) ([]string, error) {
 	written, err := render(dir, files, d)
 	if err != nil {
 		return written, err
 	}
 	reg, err := writeRegistry(dir)
 	return append(written, reg), err
+}
+
+// Mono describes a monolith to scaffold: one module and one binary whose
+// code is organised by feature under internal/<feature>/, with no go.work,
+// contracts module or services/ split.
+type Mono struct {
+	Module     string
+	Name       string
+	Port       int
+	Event      string
+	LocalBosun string // see Service.LocalBosun
+	Force      bool   // see Service.Force
+	Bare       bool   // only the wiring, without the demo hello feature
+}
+
+// WriteMono renders a monolith into dir/ and returns the written paths:
+// go.mod, main.go, modules.go (framework modules and the event backend),
+// Dockerfile, README.md, the generated registry and, unless m.Bare, a demo
+// feature package internal/hello with its contract types, service and
+// controller in separate files.
+func WriteMono(dir string, m Mono) ([]string, error) {
+	if err := errors.Join(validName("project", m.Name), validModule(m.Module), validEvent(m.Event), validPort(m.Port)); err != nil {
+		return nil, err
+	}
+	if err := checkFree(dir, m.Force); err != nil {
+		return nil, err
+	}
+	files := map[string]string{
+		"go.mod":     tmplGoMod,
+		"main.go":    tmplMain,
+		"modules.go": tmplModules,
+		"Dockerfile": tmplDockerfile,
+		"README.md":  tmplMonoReadme,
+	}
+	if !m.Bare {
+		files["internal/hello/contract.go"] = tmplHelloContract
+		files["internal/hello/service.go"] = tmplHelloService
+		files["internal/hello/controller.go"] = tmplHelloController
+	}
+	s := Service{Module: m.Module, Name: m.Name, Port: m.Port, Event: m.Event, LocalBosun: m.LocalBosun}
+	return renderWithRegistry(dir, files, s.data())
 }
 
 // ErrExists reports a scaffold target directory that already has files in it.
@@ -347,10 +402,11 @@ func syncDockerfile(dir string) error {
 
 // Workspace is a Go workspace (go.work) that services are added to.
 type Workspace struct {
-	Root            string // absolute directory holding go.work
-	Module          string // module path prefix, e.g. example.com/acme; "" if unknown
-	ContractsModule string // module path of the shared contracts module; "" if none
-	ContractsDir    string // absolute directory of the contracts module
+	Root            string   // absolute directory holding go.work
+	Module          string   // module path prefix, e.g. example.com/acme; "" if unknown
+	ContractsModule string   // module path of the shared contracts module; "" if none
+	ContractsDir    string   // absolute directory of the contracts module
+	Modules         []string // absolute directories of the modules go.work uses
 }
 
 // FindWorkspace walks up from dir to the nearest go.work and describes it,
@@ -383,6 +439,9 @@ func describeWorkspace(root string, gowork []byte) *Workspace {
 	for _, use := range workUses(gowork) {
 		dir := filepath.Join(root, filepath.FromSlash(use))
 		mod := modulePath(filepath.Join(dir, "go.mod"))
+		if mod != "" {
+			ws.Modules = append(ws.Modules, dir)
+		}
 		switch {
 		case mod == "":
 		case path.Base(mod) == "contracts" && ws.ContractsModule == "":
@@ -466,6 +525,7 @@ type Project struct {
 	Event      string
 	LocalBosun string // see Service.LocalBosun
 	Force      bool   // see Service.Force
+	Bare       bool   // see Service.Bare
 }
 
 // WriteProject renders a workspace into dir/ (go.work, the contracts module,
@@ -485,7 +545,7 @@ func WriteProject(dir string, p Project) ([]string, error) {
 	}
 	svc := Service{
 		Module: p.Module + "/services/" + p.Service, Name: p.Service, Port: p.Port, Event: p.Event,
-		LocalBosun: p.LocalBosun, Force: p.Force,
+		LocalBosun: p.LocalBosun, Force: p.Force, Bare: p.Bare,
 		Workspace: &Workspace{
 			Root: abs, Module: p.Module,
 			ContractsModule: p.Module + "/contracts", ContractsDir: filepath.Join(abs, "contracts"),
@@ -627,6 +687,108 @@ func (c *HelloController) Hello(ctx context.Context, _ *bosun.Req[struct{}]) (He
 }
 `
 
+// tmplModules blank-imports the framework modules an app uses and selects
+// its event backend. Bare scaffolds and monoliths carry it in package main,
+// where it is present whatever feature packages exist.
+const tmplModules = `package main
+
+// Framework modules this app uses: importing a module registers its
+// controllers and services. Add more modules here.
+import (
+	_ "github.com/bluebeard63/bosun/modules/healthmod"
+{{- if .EventImport}}
+
+	"{{.EventImport}}"
+{{- end}}
+)
+{{- if .EventCall}}
+
+// The event bus backend for this app.
+var _ = {{.EventPkg}}.{{.EventCall}}()
+{{- end}}
+`
+
+// tmplHelloContract, tmplHelloService and tmplHelloController are the demo
+// feature of a monolith: one package per feature, split by role.
+const tmplHelloContract = `package hello
+
+// Request and response types of the hello feature. Keep a feature's types
+// here, next to the controller that serves them.
+
+// GreetIn is the request for GET /hello/:name.
+type GreetIn struct {
+	Name string ` + "`path:\"name\"`" + `
+}
+
+// GreetOut is the response body for GET /hello/:name.
+type GreetOut struct {
+	Message string ` + "`json:\"message\"`" + `
+}
+`
+
+const tmplHelloService = `// Package hello is a demo feature: its contract types, service and
+// controller live together. Replace it with your own features, one package
+// each under internal/.
+package hello
+
+import "github.com/bluebeard63/bosun"
+
+// HelloService holds the feature's business logic. Inject it anywhere with a
+// field of type *HelloService.
+type HelloService struct{}
+
+var _ = bosun.Service[HelloService]()
+
+// Greet returns a greeting for name.
+func (s *HelloService) Greet(name string) string {
+	return "hello, " + name + ", from {{.Name}}"
+}
+`
+
+const tmplHelloController = `package hello
+
+import (
+	"context"
+
+	"github.com/bluebeard63/bosun"
+)
+
+// HelloController serves the /hello routes. Bosun injects its Hello field.
+type HelloController struct {
+	Hello *HelloService
+}
+
+var _ = bosun.Controller[HelloController]("/hello")
+
+// Routes mounts the controller's routes under /hello.
+func (c *HelloController) Routes(r *bosun.Router) {
+	bosun.Get(r, "/:name", c.Greet)
+}
+
+// Greet says hello.
+func (c *HelloController) Greet(ctx context.Context, req *bosun.Req[GreetIn]) (GreetOut, error) {
+	return GreetOut{Message: c.Hello.Greet(req.Body.Name)}, nil
+}
+`
+
+const tmplMonoReadme = `# {{.Name}}
+
+A Bosun monolith: one Go module and one binary, organised by feature.
+
+- ` + "`main.go`" + ` creates and runs the app; ` + "`zz_bosun_registry.go`" + ` (generated) imports every package that registers with Bosun.
+- ` + "`modules.go`" + ` lists the framework modules the app uses and selects its event backend.
+- ` + "`internal/<feature>/`" + ` holds one package per feature: its controller, service and contract (request and response) types.
+
+Run it with ` + "`go run .`" + ` and add to it with:
+
+    bosun add controller <name>    # internal/<name>/<name>_controller.go
+    bosun add service <name>       # internal/<name>/<name>_service.go
+    bosun add middleware <name>    # internal/middleware/<name>.go
+
+Each of those regenerates ` + "`zz_bosun_registry.go`" + `; after adding a registering package by hand, run ` + "`go generate`" + `.
+Build an image with ` + "`docker build .`" + `.
+`
+
 const tmplDockerfile = `FROM golang:{{.GoImage}} AS build
 WORKDIR /src
 COPY . .
@@ -685,6 +847,9 @@ A Bosun microservice workspace.
 
 Add another service with ` + "`bosun new service <name>`" + ` from anywhere in this
 workspace: it is created under ` + "`services/`" + ` and added to ` + "`go.work`" + `.
+Add a controller, service type or middleware to a service with
+` + "`bosun add controller|service|middleware <name>`" + ` from its directory (or
+` + "`--in <service>`" + `).
 Build a service image from this directory with
 ` + "`docker build -f services/<name>/Dockerfile .`" + `.
 `

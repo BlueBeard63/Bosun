@@ -50,6 +50,7 @@ func main() {
 		manifestCmd(),
 		genCmd(),
 		newCmd(),
+		addCmd(),
 	)
 	if err := root.Execute(); err != nil {
 		os.Exit(1)

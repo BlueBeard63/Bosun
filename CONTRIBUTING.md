@@ -34,7 +34,7 @@ go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.15.0 run ./...
 
 The linters are configured in `.golangci.yml`, shared by every module. `scripts/govulncheck.sh` fails on any vulnerability the code reaches unless it is listed, with the reason, in `.github/govulncheck-allow.txt`. Fix a finding by bumping the dependency; allowlist it only when the fix can't be taken yet.
 
-To test the nested modules against your local changes rather than the published root, use a Go workspace. `go.work` is gitignored.
+To test the nested modules against your local changes rather than the published root, use a Go workspace, created the same way CI creates it. `go.work` and `go.work.sum` are gitignored, so each contributor creates their own, and it needs Go 1.25 because the NATS, S3 and OpenTelemetry drivers do.
 
 ```sh
 go work init . ./cmd/bosun ./modules/eventamqpmod ./modules/eventnatsmod \

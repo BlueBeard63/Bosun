@@ -17,7 +17,8 @@ var (
 	_ eventmod.Responder = (*Bus)(nil)
 )
 
-func newCorrID() string {
+// newID returns a random id, used for message ids and RPC correlation ids.
+func newID() string {
 	var b [16]byte
 	_, _ = rand.Read(b[:])
 	return hex.EncodeToString(b[:])
@@ -55,9 +56,10 @@ func (b *Bus) Request(ctx context.Context, subject string, data []byte, opts ...
 	for k, v := range cfg.Headers {
 		headers[k] = v
 	}
-	corr := newCorrID()
+	corr := newID()
 	if err := ch.PublishWithContext(ctx, ex, translateKey(subject), false, false, amqp.Publishing{
 		ContentType:   "application/octet-stream",
+		MessageId:     newID(),
 		Body:          data,
 		Headers:       headers,
 		ReplyTo:       replyQ.Name,
@@ -86,72 +88,26 @@ func (b *Bus) Request(ctx context.Context, subject string, data []byte, opts ...
 }
 
 // Respond replies to requests on subject. A group load-balances responders.
+// The responder is recorded like a subscription, so a reconnect restores it.
 func (b *Bus) Respond(ctx context.Context, subject string, h eventmod.RequestHandler, opts ...eventmod.SubOption) (eventmod.Subscription, error) {
-	cfg := eventmod.ResolveSub(opts)
-	b.mu.Lock()
-	if b.closed {
-		b.mu.Unlock()
-		return nil, eventmod.ErrClosed
-	}
-	conn := b.conn
-	b.mu.Unlock()
+	return b.subscribe(&subscription{bus: b, subject: subject, respond: h, opts: opts})
+}
 
-	ch, err := conn.Channel()
-	if err != nil {
-		return nil, err
-	}
-	if b.Opts.Prefetch > 0 {
-		if err := ch.Qos(b.Opts.Prefetch, 0, false); err != nil {
-			_ = ch.Close()
-			return nil, err
-		}
-	}
-	var qname string
-	if cfg.Group != "" {
-		q, err := ch.QueueDeclare(cfg.Group, true, false, false, false, nil)
-		if err != nil {
-			_ = ch.Close()
-			return nil, err
-		}
-		qname = q.Name
-	} else {
-		q, err := ch.QueueDeclare("", false, true, true, false, nil)
-		if err != nil {
-			_ = ch.Close()
-			return nil, err
-		}
-		qname = q.Name
-	}
-	if err := ch.QueueBind(qname, translateKey(subject), b.Opts.Exchange, false, nil); err != nil {
-		_ = ch.Close()
-		return nil, err
-	}
-	deliveries, err := ch.Consume(qname, "", false, false, false, false, nil)
-	if err != nil {
-		_ = ch.Close()
-		return nil, err
-	}
-
-	s := &subscription{ch: ch, bus: b}
-	b.mu.Lock()
-	b.subs = append(b.subs, s)
-	b.mu.Unlock()
-
-	go func() {
-		for m := range deliveries {
-			reply, herr := h(context.Background(), toMessage(subject, m))
-			if m.ReplyTo != "" {
-				pub := amqp.Publishing{ContentType: "application/octet-stream", CorrelationId: m.CorrelationId}
-				if herr != nil {
-					pub.Headers = amqp.Table{hdrRPCError: "1"}
-					pub.Body = []byte(herr.Error())
-				} else {
-					pub.Body = reply
-				}
-				_ = ch.PublishWithContext(context.Background(), "", m.ReplyTo, false, false, pub)
+// serveRequests runs s.respond for each request on ch and publishes the reply
+// to the request's reply-to queue. It ends when ch closes.
+func (s *subscription) serveRequests(ch *amqp.Channel, deliveries <-chan amqp.Delivery) {
+	for m := range deliveries {
+		reply, herr := s.respond(context.Background(), toMessage(m))
+		if m.ReplyTo != "" {
+			pub := amqp.Publishing{ContentType: "application/octet-stream", CorrelationId: m.CorrelationId}
+			if herr != nil {
+				pub.Headers = amqp.Table{hdrRPCError: "1"}
+				pub.Body = []byte(herr.Error())
+			} else {
+				pub.Body = reply
 			}
-			_ = m.Ack(false)
+			_ = ch.PublishWithContext(context.Background(), "", m.ReplyTo, false, false, pub)
 		}
-	}()
-	return &subHandle{bus: b, sub: s}, nil
+		_ = m.Ack(false)
+	}
 }

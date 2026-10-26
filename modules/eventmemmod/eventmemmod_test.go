@@ -126,6 +126,38 @@ func TestNackRequeueRedelivers(t *testing.T) {
 	}
 }
 
+func TestMessageIDStableAcrossRedelivery(t *testing.T) {
+	bus := eventmemmod.New()
+	t.Cleanup(func() { _ = bus.Close() })
+
+	ids := make(chan string, 2)
+	_, err := bus.Subscribe(context.Background(), "ids", func(_ context.Context, d eventmod.Delivery) error {
+		ids <- d.Message().ID
+		if d.Message().Attempt == 1 {
+			return d.Nack(context.Background(), true)
+		}
+		return d.Ack(context.Background())
+	})
+	if err != nil {
+		t.Fatalf("subscribe: %v", err)
+	}
+	if err := bus.Publish(context.Background(), "ids", []byte("x")); err != nil {
+		t.Fatalf("publish: %v", err)
+	}
+	var got []string
+	for len(got) < 2 {
+		select {
+		case id := <-ids:
+			got = append(got, id)
+		case <-time.After(2 * time.Second):
+			t.Fatalf("got %d deliveries, want 2", len(got))
+		}
+	}
+	if got[0] == "" || got[0] != got[1] {
+		t.Fatalf("IDs %q then %q, want the same non-empty ID", got[0], got[1])
+	}
+}
+
 func TestWildcardMatch(t *testing.T) {
 	bus := eventmemmod.New()
 	t.Cleanup(func() { _ = bus.Close() })

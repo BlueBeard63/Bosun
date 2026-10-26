@@ -44,14 +44,27 @@ func genClientCmd() *cobra.Command {
 			if err := json.Unmarshal(data, &m); err != nil {
 				return fmt.Errorf("decode manifest: %w", err)
 			}
+			// in_type and out_type are read separately so the CLI also builds
+			// against bosun releases whose manifestmod predates them.
+			var qualified struct {
+				Routes []struct {
+					InType  string `json:"in_type"`
+					OutType string `json:"out_type"`
+				} `json:"routes"`
+			}
+			if err := json.Unmarshal(data, &qualified); err != nil {
+				return fmt.Errorf("decode manifest: %w", err)
+			}
 			if service == "" {
 				service = m.Service
 			}
 			routes := make([]clientgen.Route, 0, len(m.Routes))
-			for _, r := range m.Routes {
+			for i, r := range m.Routes {
+				q := qualified.Routes[i]
 				routes = append(routes, clientgen.Route{
 					Method: r.Method, Path: r.Path, Operation: r.Operation,
 					In: r.In, Out: r.Out, InImport: r.InImport, OutImport: r.OutImport,
+					InType: q.InType, OutType: q.OutType,
 				})
 			}
 			src, err := clientgen.Generate(pkg, service, routes)

@@ -1,9 +1,13 @@
 // Package eventamqpmod is a RabbitMQ (AMQP 0-9-1) driver for eventmod. Messages
 // are published to a topic exchange keyed by subject; each subscription binds a
 // queue to that exchange. A named group (WithGroup) binds a shared durable
-// queue so members compete; a subscription with no group gets an exclusive
-// auto-delete queue so it receives every message (fan-out). Delivery is manual
-// ack; a handler error re-publishes with an incremented attempt (at-least-once).
+// queue named "<group>.<subject>" so members compete; a subscription with no
+// group gets an exclusive auto-delete queue so it receives every message
+// (fan-out). Delivery is manual ack; a Nack with requeue re-enqueues the message
+// on that subscription's own queue only, with an incremented attempt
+// (at-least-once), so other groups bound to the subject never see it twice.
+// Publish waits for a publisher confirm,
+// so it returns nil only once the broker has taken the message.
 //
 //	import _ "github.com/bluebeard63/bosun/modules/eventamqpmod"
 //	var _ = eventamqpmod.Use()
@@ -14,6 +18,8 @@ package eventamqpmod
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"log"
 	"strconv"
 	"strings"
@@ -25,7 +31,21 @@ import (
 	amqp "github.com/rabbitmq/amqp091-go"
 )
 
-const hdrAttempt = "Bosun-Attempt"
+const (
+	hdrAttempt = "Bosun-Attempt"
+	// hdrSubject carries the original subject on a requeued copy, whose
+	// routing key is the queue name.
+	hdrSubject = "Bosun-Subject"
+)
+
+var (
+	// ErrNacked is returned by Publish when the broker rejects the message, or
+	// the channel closes before confirming it.
+	ErrNacked = errors.New("eventamqpmod: publish not confirmed by broker")
+	// ErrUnroutable is returned by Publish when Options.Mandatory is set and no
+	// queue is bound to the subject.
+	ErrUnroutable = errors.New("eventamqpmod: message unroutable")
+)
 
 // Options configures the AMQP connection and exchange.
 type Options struct {
@@ -35,6 +55,9 @@ type Options struct {
 	// (exact routing), or "fanout" (every bound queue receives everything).
 	Kind     string
 	Prefetch int
+	// Mandatory makes Publish fail with ErrUnroutable when no queue is bound to
+	// the subject, instead of the broker silently dropping the message.
+	Mandatory bool
 }
 
 var _ = bosun.Default[*Options](func() *Options {
@@ -55,7 +78,8 @@ type Bus struct {
 	mu      sync.Mutex
 	conn    *amqp.Connection
 	pubCh   *amqp.Channel
-	pubMu   sync.Mutex // amqp channels are not safe for concurrent publish
+	returns chan amqp.Return // basic.return frames for pubCh (mandatory publishes)
+	pubMu   sync.Mutex       // amqp channels are not safe for concurrent publish
 	subs    []*subscription
 	closed  bool
 	closeCh chan struct{} // closed on Close, to stop the reconnect supervisor
@@ -70,9 +94,9 @@ func (b *Bus) Init() error {
 	return b.connect()
 }
 
-// connect dials the broker, (re)opens the publish channel + exchange, and starts
-// a supervisor watching this connection for an unexpected close. Called once at
-// Init and again on every reconnect.
+// connect dials the broker, (re)opens the publish channel in confirm mode +
+// exchange, and starts a supervisor watching this connection for an unexpected
+// close. Called once at Init and again on every reconnect.
 func (b *Bus) connect() error {
 	conn, err := amqp.Dial(b.Opts.URL)
 	if err != nil {
@@ -87,9 +111,17 @@ func (b *Bus) connect() error {
 		_ = conn.Close()
 		return err
 	}
+	if err := ch.Confirm(false); err != nil {
+		_ = conn.Close()
+		return err
+	}
+	// Buffered so the connection's reader never blocks on a return nobody has
+	// collected yet (e.g. after a publish stopped waiting on its ctx).
+	returns := ch.NotifyReturn(make(chan amqp.Return, 16))
 	b.mu.Lock()
 	b.conn = conn
 	b.pubCh = ch
+	b.returns = returns
 	b.mu.Unlock()
 	go b.supervise(conn)
 	return nil
@@ -184,16 +216,10 @@ func (b *Bus) Close() error {
 	return nil
 }
 
-// Publish routes data to the exchange with the subject as the routing key.
+// Publish routes data to the exchange with the subject as the routing key and
+// waits for the broker to confirm it. Each message gets a random MessageId,
+// which consumers see as Message.ID.
 func (b *Bus) Publish(ctx context.Context, subject string, data []byte, opts ...eventmod.PubOption) error {
-	b.mu.Lock()
-	closed := b.closed
-	ch := b.pubCh
-	ex := b.Opts.Exchange
-	b.mu.Unlock()
-	if closed {
-		return eventmod.ErrClosed
-	}
 	cfg := eventmod.ResolvePub(opts)
 	headers := amqp.Table{}
 	for k, v := range cfg.Headers {
@@ -202,19 +228,68 @@ func (b *Bus) Publish(ctx context.Context, subject string, data []byte, opts ...
 	if _, ok := headers[hdrAttempt]; !ok {
 		headers[hdrAttempt] = "1"
 	}
-	b.pubMu.Lock()
-	defer b.pubMu.Unlock()
-	return ch.PublishWithContext(ctx, ex, subject, false, false, amqp.Publishing{
+	return b.publish(ctx, b.Opts.Exchange, subject, b.Opts.Mandatory, amqp.Publishing{
 		ContentType: "application/octet-stream",
+		MessageId:   newID(),
 		Body:        data,
 		Headers:     headers,
 	})
 }
 
+// publish sends msg on the shared publish channel and blocks until the broker
+// confirms it. With mandatory set, a message no queue accepts comes back as a
+// basic.return, which the broker sends before the confirm.
+func (b *Bus) publish(ctx context.Context, exchange, key string, mandatory bool, msg amqp.Publishing) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	b.mu.Lock()
+	closed := b.closed
+	ch := b.pubCh
+	returns := b.returns
+	b.mu.Unlock()
+	if closed {
+		return eventmod.ErrClosed
+	}
+	b.pubMu.Lock()
+	defer b.pubMu.Unlock()
+	drainReturns(returns) // left over from a publish that stopped waiting early
+	dc, err := ch.PublishWithDeferredConfirmWithContext(ctx, exchange, key, mandatory, false, msg)
+	if err != nil {
+		return err
+	}
+	ack, err := dc.WaitContext(ctx)
+	if err != nil {
+		return err
+	}
+	if !ack {
+		return fmt.Errorf("%w (routing key %q)", ErrNacked, key)
+	}
+	select {
+	case r, ok := <-returns:
+		if ok {
+			return fmt.Errorf("%w (routing key %q): %s", ErrUnroutable, key, r.ReplyText)
+		}
+	default:
+	}
+	return nil
+}
+
+func drainReturns(c chan amqp.Return) {
+	for {
+		select {
+		case <-c:
+		default:
+			return
+		}
+	}
+}
+
 type subscription struct {
 	bus     *Bus
 	subject string
-	handler eventmod.Handler
+	handler eventmod.Handler        // set by Subscribe
+	respond eventmod.RequestHandler // set by Respond
 	opts    []eventmod.SubOption
 	ch      *amqp.Channel // current consumer channel; replaced on reconnect
 }
@@ -223,10 +298,13 @@ type subscription struct {
 // connection. The recorded params let the supervisor re-establish it verbatim
 // after a reconnect.
 func (b *Bus) Subscribe(ctx context.Context, subject string, h eventmod.Handler, opts ...eventmod.SubOption) (eventmod.Subscription, error) {
+	return b.subscribe(&subscription{bus: b, subject: subject, handler: h, opts: opts})
+}
+
+func (b *Bus) subscribe(s *subscription) (eventmod.Subscription, error) {
 	if b.isClosed() {
 		return nil, eventmod.ErrClosed
 	}
-	s := &subscription{bus: b, subject: subject, handler: h, opts: opts}
 	if err := b.establish(s); err != nil {
 		return nil, err
 	}
@@ -237,9 +315,9 @@ func (b *Bus) Subscribe(ctx context.Context, subject string, h eventmod.Handler,
 }
 
 // establish (re)opens s's channel, declares + binds its queue, starts consuming,
-// and runs the delivery loop. Idempotent per call — used by Subscribe and by the
-// supervisor on reconnect. The delivery goroutine ends when the channel drops; a
-// reconnect calls establish again to start a fresh one.
+// and runs the delivery loop. Idempotent per call — used by Subscribe/Respond and
+// by the supervisor on reconnect. The delivery goroutine ends when the channel
+// drops; a reconnect calls establish again to start a fresh one.
 func (b *Bus) establish(s *subscription) error {
 	b.mu.Lock()
 	conn := b.conn
@@ -263,7 +341,9 @@ func (b *Bus) establish(s *subscription) error {
 
 	var qname string
 	if cfg.Group != "" {
-		q, err := ch.QueueDeclare(cfg.Group, true, false, false, false, nil) // durable, shared
+		// One queue per group AND subject: a group consuming two subjects must
+		// not share a queue, or each handler would get the other's messages.
+		q, err := ch.QueueDeclare(cfg.Group+"."+s.subject, true, false, false, false, nil) // durable, shared
 		if err != nil {
 			_ = ch.Close()
 			return err
@@ -291,16 +371,23 @@ func (b *Bus) establish(s *subscription) error {
 	s.ch = ch
 	b.mu.Unlock()
 
+	if s.respond != nil {
+		go s.serveRequests(ch, deliveries)
+		return nil
+	}
 	go func() {
 		for m := range deliveries {
-			d := &delivery{bus: b, subject: s.subject, amqpDel: m, msg: toMessage(s.subject, m)}
+			d := &delivery{bus: b, queue: qname, amqpDel: m, msg: toMessage(m)}
 			_ = s.handler(context.Background(), d)
 		}
 	}()
 	return nil
 }
 
-func toMessage(subject string, m amqp.Delivery) eventmod.Message {
+// toMessage converts a delivery. Subject is the routing key the message was
+// published with (or, for a requeued copy, the one it was first published
+// with), not the (possibly wildcard) subscription pattern.
+func toMessage(m amqp.Delivery) eventmod.Message {
 	hdr := make(map[string]string, len(m.Headers))
 	for k, v := range m.Headers {
 		if s, ok := v.(string); ok {
@@ -313,12 +400,16 @@ func toMessage(subject string, m amqp.Delivery) eventmod.Message {
 			attempt = n
 		}
 	}
+	subject := m.RoutingKey
+	if s := hdr[hdrSubject]; s != "" {
+		subject = s
+	}
 	return eventmod.Message{Subject: subject, Data: m.Body, Headers: hdr, ID: m.MessageId, Attempt: attempt}
 }
 
 type delivery struct {
 	bus     *Bus
-	subject string
+	queue   string // the queue it was consumed from; a requeue goes back here only
 	amqpDel amqp.Delivery
 	msg     eventmod.Message
 	once    sync.Once
@@ -327,23 +418,45 @@ type delivery struct {
 func (d *delivery) Message() eventmod.Message { return d.msg }
 
 func (d *delivery) Ack(ctx context.Context) error {
-	d.once.Do(func() { _ = d.amqpDel.Ack(false) })
-	return nil
+	var err error
+	d.once.Do(func() { err = d.amqpDel.Ack(false) })
+	return err
 }
 
+// Nack with requeue publishes a copy with an incremented attempt straight to
+// this subscription's queue (default exchange, routing key = queue name), so
+// only the failing subscriber or group sees it again, then acks the original.
+// The original is acked only once the broker has confirmed the copy; if the
+// copy can't be published, the original is handed back to the broker instead
+// (basic.nack with requeue) and the error is returned, so it is never lost.
+// Without requeue the message is rejected, which dead-letters it if the queue
+// has a dead-letter exchange configured.
 func (d *delivery) Nack(ctx context.Context, requeue bool) error {
+	var err error
 	d.once.Do(func() {
-		if requeue {
-			hdr := make(map[string]string, len(d.msg.Headers)+1)
-			for k, v := range d.msg.Headers {
-				hdr[k] = v
-			}
-			hdr[hdrAttempt] = strconv.Itoa(d.msg.Attempt + 1)
-			_ = d.bus.Publish(ctx, d.subject, d.msg.Data, eventmod.WithHeaders(hdr))
+		if !requeue {
+			err = d.amqpDel.Nack(false, false)
+			return
 		}
-		_ = d.amqpDel.Ack(false)
+		hdr := make(amqp.Table, len(d.msg.Headers)+2)
+		for k, v := range d.msg.Headers {
+			hdr[k] = v
+		}
+		hdr[hdrAttempt] = strconv.Itoa(d.msg.Attempt + 1)
+		hdr[hdrSubject] = d.msg.Subject
+		err = d.bus.publish(ctx, "", d.queue, true, amqp.Publishing{
+			ContentType: d.amqpDel.ContentType,
+			MessageId:   d.amqpDel.MessageId,
+			Body:        d.msg.Data,
+			Headers:     hdr,
+		})
+		if err != nil {
+			_ = d.amqpDel.Nack(false, true)
+			return
+		}
+		err = d.amqpDel.Ack(false)
 	})
-	return nil
+	return err
 }
 
 type subHandle struct {

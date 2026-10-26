@@ -63,3 +63,27 @@ func TestGenRegistryWriteAndCheck(t *testing.T) {
 		t.Fatalf("--check should report stale file, got %v", err)
 	}
 }
+
+func TestGenClientReadsQualifiedTypes(t *testing.T) {
+	dir := t.TempDir()
+	manifest := `{"service": "billing", "routes": [{"method": "GET", "path": "/users", "operation": "app.(*Users).List-fm",
+		"in": "struct {}", "out": "[]contracts.User", "out_type": "[]example.com/app/contracts.User"}]}`
+	in := filepath.Join(dir, "manifest.json")
+	out := filepath.Join(dir, "client.go")
+	if err := os.WriteFile(in, []byte(manifest), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cmd := genClientCmd()
+	cmd.SetArgs([]string{in, "--out", out})
+	if err := cmd.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	src, err := os.ReadFile(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(src), `contracts "example.com/app/contracts"`) ||
+		!strings.Contains(string(src), "List(ctx context.Context) ([]contracts.User, error)") {
+		t.Fatalf("generated client:\n%s", src)
+	}
+}

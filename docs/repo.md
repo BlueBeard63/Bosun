@@ -102,7 +102,7 @@ rows, err := c.Users.Query().
 <figcaption>The transaction rides on the context, so different repos share one transaction.</figcaption>
 </figure>
 
-`Tx` runs a function inside a transaction. The callback's context carries the active transaction, and any `Repo[T]` method called with that context (including repos for other entity types) joins the same transaction. Returning a non-nil error rolls back, and nested `Tx` calls reuse the outermost transaction.
+`Tx` runs a function inside a transaction. The callback's context carries the active transaction, and any `Repo[T]` method on the same database called with that context (including repos for other entity types) joins the same transaction. Returning a non-nil error rolls back, and nested `Tx` calls on the same database reuse the outermost transaction.
 
 ```go
 err := c.Users.Tx(ctx, func(ctx context.Context) error {
@@ -125,6 +125,8 @@ var _ = gormrepomod.Named[User, *PrimaryDB]()
 ```
 
 A plain Go type alias does not work, because it shares the underlying `reflect.Type` with `*gorm.DB` and the registry cannot tell them apart; a named struct wrapper is required. Declare only one of `For[T]` or `Named[T, DB]` per entity, since both bind `repomod.Repo[T]`.
+
+A transaction belongs to one database, identified by its connection pool. Inside a `Tx` on the primary database, a repo bound to another database keeps running against that database outside the transaction, and its own `Tx` opens a separate transaction there; the two do not commit atomically. Named types that wrap the same `*gorm.DB` share transactions.
 
 ## Testing
 

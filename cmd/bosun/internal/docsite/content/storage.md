@@ -28,7 +28,7 @@ Bosun provides a driver-agnostic object store for blobs such as uploads, documen
 
 ## The Store interface
 
-A store reads and writes objects by key. `Get` returns `storemod.ErrNotFound` when the key is absent, and `Presign` returns `storemod.ErrUnsupported` on drivers that cannot sign URLs.
+A store reads and writes objects by key. `Get` returns `storemod.ErrNotFound` when the key is absent, and `Presign` returns `storemod.ErrUnsupported` on drivers that cannot sign URLs. `List` returns every object whose key starts with the prefix, at any depth, on every driver: `List(ctx, "docs/")` includes `docs/2024/report.pdf`.
 
 ```go
 type Store interface {
@@ -74,6 +74,8 @@ registry.RegisterInstance[*stores3mod.Options](app.Reg, &stores3mod.Options{
 ```
 
 `Put` sends a reader whose length is known up front (`*bytes.Reader`, `*strings.Reader`, `*bytes.Buffer`, a regular `*os.File`) in a single request, as long as it fits in one part. Larger objects, and readers of unknown length such as an HTTP request body, use multipart upload, with at most one part buffered in memory at a time. The part size is `Options.PartSize` (default 16 MiB, minimum 5 MiB), so a stream of unknown length can be up to 10,000 parts, or 156 GiB at the default. Each part is sent with a `Content-MD5` checksum, which every S3-compatible server checks.
+
+The WebDAV driver lists folders one level at a time with `Depth: 1` `PROPFIND` requests, since many servers disable `Depth: infinity`, and only descends into folders that can hold a match. Without `Options.HTTP` it uses a client with a `storewebdavmod.DefaultTimeout` (5 minutes) limit on each request, body included; pass your own `*http.Client` for a different policy. `Put` creates missing parent folders and remembers them, so repeated uploads into one folder cost a single request.
 
 ## Presigned URLs
 

@@ -18,8 +18,12 @@ import (
 )
 
 type SpecController struct {
-	app     *bosun.App  // injected: the app this controller is mounted on
-	scanner *errScanner // injected (has injected ScanOptions itself)
+	app     *bosun.App   // injected: the app this controller is mounted on
+	scanner *errScanner  // injected (has injected ScanOptions itself)
+	opts    *Options     // injected: info, servers, security schemes
+	docs    *DocsOptions // injected: interactive docs page
+
+	docsPage docsPage // rendered by Docs, set in Routes
 
 	mu     sync.Mutex
 	doc    []byte // cached spec document
@@ -31,7 +35,8 @@ var _ = bosun.Service[errScanner]()
 var _ = bosun.Controller[SpecController]("")
 
 func (c *SpecController) Routes(r *bosun.Router) {
-	r.Get("/openapi.json", c.Spec)
+	r.Get(specPath, c.Spec)
+	c.docsRoutes(r)
 }
 
 func (c *SpecController) Spec(w http.ResponseWriter, req *http.Request) {
@@ -79,6 +84,7 @@ func (c *SpecController) build(routes []bosun.RouteInfo) map[string]any {
 		return routes[i].Method < routes[j].Method
 	})
 	opIDs := map[string]bool{}
+	var allPerms []string // every route permission, for oauth2 scopes
 
 	var roots []reflect.Type
 	for _, rt := range routes {
@@ -139,11 +145,15 @@ func (c *SpecController) build(routes []bosun.RouteInfo) map[string]any {
 		for _, p := range pathParams {
 			schema := any(map[string]any{"type": "string"})
 			if sf, ok := fieldByTag(rt.In, "path", p); ok {
-				schema = constrain(schemaFor(sf.Type, schemas), sf.Type, fieldRules(sf))
+				schema = decorate(constrain(schemaFor(sf.Type, schemas), sf.Type, fieldRules(sf)), sf, false)
 			}
-			params = append(params, map[string]any{
+			param := map[string]any{
 				"name": p, "in": "path", "required": true, "schema": schema,
-			})
+			}
+			if sf, ok := fieldByTag(rt.In, "path", p); ok {
+				setDoc(param, rt.In, sf)
+			}
+			params = append(params, param)
 		}
 		// query + header params from the In type
 		if rt.In.Kind() == reflect.Struct {
@@ -155,10 +165,12 @@ func (c *SpecController) build(routes []bosun.RouteInfo) map[string]any {
 						continue // binding uses the first tag in path, query, header order
 					}
 					rules := fieldRules(sf)
-					params = append(params, map[string]any{
+					param := map[string]any{
 						"name": name, "in": in, "required": hasRule(rules, "required"),
-						"schema": constrain(schemaFor(sf.Type, schemas), sf.Type, rules),
-					})
+						"schema": decorate(constrain(schemaFor(sf.Type, schemas), sf.Type, rules), sf, false),
+					}
+					setDoc(param, rt.In, sf)
+					params = append(params, param)
 				}
 			}
 		}
@@ -179,20 +191,17 @@ func (c *SpecController) build(routes []bosun.RouteInfo) map[string]any {
 			}
 		}
 
+		perms := permissions(rt)
+		allPerms = append(allPerms, perms...)
+		c.annotate(op, rt, perms)
+
 		if paths[oaPath] == nil {
 			paths[oaPath] = map[string]any{}
 		}
 		paths[oaPath][strings.ToLower(rt.Method)] = op
 	}
 
-	return map[string]any{
-		"openapi": "3.0.3",
-		"info":    map[string]any{"title": "bosun API", "version": "1.0.0"},
-		"paths":   paths,
-		"components": map[string]any{
-			"schemas": schemas.defs,
-		},
-	}
+	return c.assemble(paths, schemas, allPerms)
 }
 
 // convertPath turns Go 1.22 patterns into OpenAPI form and extracts param

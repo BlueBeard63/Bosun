@@ -119,7 +119,7 @@ func (c *Notes) Routes(r *bosun.Router) {
 }
 ```
 
-`bosun.MetaPermissions` (`"permissions"`) is the conventional key for the permissions a route requires, as a `[]string`. Permission middleware should attach it with `WithMeta` (see [auth and permissions](./auth-and-permissions.md#record-the-permission-on-the-route)), so tooling and tests can read it. A test can then check that no mutating route was added without one:
+`bosun.MetaDoc` (`"doc"`) holds the `bosun.RouteDoc{Summary, Description}` set with `bosun.Doc`, which the [OpenAPI spec](./openapi.md#describe-operations-and-schemas) uses. `bosun.MetaPermissions` (`"permissions"`) is the conventional key for the permissions a route requires, as a `[]string`. Permission middleware should attach it with `WithMeta` (see [auth and permissions](./auth-and-permissions.md#record-the-permission-on-the-route)), so tooling and tests can read it. A test can then check that no mutating route was added without one:
 
 ```go
 func TestEveryMutatingRouteDeclaresPermission(t *testing.T) {

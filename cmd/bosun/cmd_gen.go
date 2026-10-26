@@ -108,7 +108,7 @@ func readManifest(src string) ([]byte, error) {
 
 func genRegistryCmd() *cobra.Command {
 	var dir, out string
-	var check bool
+	var check, noDocs bool
 	var tags []string
 	cmd := &cobra.Command{
 		Use:   "registry",
@@ -116,7 +116,10 @@ func genRegistryCmd() *cobra.Command {
 		Long: "Scans the current Go module for packages with package-level Bosun registrations " +
 			"(var _ = bosun.Controller[...], Service, Middleware, Default, DefaultBind, DefaultDynamic) " +
 			"and writes a file that blank-imports them, so main.go needs no hand-maintained side-effect imports. " +
-			"Run it from the package that calls bosun.New(), usually via //go:generate bosun gen registry.",
+			"Run it from the package that calls bosun.New(), usually via //go:generate bosun gen registry. " +
+			"When the module requires bosun " + registrygen.DocsMinVersion + " or later (or replaces it), the file also " +
+			"registers the doc comments of typed handlers and of struct types and fields, which the OpenAPI spec " +
+			"uses for summaries and descriptions; --no-docs leaves them out.",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			root, err := registrygen.FindModuleRoot(dir)
@@ -131,6 +134,7 @@ func genRegistryCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			target.NoDocs = noDocs
 			src, err := registrygen.Render(mod, target)
 			if err != nil {
 				return err
@@ -164,6 +168,7 @@ func genRegistryCmd() *cobra.Command {
 	cmd.Flags().StringVarP(&out, "out", "o", registrygen.FileName, "generated file name, relative to --dir")
 	cmd.Flags().BoolVar(&check, "check", false, "verify the file is up to date instead of writing it (for CI)")
 	cmd.Flags().StringSliceVar(&tags, "tags", nil, "comma-separated build tags to satisfy, as for go build -tags")
+	cmd.Flags().BoolVar(&noDocs, "no-docs", false, "leave doc comments for the OpenAPI spec out of the file")
 	return cmd
 }
 

@@ -64,6 +64,39 @@ func TestGenRegistryWriteAndCheck(t *testing.T) {
 	}
 }
 
+func TestGenRegistryDocs(t *testing.T) {
+	dir := t.TempDir()
+	files := map[string]string{
+		"go.mod":  "module example.com/app\n\ngo 1.22\n\nrequire github.com/bluebeard63/bosun v0.8.0\n",
+		"main.go": "package main\n\n// Out is the response.\ntype Out struct{}\n\nfunc main() {}\n",
+	}
+	for rel, body := range files {
+		if err := os.WriteFile(filepath.Join(dir, rel), []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	read := func() string {
+		t.Helper()
+		src, err := os.ReadFile(filepath.Join(dir, "zz_bosun_registry.go"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return string(src)
+	}
+	if msg, err := runGenRegistry(t, "--dir", dir); err != nil {
+		t.Fatalf("generate: %v (%s)", err, msg)
+	}
+	if src := read(); !strings.Contains(src, `"main.Out": "Out is the response."`) {
+		t.Fatalf("doc comments missing:\n%s", src)
+	}
+	if msg, err := runGenRegistry(t, "--dir", dir, "--no-docs"); err != nil {
+		t.Fatalf("generate --no-docs: %v (%s)", err, msg)
+	}
+	if src := read(); strings.Contains(src, "RegisterDocComments") {
+		t.Fatalf("--no-docs still wrote doc comments:\n%s", src)
+	}
+}
+
 func TestGenClientReadsQualifiedTypes(t *testing.T) {
 	dir := t.TempDir()
 	manifest := `{"service": "billing", "routes": [{"method": "GET", "path": "/users", "operation": "app.(*Users).List-fm",

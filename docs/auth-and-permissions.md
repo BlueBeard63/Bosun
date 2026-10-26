@@ -131,7 +131,7 @@ func HasPermission(roles ...string) bosun.MWRef {
 }
 ```
 
-After `Start`, `app.Routes()` lists each route with its `Meta`, so a test can assert that every mutating route requires a permission. See [inspecting registered routes](./routing-internals.md#inspecting-registered-routes). `WithMeta` works the same on a `bosun.Use[T](args...)` ref.
+After `Start`, `app.Routes()` lists each route with its `Meta`, so a test can assert that every mutating route requires a permission. See [inspecting registered routes](./routing-internals.md#inspecting-registered-routes). `WithMeta` works the same on a `bosun.Use[T](args...)` ref. The [OpenAPI spec](./openapi.md#document-authentication) lists the recorded permissions on each operation, as a security requirement when you configure a security scheme.
 
 ## Alternative: a registered singleton with Configure
 

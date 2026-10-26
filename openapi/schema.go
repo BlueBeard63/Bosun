@@ -1,6 +1,7 @@
 package openapi
 
 import (
+	"encoding/json"
 	"reflect"
 	"sort"
 	"strconv"
@@ -40,7 +41,11 @@ func structSchema(t reflect.Type, schemas *schemaSet) map[string]any {
 		if f.quoted {
 			schema = map[string]any{"type": "string"}
 		}
-		props[f.name] = constrain(schema, f.sf.Type, rules)
+		prop := decorate(constrain(schema, f.sf.Type, rules), f.sf, true)
+		if doc := fieldDoc(f.owner, f.sf); doc != "" {
+			prop = withExtras(prop, map[string]any{"description": doc})
+		}
+		props[f.name] = prop
 		if hasRule(rules, "required") {
 			required = append(required, f.name)
 		}
@@ -49,13 +54,64 @@ func structSchema(t reflect.Type, schemas *schemaSet) map[string]any {
 	if len(required) > 0 {
 		out["required"] = required
 	}
+	if k := typeKey(t); k != "" {
+		if doc := bosun.DocComment(k); doc != "" {
+			out["description"] = doc
+		}
+	}
 	return out
+}
+
+// decorate adds what a struct field says about its value beyond the
+// type: nullable: true for a pointer (when nullable is set, i.e. for body
+// properties, which encoding/json sends as null when nil) and the
+// `example` tag. A $ref can carry no siblings in OpenAPI 3.0, so a $ref
+// schema is wrapped in allOf first.
+func decorate(schema any, sf reflect.StructField, nullable bool) any {
+	extra := map[string]any{}
+	if nullable && sf.Type.Kind() == reflect.Pointer {
+		extra["nullable"] = true
+	}
+	if ex, ok := sf.Tag.Lookup("example"); ok {
+		extra["example"] = exampleValue(ex, schema)
+	}
+	return withExtras(schema, extra)
+}
+
+// withExtras sets extra's keys on schema, wrapping a $ref in allOf.
+func withExtras(schema any, extra map[string]any) any {
+	m, ok := schema.(map[string]any)
+	if !ok || len(extra) == 0 {
+		return schema
+	}
+	if _, ref := m["$ref"]; ref {
+		m = map[string]any{"allOf": []any{m}}
+	}
+	for k, v := range extra {
+		m[k] = v
+	}
+	return m
+}
+
+// exampleValue turns an `example` tag into a value of the schema's type:
+// the raw text for strings, otherwise the tag parsed as JSON (42, true,
+// ["a","b"], {"k":1}), falling back to the raw text when it isn't JSON.
+func exampleValue(raw string, schema any) any {
+	if m, ok := schema.(map[string]any); ok && m["type"] == "string" {
+		return raw
+	}
+	var v any
+	if err := json.Unmarshal([]byte(raw), &v); err == nil {
+		return v
+	}
+	return raw
 }
 
 // jsonField is one property of a struct as encoding/json sees it.
 type jsonField struct {
 	name   string
 	sf     reflect.StructField
+	owner  reflect.Type // struct that declares sf (an embedded one if promoted)
 	index  []int
 	tagged bool // name came from the json tag
 	quoted bool // ",string" option on a number or bool: sent as a string
@@ -113,7 +169,7 @@ func jsonFields(t reflect.Type) []jsonField {
 					next = append(next, level{t: ft, index: index})
 					continue
 				}
-				f := jsonField{name: name, sf: sf, index: index, tagged: name != ""}
+				f := jsonField{name: name, sf: sf, owner: lv.t, index: index, tagged: name != ""}
 				if name == "" {
 					f.name = sf.Name
 				}

@@ -7,6 +7,26 @@
 package main
 
 import (
+	"github.com/bluebeard63/bosun"
+
 	_ "example.com/shop/internal/billing" // Service[memStore], DefaultBind[Store, memStore], Middleware[Auth]
 	_ "example.com/shop/internal/users"   // Service[Repo], Controller[UsersController]
 )
+
+// Doc comments of typed handlers and of struct types and fields, for the
+// summaries and descriptions in the OpenAPI spec.
+var _ = bosun.RegisterDocComments(map[string]string{
+	"example.com/shop/internal/dto.User":                      "User is a user as the API returns it.",
+	"example.com/shop/internal/dto.User.ID":                   "ID is the user's key.",
+	"example.com/shop/internal/dto.User.Name":                 "Display name.",
+	"example.com/shop/internal/dto.UserID":                    "UserID selects a user.",
+	"example.com/shop/internal/dto.UserID.ID":                 "The user's key.",
+	"example.com/shop/internal/users.(*UsersController).List": "List returns every user's name.\n\nThe list is not paged.",
+	"example.com/shop/internal/users.UsersController":         "UsersController serves /users.",
+	"example.com/shop/internal/users.UsersController.Get":     "Get returns one user. Unknown IDs get 404.",
+	"example.com/shop/internal/users.UsersController.Repo":    "Injected.",
+	"example.com/shop/pkg/util.Pair":                          "Pair is two ints, in a package that doesn't import bosun.",
+	"example.com/shop/pkg/util.Pair.A":                        "The values.",
+	"example.com/shop/pkg/util.Pair.B":                        "The values.",
+	"main.Banner":                                             "Banner is printed at start; package main docs are keyed \"main.\".",
+})

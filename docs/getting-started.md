@@ -30,14 +30,17 @@ This tutorial walks you from an empty directory to a running Bosun service that 
 
 ## Before you start
 
-You need Go 1.22 or newer, because Bosun builds on the pattern-based routing added to the standard library `net/http` in that release.
+You need Go 1.22 or newer, because Bosun builds on the pattern-based routing added to the standard library `net/http` in that release. That covers the core framework and everything in this tutorial; the optional NATS, S3 and OpenTelemetry driver modules need Go 1.25.
 
 Install the framework into a new module:
 
 ```bash
+mkdir hello && cd hello
 go mod init example.com/hello
 go get github.com/bluebeard63/bosun
 ```
+
+This tutorial builds the app by hand so you can see every piece. To start from a generated, ready-to-run layout instead, use [`bosun new mono`](./cli.md#bosun-new-mono).
 
 ## Step 1: your first route
 
@@ -131,7 +134,11 @@ There is no constructor and no wiring code. Because `*Greeter` is a registered t
 
 ## Step 3: add a database
 
-External dependencies that you construct yourself (database handles, third-party clients) are registered as instances on the app registry before the app starts.
+External dependencies that you construct yourself (database handles, third-party clients) are registered as instances on the app registry before the app starts. This step uses GORM with SQLite. Bosun doesn't add them to your module for you, so fetch them first; the SQLite driver uses cgo, so you also need a C compiler on your `PATH`.
+
+```bash
+go get gorm.io/gorm gorm.io/driver/sqlite
+```
 
 ```go
 import (
@@ -140,9 +147,19 @@ import (
     "gorm.io/gorm"
 )
 
+type User struct {
+    ID    uint
+    Email string
+}
+
 func main() {
-    db, _ := gorm.Open(sqlite.Open("app.db"))
-    db.AutoMigrate(&User{})
+    db, err := gorm.Open(sqlite.Open("app.db"))
+    if err != nil {
+        log.Fatal(err)
+    }
+    if err := db.AutoMigrate(&User{}); err != nil {
+        log.Fatal(err)
+    }
 
     app := bosun.New()
     registry.RegisterInstance[*gorm.DB](app.Reg, db)
@@ -197,4 +214,6 @@ You now have a service with routing, injection, a database, middleware, and erro
 - [Controllers](./controllers.md) and [Services](./services.md) cover routing and dependency injection from basics to advanced use.
 - [Middleware](./middleware.md) shows authentication and typed context values.
 - [Forms](./forms.md) and [Files](./files.md) handle non-JSON input.
+- [OpenAPI](./openapi.md) generates a spec from these handlers and serves it with a Swagger UI page at `GET /docs`.
+- [The bosun CLI](./cli.md) scaffolds new apps (`bosun new`) and adds controllers, services and middleware to them (`bosun add`).
 - [API overview](./api-overview.md) is the reference for every public symbol.

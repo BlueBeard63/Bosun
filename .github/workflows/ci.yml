@@ -83,6 +83,49 @@ jobs:
             exit 1
           fi
 
+  vulncheck:
+    name: govulncheck
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # govulncheck reports standard-library vulnerabilities for the Go it
+      # runs on; the latest release is what users should build with.
+      - uses: actions/setup-go@v5
+        with:
+          go-version: stable
+          cache-dependency-path: "**/go.sum"
+      # Pinned govulncheck, run per module against the dependency versions
+      # users get; known, unfixable findings are in .github/govulncheck-allow.txt.
+      - name: govulncheck
+        run: bash scripts/govulncheck.sh . $NESTED_MODULES modules/outboxmod/pgtest
+
+  lint:
+    name: golangci-lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: stable
+          cache-dependency-path: "**/go.sum"
+      - uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9.3.0
+        with:
+          version: v2.15.0
+          install-only: true
+      - name: Create workspace
+        run: go work init . $NESTED_MODULES modules/outboxmod/pgtest
+      # One run per module (golangci-lint stops at module boundaries); every
+      # module shares the root .golangci.yml.
+      - name: golangci-lint
+        run: |
+          status=0
+          for m in . $NESTED_MODULES modules/outboxmod/pgtest; do
+            echo "::group::$m"
+            (cd "$m" && golangci-lint run ./...) || status=1
+            echo "::endgroup::"
+          done
+          exit $status
+
   nested:
     name: ${{ matrix.module }} (against this PR's bosun)
     runs-on: ubuntu-latest

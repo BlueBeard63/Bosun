@@ -34,7 +34,7 @@ type ShapeIn struct {
 	Blob     []byte   `json:"blob"`
 	Roles    []string `json:"roles"`
 	Count    int      `json:"count,string"`
-	secret   string
+	secret   string   //nolint:unused // unexported fields must stay out of the schema
 }
 
 type FilesIn struct {

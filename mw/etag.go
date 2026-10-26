@@ -123,7 +123,7 @@ func (w *etagWriter) WriteHeader(code int) {
 	w.wroteHeader = true
 	w.status = code
 	if code != http.StatusOK || w.Header().Get("ETag") != "" {
-		w.stream()
+		_ = w.stream() // nothing buffered yet; a write error resurfaces on Write
 	}
 }
 

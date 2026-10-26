@@ -208,7 +208,7 @@ func typed[In, Out any](r *Router, method, p string, h func(context.Context, *Re
 				typedReq.Params[name] = req.PathValue(name)
 			}
 		}
-		status := http.StatusOK
+		var status int
 		var out Out
 		var handlerErr error
 		var bindErr error
@@ -248,7 +248,7 @@ func typed[In, Out any](r *Router, method, p string, h func(context.Context, *Re
 			var body any
 			status, body = app.inputErrorBody(bindErr)
 			handlerErr = bindErr
-			writeJSON(w, status, body)
+			_ = writeJSON(w, status, body) // the client is gone or the body can't be written; nothing more to do
 		} else {
 			out, handlerErr = h(&call.rc, typedReq)
 			status = okStatus
@@ -258,7 +258,7 @@ func typed[In, Out any](r *Router, method, p string, h func(context.Context, *Re
 			if handlerErr != nil {
 				var msg string
 				status, msg = app.errorResponse(handlerErr)
-				writeJSON(w, status, map[string]string{"error": msg})
+				_ = writeJSON(w, status, map[string]string{"error": msg})
 			} else if err := writeOut(w, status, out, outIsString, outIsBytes, outIsEmptyStruct); err != nil {
 				status = http.StatusInternalServerError
 				handlerErr = fmt.Errorf("encoding response: %w", err)

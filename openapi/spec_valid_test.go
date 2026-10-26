@@ -3,6 +3,8 @@ package openapi
 import (
 	"context"
 	"fmt"
+	"net/http/httptest"
+	"os"
 	"reflect"
 	"regexp"
 	"sort"
@@ -342,6 +344,29 @@ func TestSpecIsValid(t *testing.T) {
 	// Dup and DupController collide; the later path gets the suffix.
 	if a, b := opID("/dup-a", "get"), opID("/dup-b", "get"); a != "DupList" || b != "DupList2" {
 		t.Fatalf("de-duplicated operationIds = %s, %s", a, b)
+	}
+}
+
+// TestWriteSpecForValidator writes the spec built from this package's
+// fixtures to $BOSUN_OPENAPI_SPEC_OUT, so CI can run a full OpenAPI validator
+// over it (assertValidSpec only covers the rules client generators trip
+// over). It is skipped when the variable is unset.
+func TestWriteSpecForValidator(t *testing.T) {
+	out := os.Getenv("BOSUN_OPENAPI_SPEC_OUT")
+	if out == "" {
+		t.Skip("set BOSUN_OPENAPI_SPEC_OUT to write the fixture spec for an external validator")
+	}
+	app := bosun.New()
+	if err := app.Start(); err != nil {
+		t.Fatal(err)
+	}
+	rec := httptest.NewRecorder()
+	app.Mux.ServeHTTP(rec, httptest.NewRequest("GET", "/openapi.json", nil))
+	if rec.Code != 200 {
+		t.Fatalf("spec endpoint: %d", rec.Code)
+	}
+	if err := os.WriteFile(out, rec.Body.Bytes(), 0o644); err != nil {
+		t.Fatal(err)
 	}
 }
 

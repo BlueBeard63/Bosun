@@ -127,7 +127,7 @@ jobs:
           exit $status
 
   generated:
-    name: Example registries
+    name: Example registries and OpenAPI validity
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -135,6 +135,9 @@ jobs:
         with:
           go-version: stable
           cache-dependency-path: "**/go.sum"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
       - name: Build bosun
         run: |
           go work init . $NESTED_MODULES
@@ -159,6 +162,15 @@ jobs:
             (cd "$d" && "$RUNNER_TEMP/bosun" gen registry $args --check) || status=1
           done
           exit $status
+      # The openapi tests check the rules client generators trip over; this
+      # runs a full validator over the spec built from the same fixtures.
+      - name: Validate the OpenAPI fixture spec
+        env:
+          BOSUN_OPENAPI_SPEC_OUT: ${{ runner.temp }}/openapi.json
+        run: |
+          go test -count=1 -run '^TestWriteSpecForValidator$' ./openapi/
+          test -s "$BOSUN_OPENAPI_SPEC_OUT"
+          npx --yes @redocly/cli@2.62.1 lint --extends=spec "$BOSUN_OPENAPI_SPEC_OUT"
 
   nested:
     name: ${{ matrix.module }} (against this PR's bosun)${{ matrix.go != 'stable' && format(' on Go {0}', matrix.go) || '' }}

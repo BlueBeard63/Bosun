@@ -452,17 +452,20 @@ func TestFormTagBinding(t *testing.T) {
 
 func TestBindFieldErrors(t *testing.T) {
 	type in struct {
-		N int      `query:"n"`
-		S []string `query:"s"`
+		N int `query:"n"`
 	}
 	req := httptest.NewRequest("GET", "/?n=notanumber", nil)
 	var v in
 	if err := bind(req, &v); err == nil {
 		t.Fatal("expected int parse error")
 	}
-	req = httptest.NewRequest("GET", "/?s=x", nil)
-	if err := bind(req, &v); err == nil || !strings.Contains(err.Error(), "unsupported") {
-		t.Fatalf("expected unsupported kind error, got %v", err)
+	type unsupported struct {
+		M map[string]string `query:"m"`
+	}
+	req = httptest.NewRequest("GET", "/", nil)
+	var u unsupported
+	if err := bind(req, &u); err == nil || !strings.Contains(err.Error(), "unsupported type") {
+		t.Fatalf("expected unsupported type error, got %v", err)
 	}
 }
 

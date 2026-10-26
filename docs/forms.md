@@ -99,7 +99,7 @@ type LoginIn struct {
 
 ## Repeated fields and edge cases
 
-The binder reads the first value of each field. For checkbox lists or repeated fields, read the underlying `req.PostForm` (a `url.Values`) in the handler. A single Bosun route decodes either JSON or a form based on the content type, not both, so use separate routes for separate content types, or take `In` as `string` or `any` and decode by hand.
+A scalar field takes the first value of its key. For checkbox lists or repeated fields, declare the field as a slice, such as ``Tags []string `form:"tag"` ``, to get every value, or read the underlying `req.PostForm` (a `url.Values`) in the handler. A single Bosun route decodes either JSON or a form based on the content type, not both, so use separate routes for separate content types, or take `In` as `string` or `any` and decode by hand.
 
 ```go
 tags := req.PostForm["tag"] // []string from ?tag=go&tag=web

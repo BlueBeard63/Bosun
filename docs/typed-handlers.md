@@ -137,7 +137,9 @@ type Example struct {
 }
 ```
 
-Path, query, header, and form tags support these scalar kinds: `string`, the signed and unsigned integers, `bool`, `float32`, and `float64`. Any other kind (slices, maps, `time.Time`) can't be bound from a tag and answers `500`, because it's a mistake in the code rather than bad input. For richer parsing, take the value as a string and parse it in the handler.
+Path, query, header, and form tags support these scalar kinds: `string`, the signed and unsigned integers, `bool`, `float32`, and `float64`. A pointer to one of them (`*int`) stays `nil` when the value is absent, so "not sent" can be told apart from zero. Query, header, and form tags also take a slice of a scalar kind, filled from every value of a repeated key, so `?tag=a&tag=b` binds `Tags []string` to `["a", "b"]`. Empty values count as absent throughout.
+
+Any other type (maps, structs, `time.Time`, or a slice on a path tag) can't be bound from a tag. Because that's a mistake in the code rather than bad input, `app.Start()` fails and names the field. For richer parsing, take the value as a string and parse it in the handler.
 
 ## Validation and input errors
 

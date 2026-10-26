@@ -122,7 +122,7 @@ Input that can't be converted into the `In` type is rejected in the same format 
 
 The last form is used for malformed JSON, where no single field is to blame. Decoder messages such as `json: cannot unmarshal ...` are never sent to clients.
 
-A binding tag on a field type that binding doesn't support (for example `[]string` with a `query` tag) is a mistake in the code, not bad input. It is answered with a `500` and the real cause is kept for the audit log.
+A binding tag on a field type that binding doesn't support (for example a `map` or `time.Time` with a `query` tag) is a mistake in the code, not bad input, so it fails at startup like a bad `validate` tag (below).
 
 ## Mistakes in tags fail at startup
 
@@ -130,6 +130,12 @@ A binding tag on a field type that binding doesn't support (for example `[]strin
 
 ```
 POST /users: invalid validate tag: CreateUserIn.Age: unknown validate rule "minimum"
+```
+
+Binding tags are checked the same way: a `path`, `query`, `header`, or `form` tag on a type binding can't fill, or on an unexported field, fails `Start`.
+
+```
+GET /events: invalid binding tag: field Since: query tag on unsupported type time.Time
 ```
 
 ## Rule reference

@@ -121,9 +121,14 @@ func typed[In, Out any](r *Router, method, p string, h func(context.Context, *Re
 	isString := inType.Kind() == reflect.String
 	isEmptyStruct := inType.Kind() == reflect.Struct && inType.NumField() == 0
 
-	// Compile validate tags now so malformed rules fail app.Start, not requests.
+	// Compile binding and validate tags now so a field bind can't fill or a
+	// malformed rule fails app.Start, not requests.
 	validates := inType.Kind() == reflect.Struct && !isEmptyStruct
 	if validates {
+		if _, err := bindPlanFor(inType); err != nil {
+			*r.errs = append(*r.errs, fmt.Errorf("%s %s: invalid binding tag: %w", method, p, err))
+			return
+		}
 		if _, err := planFor(inType); err != nil {
 			*r.errs = append(*r.errs, fmt.Errorf("%s %s: invalid validate tag: %w", method, p, err))
 			return

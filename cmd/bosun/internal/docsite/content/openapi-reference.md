@@ -9,8 +9,53 @@ This page describes exactly what `github.com/bluebeard63/bosun/openapi` generate
 | `SpecController` | Controller that serves the spec. Registered with prefix `""`, so it serves `GET /openapi.json`. Remount it with `bosun.OverridePrefix[openapi.SpecController](prefix)`. |
 | `ScanOptions{SourceDir string}` | Where the source scanner looks for files on disk. Default: `&ScanOptions{SourceDir: "."}`. Override it with `registry.RegisterInstance[*openapi.ScanOptions]`. An empty `SourceDir` turns off on-disk scanning. |
 | `Sources(fsys fs.FS) struct{}` | Registers an embedded source tree for scanning. Use it as `var _ = openapi.Sources(src)`. The registration applies to every app in the process. |
+| `Options` | The document's `info`, `servers` and `securitySchemes`, and which schemes routes with permissions require. Default: `&Options{}`. Override it with `registry.RegisterInstance[*openapi.Options]`. See [Options](#options). |
+| `Server{URL, Description string}` | One entry of `Options.Servers`. |
+| `SecurityScheme` | One entry of `Options.SecuritySchemes`: an OpenAPI 3.0 security scheme. See [Security](#security). |
+| `OAuthFlows`, `OAuthFlow` | The flows of an `oauth2` `SecurityScheme`: `Implicit`, `Password`, `ClientCredentials` and `AuthorizationCode`, each with `AuthorizationURL`, `TokenURL`, `RefreshURL` and `Scopes map[string]string`. |
 
-Importing the package registers the controller, the scanner service and the `ScanOptions` default. `bosun.Disable("github.com/bluebeard63/bosun/openapi")` removes all three from an app.
+Importing the package registers the controller, the scanner service and the `ScanOptions` and `Options` defaults. `bosun.Disable("github.com/bluebeard63/bosun/openapi")` removes them all from an app.
+
+## Options
+
+| Field | Spec field | Default |
+|---|---|---|
+| `Title string` | `info.title` | `bosun API` |
+| `Version string` | `info.version` | `1.0.0` |
+| `Description string` | `info.description` (CommonMark) | left out |
+| `Servers []Server` | `servers`, in order. `Server.Description` is left out when empty. | left out |
+| `SecuritySchemes map[string]SecurityScheme` | `components.securitySchemes`, keyed by name | left out |
+| `PermissionSchemes []string` | The schemes a route with permissions requires (see [Security](#security)). Names not in `SecuritySchemes` are ignored. | every scheme in `SecuritySchemes` |
+
+## Security
+
+`SecurityScheme` fields map to the OpenAPI 3.0 security scheme object; empty fields are left out:
+
+| Field | Spec field | Used with `Type` |
+|---|---|---|
+| `Type` | `type` | all: `http`, `apiKey`, `oauth2`, `openIdConnect` |
+| `Description` | `description` | all |
+| `Scheme`, `BearerFormat` | `scheme`, `bearerFormat` | `http` (`bearer`, `basic`, ...) |
+| `In`, `Name` | `in`, `name` | `apiKey` (`header`, `query`, `cookie`) |
+| `Flows` | `flows` | `oauth2` |
+| `OpenIDConnectURL` | `openIdConnectUrl` | `openIdConnect` |
+
+Per-route security comes from the route's permissions, the `[]string` stored under `bosun.MetaPermissions` (see [route metadata](./routing-internals.md#inspecting-registered-routes)), merged from the controller, its groups and the route, with duplicates removed:
+
+| Route | `security` | `x-permissions` |
+|---|---|---|
+| No permissions | left out | left out |
+| Permissions, no schemes configured | left out | the permissions |
+| Permissions, schemes configured | one requirement per scheme in `PermissionSchemes`, as alternatives | the permissions |
+
+In a requirement for an `oauth2` or `openIdConnect` scheme the scopes are the route's permissions. OpenAPI 3.0 allows no scopes for `http` and `apiKey` schemes, so their requirement is an empty list. For example, a route with permission `notes:write` and `PermissionSchemes: []string{"bearer", "oauth"}`:
+
+```json
+"security": [ { "bearer": [] }, { "oauth": ["notes:write"] } ],
+"x-permissions": ["notes:write"]
+```
+
+Every permission used by a route is also added to the `scopes` of each `oauth2` flow, with an empty description unless the flow's `Scopes` already describes it. Operations without permissions have no `security`; there is no document-wide `security`.
 
 ## Endpoint
 
@@ -24,6 +69,8 @@ Importing the package registers the controller, the scanner service and the `Sca
   "components": { "schemas": { "...": "..." } }
 }
 ```
+
+`info` comes from [Options](#options). `servers` and `components.securitySchemes` are added when `Options` configures them.
 
 The document is built from the serving app's `app.TypedRoutes()` on the first request, which comes after `Start` when the route list is complete, and the encoded bytes are served from then on. It is rebuilt only when the observed layer (see [Error layers](#error-layers)) has recorded a new status since. The source scan runs once per app, on the first request.
 
@@ -40,6 +87,7 @@ Each typed route (`bosun.Get`, `Post`, `Put`, `Delete`, `Patch`) becomes one ope
 | `parameters`, query | One per `In` field tagged `query:"name"`: `in: query`. `required` is `true` when the field has the `required` rule. The schema comes from the field type plus its constraints. |
 | `parameters`, header | One per `In` field tagged `header:"Name"`, in the same way as query parameters. |
 | `requestBody` | Only for `POST`, `PUT`, `PATCH` and `DELETE`, when `In` has at least one body property (an exported field that is not tagged `path`, `query`, `header` or `json:"-"`). It is `required: true`, with content type `application/json` and the schema of `In`. |
+| `security`, `x-permissions` | From the route's `bosun.MetaPermissions`. See [Security](#security). |
 | `responses` | See the next section. |
 
 Raw routes (`r.Get`, `r.Post` and so on) are not included.
@@ -109,7 +157,7 @@ Codes from the three layers are combined, and each code appears once.
 | `[]byte` | `{"type":"string","format":"byte"}` (base64, as `encoding/json` sends it) |
 | `[]T`, `[N]T` | `{"type":"array","items":<T>}` |
 | `map[K]V` | `{"type":"object","additionalProperties":<V>}` |
-| `*T` | Same as `T` |
+| `*T` | Same as `T`. As a struct property it also gets `"nullable": true` (a `$ref` is wrapped as `{"allOf":[{"$ref":...}],"nullable":true}`). |
 | Named struct | `{"$ref":"#/components/schemas/<Name>"}`, with the definition stored once (see [Schema names](#schema-names)). Recursive types are supported. |
 | Anonymous struct | Inline `{"type":"object","properties":{...}}` |
 | Anything else (interfaces, `any`, channels) | `{}` (any value) |
@@ -124,6 +172,7 @@ Properties follow `encoding/json`'s naming rules:
 - The fields of an embedded struct without a `json` name are flattened into the outer object. When names conflict, the shallower field wins, then the one with a `json` tag; otherwise the name is left out.
 - A number or `bool` field with the `,string` option is `{"type":"string"}`.
 - Fields with the `required` validation rule are listed in the object's `required` array.
+- An `example:"..."` tag becomes the property's (or parameter's) `example`. For a `string` schema the tag text is used as is; otherwise it is parsed as JSON, so `example:"42"` is a number, `example:"true"` a boolean and `example:"[\"a\"]"` an array. Text that isn't valid JSON is used as a string. On a `$ref` property the example is set next to an `allOf` wrapper.
 
 ### Schema names
 
@@ -162,7 +211,7 @@ The scanner links recorded statuses to a route by matching the package import pa
 
 These describe the current generator. Use [declarations](./openapi.md#declare-statuses-on-the-route) or your own tooling where they matter.
 
-- **Fixed document info.** `info.title` is always `bosun API` and `info.version` is always `1.0.0`. There are no `servers`, `tags` or `securitySchemes`.
+- **No tags or document-wide security.** Operations have no `tags`, and `security` is only set per operation, from permissions.
 - **Success is always `200` with JSON.** A `string` or `[]byte` `Out` is still described as `application/json`, and an empty `struct{}` appears as an empty object. Bosun actually sends `text/plain`, `application/octet-stream` and no body respectively.
 - **Form bodies are described as JSON.** Fields tagged `form` appear as JSON body properties, and form and multipart request bodies get an `application/json` content type.
 - **Custom validation is invisible.** Checks made in `Validate()` methods aren't reflected in schemas.

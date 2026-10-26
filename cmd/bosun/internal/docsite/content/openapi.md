@@ -173,6 +173,56 @@ Schemas are generated from your `In` and `Out` types:
 
 Schemas are keyed by package and type name, so `users.Out` is `UsersOut` and two `Out` types in different packages get separate entries. Types in package `main` keep their bare name. The [reference](./openapi-reference.md#schema-names) has the exact rules.
 
+## Set the title, version and servers
+
+Register your own `openapi.Options` before `Start`:
+
+```go
+app := bosun.New()
+registry.RegisterInstance[*openapi.Options](app.Reg, &openapi.Options{
+    Title:       "Notes API",
+    Version:     "2.1.0",
+    Description: "Create, list and delete notes.",
+    Servers: []openapi.Server{
+        {URL: "https://api.example.com", Description: "production"},
+    },
+})
+```
+
+Without it, the document says `bosun API` version `1.0.0` and lists no servers.
+
+## Document authentication
+
+Add your security schemes to `Options.SecuritySchemes`. Routes that carry permissions (`bosun.MetaPermissions`, usually attached by your permission middleware with `WithMeta`) then list a security requirement:
+
+```go
+registry.RegisterInstance[*openapi.Options](app.Reg, &openapi.Options{
+    SecuritySchemes: map[string]openapi.SecurityScheme{
+        "bearer": {Type: "http", Scheme: "bearer", BearerFormat: "JWT"},
+    },
+})
+
+// in a controller
+bosun.Post(r, "/notes", c.Create, bosun.Meta(bosun.MetaPermissions, []string{"notes:write"}))
+```
+
+`POST /notes` now has `"security": [{"bearer": []}]` and `"x-permissions": ["notes:write"]`. With an `oauth2` or `openIdConnect` scheme the permissions are listed as the requirement's scopes instead, and they are added to the oauth2 flows' scopes. With several schemes, each is an alternative; set `PermissionSchemes` to pick which ones apply. The [reference](./openapi-reference.md#security) has the full mapping.
+
+## Mark nullable fields and add examples
+
+A pointer field in a body type is documented as `nullable: true`, since `encoding/json` sends a nil pointer as `null`. Add an `example` tag to show a sample value:
+
+```go
+type NoteIn struct {
+    Title string   `json:"title" example:"Groceries"`
+    Pages int      `json:"pages" example:"12"`
+    Due   *string  `json:"due" example:"2024-05-01"` // nullable
+    Tags  []string `json:"tags" example:"[\"home\"]"`
+}
+```
+
+Tags on non-string fields are read as JSON. `example` also works on `path`, `query` and `header` fields.
+
 ## Add an interactive documentation page
 
 Serve Swagger UI (or Redoc) from a raw route and point it at the spec. The [tutorial](./openapi-tutorial.md#step-8-browse-the-api-in-swagger-ui) has a complete `DocsController` you can copy. Because it uses a raw route, the page itself stays out of the spec.

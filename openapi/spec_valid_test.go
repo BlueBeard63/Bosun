@@ -2,9 +2,11 @@ package openapi
 
 import (
 	"context"
+	"fmt"
 	"reflect"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -94,6 +96,28 @@ func assertValidSpec(t *testing.T, spec map[string]any) {
 	if spec["openapi"] != "3.0.3" {
 		t.Errorf("openapi = %v", spec["openapi"])
 	}
+	info, _ := spec["info"].(map[string]any)
+	if title, _ := info["title"].(string); title == "" {
+		t.Errorf("info.title missing: %v", info)
+	}
+	if version, _ := info["version"].(string); version == "" {
+		t.Errorf("info.version missing: %v", info)
+	}
+	if servers, ok := spec["servers"]; ok {
+		list, _ := servers.([]any)
+		if len(list) == 0 {
+			t.Errorf("servers present but empty")
+		}
+		for _, s := range list {
+			if url, _ := s.(map[string]any)["url"].(string); url == "" {
+				t.Errorf("server without url: %v", s)
+			}
+		}
+	}
+	securitySchemes, _ := spec["components"].(map[string]any)["securitySchemes"].(map[string]any)
+	for name, s := range securitySchemes {
+		checkSecurityScheme(t, name, s.(map[string]any))
+	}
 	schemas, _ := spec["components"].(map[string]any)["schemas"].(map[string]any)
 	for name, s := range schemas {
 		if !componentKey.MatchString(name) {
@@ -150,6 +174,30 @@ func assertValidSpec(t *testing.T, spec map[string]any) {
 				t.Errorf("%s: path parameters %v don't match placeholders %v", where, pathParams, placeholders)
 			}
 
+			if sec, ok := op["security"]; ok {
+				reqs, _ := sec.([]any)
+				if len(reqs) == 0 {
+					t.Errorf("%s: security present but empty", where)
+				}
+				for _, r := range reqs {
+					for name, scopes := range r.(map[string]any) {
+						scheme, ok := securitySchemes[name].(map[string]any)
+						if !ok {
+							t.Errorf("%s: security requirement names undefined scheme %q", where, name)
+							continue
+						}
+						list, ok := scopes.([]any)
+						if !ok {
+							t.Errorf("%s: scopes for %q are %T, want an array", where, name, scopes)
+						}
+						typ := scheme["type"]
+						if len(list) > 0 && typ != "oauth2" && typ != "openIdConnect" {
+							t.Errorf("%s: %s scheme %q must have no scopes, has %v", where, typ, name, list)
+						}
+					}
+				}
+			}
+
 			responses, _ := op["responses"].(map[string]any)
 			if len(responses) == 0 {
 				t.Errorf("%s: no responses", where)
@@ -174,7 +222,34 @@ func checkSchema(t *testing.T, where string, s any, schemas map[string]any) {
 		if schemas[strings.TrimPrefix(ref, "#/components/schemas/")] == nil {
 			t.Errorf("%s: $ref %s doesn't resolve", where, ref)
 		}
+		if len(m) > 1 {
+			t.Errorf("%s: $ref has siblings, which OpenAPI 3.0 ignores: %v", where, m)
+		}
 		return
+	}
+	if n, ok := m["nullable"]; ok {
+		if n != true {
+			t.Errorf("%s: nullable = %v", where, n)
+		}
+		if m["type"] == nil && m["allOf"] == nil {
+			t.Errorf("%s: nullable without a type or allOf", where)
+		}
+	}
+	if all, ok := m["allOf"]; ok {
+		list, _ := all.([]any)
+		if len(list) == 0 {
+			t.Errorf("%s: empty allOf", where)
+		}
+		for i, s := range list {
+			checkSchema(t, where+".allOf"+strconv.Itoa(i), s, schemas)
+		}
+	}
+	if ex, ok := m["example"]; ok {
+		want := map[any]string{"string": "string", "integer": "float64", "number": "float64",
+			"boolean": "bool", "array": "[]interface {}", "object": "map[string]interface {}"}[m["type"]]
+		if got := reflect.TypeOf(ex).String(); want != "" && got != want {
+			t.Errorf("%s: example %v is %s, schema type %v", where, ex, got, m["type"])
+		}
 	}
 	if m["type"] == "array" {
 		if _, has := m["enum"]; has {
@@ -198,6 +273,42 @@ func checkSchema(t *testing.T, where string, s any, schemas map[string]any) {
 	}
 	if ap, ok := m["additionalProperties"]; ok {
 		checkSchema(t, where+".additionalProperties", ap, schemas)
+	}
+}
+
+// checkSecurityScheme checks the fields OpenAPI 3.0.3 requires per type.
+func checkSecurityScheme(t *testing.T, name string, s map[string]any) {
+	t.Helper()
+	need := map[string][]string{
+		"http":          {"scheme"},
+		"apiKey":        {"in", "name"},
+		"oauth2":        {"flows"},
+		"openIdConnect": {"openIdConnectUrl"},
+	}
+	fields, ok := need[fmt.Sprint(s["type"])]
+	if !ok {
+		t.Errorf("security scheme %s: unknown type %v", name, s["type"])
+	}
+	for _, f := range fields {
+		if s[f] == nil || s[f] == "" {
+			t.Errorf("security scheme %s: %s requires %s", name, s["type"], f)
+		}
+	}
+	if in := s["in"]; in != nil && in != "header" && in != "query" && in != "cookie" {
+		t.Errorf("security scheme %s: in = %v", name, in)
+	}
+	flows, _ := s["flows"].(map[string]any)
+	for fname, f := range flows {
+		flow := f.(map[string]any)
+		if _, ok := flow["scopes"].(map[string]any); !ok {
+			t.Errorf("security scheme %s flow %s: scopes required", name, fname)
+		}
+		if (fname == "implicit" || fname == "authorizationCode") && flow["authorizationUrl"] == nil {
+			t.Errorf("security scheme %s flow %s: authorizationUrl required", name, fname)
+		}
+		if fname != "implicit" && flow["tokenUrl"] == nil {
+			t.Errorf("security scheme %s flow %s: tokenUrl required", name, fname)
+		}
 	}
 }
 

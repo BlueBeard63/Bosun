@@ -22,7 +22,9 @@ import (
 // The adapter encodes Out as JSON, maps errors to status codes, emits audit
 // events, and records the route for OpenAPI generation.
 
-// RouteInfo describes one typed route, for OpenAPI generation and tooling.
+// RouteInfo describes one mounted route, for OpenAPI generation and tooling.
+// Typed routes (bosun.Get(r, ...)) have In and Out set; raw routes
+// (r.Get(...)) have Raw true and In/Out nil.
 type RouteInfo struct {
 	Method   string
 	Path     string
@@ -30,10 +32,36 @@ type RouteInfo struct {
 	In       reflect.Type
 	Out      reflect.Type
 	Declared []int // error statuses declared via bosun.Errors(...)
+
+	// Raw is true for routes mounted with the untyped r.Get/r.Post/...
+	// escape hatch. They appear in app.Routes() but not app.TypedRoutes().
+	Raw bool
+
+	// Meta holds the metadata attached with bosun.Meta or MWRef.WithMeta on
+	// the controller, its groups and the route itself. Nil when none.
+	Meta map[string]any
+
+	// Middleware names the controller, group and route middleware wrapping
+	// the handler, outermost first: the type for bosun.Use[T]() (e.g.
+	// "mw.RequireAuth"), the function name for bosun.UseFunc(f). App-wide
+	// middleware (WithMiddleware) is not listed.
+	Middleware []string
 }
 
-// RouteOpt configures a typed route: middleware refs (bosun.Use[T]()) and
-// declared error statuses (bosun.Errors(...)).
+// MetaPermissions is the conventional Meta key for the permissions a route
+// requires. Its value is a []string. Like any []string metadata, values set
+// at several levels (controller, group, route, middleware helpers)
+// accumulate rather than replace each other. Tooling such as OpenAPI
+// generation reads it, so permission middleware should attach it:
+//
+//	func Require(perm string) bosun.MWRef {
+//	    return bosun.UseFunc(requirePerm(perm)).
+//	        WithMeta(bosun.MetaPermissions, []string{perm})
+//	}
+const MetaPermissions = "permissions"
+
+// RouteOpt configures a typed route: middleware refs (bosun.Use[T]()),
+// metadata (bosun.Meta(...)) and declared error statuses (bosun.Errors(...)).
 type RouteOpt interface{ routeOpt() }
 
 func (MWRef) routeOpt() {}
@@ -46,18 +74,22 @@ func (declaredErrors) routeOpt() {}
 // generation in binaries where source scanning isn't available or desired.
 func Errors(codes ...int) RouteOpt { return declaredErrors(codes) }
 
-// routeTable holds the typed-route metadata one App has mounted and the
-// statuses those routes have returned. Each App owns its own, so apps built
-// in the same process (e.g. in tests) never see each other's routes.
+// routeTable holds the route metadata one App has mounted and the statuses
+// those routes have returned. Each App owns its own, so apps built in the
+// same process (e.g. in tests) never see each other's routes.
 type routeTable struct {
 	mu       sync.Mutex
-	routes   []RouteInfo
+	routes   []RouteInfo // typed routes only
+	all      []RouteInfo // typed and raw routes, in mount order
 	observed map[string]map[int]struct{}
 }
 
 func (t *routeTable) add(ri RouteInfo) {
 	t.mu.Lock()
-	t.routes = append(t.routes, ri)
+	if !ri.Raw {
+		t.routes = append(t.routes, ri)
+	}
+	t.all = append(t.all, ri)
 	t.mu.Unlock()
 }
 
@@ -67,9 +99,28 @@ func (t *routeTable) snapshot() []RouteInfo {
 	return append([]RouteInfo(nil), t.routes...)
 }
 
+func (t *routeTable) snapshotAll() []RouteInfo {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return append([]RouteInfo(nil), t.all...)
+}
+
 // TypedRoutes returns the typed routes mounted on this app, in mount order.
 // Complete after Start; OpenAPI generation and the deploy manifest read it.
+// Raw routes are left out; Routes includes them.
 func (a *App) TypedRoutes() []RouteInfo { return a.routes.snapshot() }
+
+// Routes returns every route mounted by this app's controllers, typed and
+// raw (Raw true), in mount order. Complete after Start. Use it for checks
+// that must cover every route, e.g. that each mutating route declares a
+// permission:
+//
+//	for _, rt := range app.Routes() {
+//	    if rt.Method != http.MethodGet && rt.Meta[bosun.MetaPermissions] == nil {
+//	        t.Errorf("%s %s declares no permission", rt.Method, rt.Path)
+//	    }
+//	}
+func (a *App) Routes() []RouteInfo { return a.routes.snapshotAll() }
 
 // Process-wide aggregate kept for the deprecated package-level TypedRoutes.
 var (
@@ -79,6 +130,9 @@ var (
 
 func recordRoute(a *App, ri RouteInfo) {
 	a.routes.add(ri)
+	if ri.Raw {
+		return // the deprecated aggregate stays typed-only
+	}
 	routeIndexMu.Lock()
 	routeIndex = append(routeIndex, ri)
 	routeIndexMu.Unlock()

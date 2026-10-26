@@ -102,6 +102,7 @@ func typed[In, Out any](r *Router, method, p string, h func(context.Context, *Re
 			declared = append(declared, v...)
 		}
 	}
+	meta, mwNames := r.describe(mws)
 
 	p = normalizePath(p)
 	full := r.fullPath(p)
@@ -140,6 +141,9 @@ func typed[In, Out any](r *Router, method, p string, h func(context.Context, *Re
 		In:       inType,
 		Out:      outType,
 		Declared: declared,
+
+		Meta:       meta,
+		Middleware: mwNames,
 	})
 
 	app := r.app

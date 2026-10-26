@@ -10,15 +10,18 @@ import (
 // Open launches the default browser pointing at url. It returns as soon as the
 // launcher process starts.
 func Open(url string) error {
-	var name string
-	var args []string
-	switch runtime.GOOS {
-	case "darwin":
-		name, args = "open", []string{url}
-	case "windows":
-		name, args = "rundll32", []string{"url.dll,FileProtocolHandler", url}
-	default:
-		name, args = "xdg-open", []string{url}
-	}
+	name, args := command(runtime.GOOS, url)
 	return exec.Command(name, args...).Start()
+}
+
+// command returns the launcher and its arguments for opening url on goos.
+func command(goos, url string) (name string, args []string) {
+	switch goos {
+	case "darwin":
+		return "open", []string{url}
+	case "windows":
+		return "rundll32", []string{"url.dll,FileProtocolHandler", url}
+	default:
+		return "xdg-open", []string{url}
+	}
 }

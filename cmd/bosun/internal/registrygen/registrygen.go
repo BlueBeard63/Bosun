@@ -488,7 +488,7 @@ func registrations(f *ast.File, local string) []string {
 }
 
 func registrationName(fun ast.Expr, local string) (string, bool) {
-	var sel ast.Expr = fun
+	sel := fun
 	var typeArgs []ast.Expr
 	switch x := fun.(type) {
 	case *ast.IndexExpr:

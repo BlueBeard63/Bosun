@@ -4,5 +4,5 @@ go 1.22
 
 require (
 	github.com/bluebeard63/bosun v0.7.0
-	github.com/rabbitmq/amqp091-go v1.10.0
+	github.com/rabbitmq/amqp091-go v1.14.0
 )

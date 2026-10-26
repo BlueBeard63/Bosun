@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"mime"
 	"slices"
 	"sort"
 	"testing"
@@ -35,7 +36,9 @@ func Run(t *testing.T, s storemod.Store) {
 	if obj.Size != 5 {
 		t.Fatalf("size = %d, want 5", obj.Size)
 	}
-	if obj.ContentType != "text/plain" {
+	// Compare the media type only: WebDAV servers derive the type from the
+	// file extension and add parameters (text/plain; charset=utf-8).
+	if mt, _, _ := mime.ParseMediaType(obj.ContentType); mt != "text/plain" {
 		t.Fatalf("content type = %q, want text/plain", obj.ContentType)
 	}
 

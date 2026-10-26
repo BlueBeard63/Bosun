@@ -245,7 +245,11 @@ func (s *WebDAVStore) Get(ctx context.Context, key string) (io.ReadCloser, *stor
 	if err != nil {
 		return nil, nil, err
 	}
-	resp, err := s.do(ctx, http.MethodGet, u, nil, nil)
+	// Ask for the stored bytes as-is. Otherwise net/http requests gzip and
+	// transparently decompresses it, and a server that compresses on the fly
+	// (rclone, nginx, Apache mod_deflate) leaves no Content-Length, so the
+	// object's size would be unknown (-1).
+	resp, err := s.do(ctx, http.MethodGet, u, nil, map[string]string{"Accept-Encoding": "identity"})
 	if err != nil {
 		return nil, nil, err
 	}

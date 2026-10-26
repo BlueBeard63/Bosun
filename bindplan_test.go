@@ -81,7 +81,7 @@ func TestUnsupportedBindTagFailsMount(t *testing.T) {
 		IDs []int `path:"ids"`
 	}
 	type unexportedIn struct {
-		id int `path:"id"`
+		id int `path:"id"` //nolint:unused // the binder must reject unexported fields
 	}
 	app := newStarted(t)
 	var errs []error

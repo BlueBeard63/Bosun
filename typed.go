@@ -157,6 +157,7 @@ func typed[In, Out any](r *Router, method, p string, h func(context.Context, *Re
 	})
 
 	app := r.app
+	observed := statusesFor(app, method, full) // resolved now: no lookup or lock per request
 	var auditorOnce sync.Once
 	var auditor Auditor
 	var auditFilter AuditFilter
@@ -233,7 +234,7 @@ func typed[In, Out any](r *Router, method, p string, h func(context.Context, *Re
 			}
 		}
 
-		recordObserved(app, method, full, status)
+		observed.add(status)
 
 		if auditor != nil {
 			ev := AuditEvent{

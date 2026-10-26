@@ -34,7 +34,10 @@ var dbSeq atomic.Int64
 
 // memDB opens a migrated, uniquely named in-memory DB, which keeps tests
 // isolated, also across -count runs (a plain :memory: DSN would give each
-// pooled connection its own database).
+// pooled connection its own database). The pool is limited to one
+// connection: in shared-cache mode a second connection touching a table
+// that another is writing fails at once with "database table is locked"
+// (busy_timeout doesn't apply), so the test's own reads would race the relay.
 func memDB(t *testing.T) *gorm.DB {
 	t.Helper()
 	dsn := "file:" + t.Name() + strconv.FormatInt(dbSeq.Add(1), 10) + "?mode=memory&cache=shared"
@@ -42,6 +45,11 @@ func memDB(t *testing.T) *gorm.DB {
 	if err != nil {
 		t.Fatal(err)
 	}
+	sqlDB, err := db.DB()
+	if err != nil {
+		t.Fatal(err)
+	}
+	sqlDB.SetMaxOpenConns(1)
 	if err := db.AutoMigrate(&outboxmod.Record{}); err != nil {
 		t.Fatal(err)
 	}

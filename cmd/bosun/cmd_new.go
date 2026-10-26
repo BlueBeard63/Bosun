@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"fmt"
 	"io"
+	"path/filepath"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -21,7 +22,7 @@ func newCmd() *cobra.Command {
 }
 
 func newServiceCmd() *cobra.Command {
-	var module, event string
+	var module, event, bosunDir string
 	var port int
 	var yes bool
 	cmd := &cobra.Command{
@@ -37,11 +38,18 @@ func newServiceCmd() *cobra.Command {
 			if event == "" {
 				event = p.choose("Event backend", []string{"inmem", "amqp", "nats", "redis", "none"}, "inmem")
 			}
-			written, err := scaffold.WriteService(name, scaffold.Service{Module: module, Name: name, Port: port, Event: event})
+			local, err := absOrEmpty(bosunDir)
+			if err != nil {
+				return err
+			}
+			written, err := scaffold.WriteService(name, scaffold.Service{
+				Module: module, Name: name, Port: port, Event: event, LocalBosun: local,
+			})
 			if err != nil {
 				return err
 			}
 			fmt.Fprintf(cmd.OutOrStdout(), "Created %d files in %s/\n", len(written), name)
+			tidy(cmd, name)
 			return nil
 		},
 	}
@@ -49,11 +57,12 @@ func newServiceCmd() *cobra.Command {
 	cmd.Flags().StringVar(&event, "event", "", "event backend: inmem|amqp|nats|redis|none")
 	cmd.Flags().IntVar(&port, "port", 8080, "listen port")
 	cmd.Flags().BoolVarP(&yes, "yes", "y", false, "accept defaults without prompting")
+	cmd.Flags().StringVar(&bosunDir, "bosun-dir", "", "build against a local bosun checkout (adds go.mod replace directives)")
 	return cmd
 }
 
 func newProjectCmd() *cobra.Command {
-	var module, service, event string
+	var module, service, event, bosunDir string
 	var port int
 	var yes bool
 	cmd := &cobra.Command{
@@ -72,13 +81,18 @@ func newProjectCmd() *cobra.Command {
 			if event == "" {
 				event = p.choose("Event backend", []string{"inmem", "amqp", "nats", "redis", "none"}, "inmem")
 			}
+			local, err := absOrEmpty(bosunDir)
+			if err != nil {
+				return err
+			}
 			written, err := scaffold.WriteProject(name, scaffold.Project{
-				Module: module, Name: name, Service: service, Port: port, Event: event,
+				Module: module, Name: name, Service: service, Port: port, Event: event, LocalBosun: local,
 			})
 			if err != nil {
 				return err
 			}
 			fmt.Fprintf(cmd.OutOrStdout(), "Created %d files in %s/\n", len(written), name)
+			tidy(cmd, filepath.Join(name, "services", service))
 			return nil
 		},
 	}
@@ -87,7 +101,24 @@ func newProjectCmd() *cobra.Command {
 	cmd.Flags().StringVar(&event, "event", "", "event backend: inmem|amqp|nats|redis|none")
 	cmd.Flags().IntVar(&port, "port", 8080, "listen port")
 	cmd.Flags().BoolVarP(&yes, "yes", "y", false, "accept defaults without prompting")
+	cmd.Flags().StringVar(&bosunDir, "bosun-dir", "", "build against a local bosun checkout (adds go.mod replace directives)")
 	return cmd
+}
+
+// tidy runs `go mod tidy` in a new service so it builds straight away. A
+// failure (no go command, or offline) leaves the files in place and tells the
+// user to run it themselves.
+func tidy(cmd *cobra.Command, dir string) {
+	if err := scaffold.Tidy(dir); err != nil {
+		fmt.Fprintf(cmd.ErrOrStderr(), "warning: %v\nRun `go mod tidy` in %s before building.\n", err, dir)
+	}
+}
+
+func absOrEmpty(dir string) (string, error) {
+	if dir == "" {
+		return "", nil
+	}
+	return filepath.Abs(dir)
 }
 
 // prompter reads answers from stdin, or returns defaults when yes is set (CI).

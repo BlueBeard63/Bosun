@@ -5,9 +5,14 @@
 package scaffold
 
 import (
+	"errors"
+	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"regexp"
 	"runtime/debug"
+	"strconv"
 	"strings"
 	"text/template"
 
@@ -20,6 +25,12 @@ type Service struct {
 	Name   string // service name
 	Port   int
 	Event  string // inmem | amqp | nats | redis | none
+
+	// LocalBosun, when set, is a local checkout of the bosun repository: the
+	// generated go.mod replaces bosun (and the event driver module) with it.
+	// It is for developing Bosun itself, so a scaffold builds against
+	// unreleased changes.
+	LocalBosun string
 }
 
 type serviceData struct {
@@ -27,11 +38,23 @@ type serviceData struct {
 	EventImport  string
 	EventPkg     string
 	EventCall    string // "Default" or "Use"
+	EventModule  string // driver module to require; "" when the backend lives in bosun
 	BosunVersion string // github.com/bluebeard63/bosun version to require
+	GoVersion    string // go directive of the generated go.mod
+	GoImage      string // golang image tag the Dockerfile builds with
+	BosunReplace string // quoted replacement path for bosun, from LocalBosun
+	EventReplace string // quoted replacement path for EventModule, from LocalBosun
+}
+
+// minGoVersion is the go directive a fresh service needs. Broker drivers that
+// require a newer Go than bosun itself raise it, matching the driver module's
+// own go directive, so `go mod tidy` has nothing to bump.
+var minGoVersion = map[string]string{
+	"nats": "1.25.0",
 }
 
 func (s Service) data() serviceData {
-	d := serviceData{Service: s, BosunVersion: bosunVersion()}
+	d := serviceData{Service: s, BosunVersion: bosunVersion(), GoVersion: "1.22"}
 	switch s.Event {
 	case "amqp":
 		d.EventImport, d.EventPkg, d.EventCall = "github.com/bluebeard63/bosun/modules/eventamqpmod", "eventamqpmod", "Use"
@@ -43,7 +66,32 @@ func (s Service) data() serviceData {
 	default:
 		d.EventImport, d.EventPkg, d.EventCall = "github.com/bluebeard63/bosun/modules/eventmemmod", "eventmemmod", "Default"
 	}
+	if d.EventCall == "Use" {
+		// Broker drivers are separate modules, released alongside bosun.
+		d.EventModule = d.EventImport
+	}
+	if v, ok := minGoVersion[s.Event]; ok {
+		d.GoVersion = v
+	}
+	d.GoImage = goImage(d.GoVersion)
+	if s.LocalBosun != "" {
+		root := filepath.ToSlash(s.LocalBosun)
+		d.BosunReplace = strconv.Quote(root)
+		if d.EventModule != "" {
+			d.EventReplace = strconv.Quote(root + "/modules/" + d.EventPkg)
+		}
+	}
 	return d
+}
+
+// goImage maps a go directive ("1.25.0") to the golang image tag ("1.25")
+// whose toolchain satisfies it.
+func goImage(goVersion string) string {
+	parts := strings.SplitN(goVersion, ".", 3)
+	if len(parts) < 2 {
+		return goVersion
+	}
+	return parts[0] + "." + parts[1]
 }
 
 // bosunModulePath is the module scaffolded projects depend on.
@@ -118,22 +166,78 @@ func writeRegistry(dir string) (string, error) {
 	return full, os.WriteFile(full, src, 0o644)
 }
 
+// ErrNoGo reports that the go command isn't on PATH, so Tidy couldn't run.
+var ErrNoGo = errors.New("go command not found on PATH")
+
+// Tidy runs `go mod tidy` in a scaffolded service, which resolves its
+// dependencies and writes go.sum, then points the Dockerfile at a golang
+// image whose toolchain satisfies the resulting go directive. The official
+// images set GOTOOLCHAIN=local, so an older image can't build the service.
+func Tidy(dir string) error {
+	if err := goCmd(dir, "mod", "tidy"); err != nil {
+		return err
+	}
+	return syncDockerfile(dir)
+}
+
+func goCmd(dir string, args ...string) error {
+	bin, err := exec.LookPath("go")
+	if err != nil {
+		return ErrNoGo
+	}
+	cmd := exec.Command(bin, args...)
+	cmd.Dir = dir
+	if out, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("go %s in %s: %v\n%s", strings.Join(args, " "), dir, err, out)
+	}
+	return nil
+}
+
+var (
+	goDirectiveRE = regexp.MustCompile(`(?m)^go (\S+)`)
+	dockerFromRE  = regexp.MustCompile(`(?m)^FROM golang:\S+`)
+)
+
+// syncDockerfile rewrites the Dockerfile's build image to match go.mod.
+func syncDockerfile(dir string) error {
+	mod, err := os.ReadFile(filepath.Join(dir, "go.mod"))
+	if err != nil {
+		return err
+	}
+	m := goDirectiveRE.FindSubmatch(mod)
+	if m == nil {
+		return nil
+	}
+	path := filepath.Join(dir, "Dockerfile")
+	df, err := os.ReadFile(path)
+	if err != nil {
+		return err
+	}
+	df = dockerFromRE.ReplaceAll(df, []byte("FROM golang:"+goImage(string(m[1]))))
+	return os.WriteFile(path, df, 0o644)
+}
+
 // Project describes a workspace to scaffold, including its first service.
 type Project struct {
-	Module  string
-	Name    string
-	Service string // first service name
-	Port    int
-	Event   string
+	Module     string
+	Name       string
+	Service    string // first service name
+	Port       int
+	Event      string
+	LocalBosun string // see Service.LocalBosun
 }
 
 // WriteProject renders a workspace into dir/ (go.work, contracts, README) plus
 // its first service under services/<Service>, and returns the written paths.
 func WriteProject(dir string, p Project) ([]string, error) {
+	svc := Service{
+		Module: p.Module + "/services/" + p.Service, Name: p.Service, Port: p.Port, Event: p.Event,
+		LocalBosun: p.LocalBosun,
+	}
 	pd := struct {
 		Project
-		ServiceModule string
-	}{Project: p, ServiceModule: p.Module + "/services/" + p.Service}
+		GoVersion string // go.work must be at least every module's go directive
+	}{Project: p, GoVersion: svc.data().GoVersion}
 
 	written, err := render(dir, map[string]string{
 		"go.work":          tmplGoWork,
@@ -143,10 +247,8 @@ func WriteProject(dir string, p Project) ([]string, error) {
 	if err != nil {
 		return written, err
 	}
-	svc, err := WriteService(filepath.Join(dir, "services", p.Service), Service{
-		Module: pd.ServiceModule, Name: p.Service, Port: p.Port, Event: p.Event,
-	})
-	return append(written, svc...), err
+	svcFiles, err := WriteService(filepath.Join(dir, "services", p.Service), svc)
+	return append(written, svcFiles...), err
 }
 
 func render(dir string, files map[string]string, data any) ([]string, error) {
@@ -174,9 +276,22 @@ func render(dir string, files map[string]string, data any) ([]string, error) {
 
 const tmplGoMod = `module {{.Module}}
 
-go 1.22
+go {{.GoVersion}}
 
-require github.com/bluebeard63/bosun {{.BosunVersion}}
+require (
+	github.com/bluebeard63/bosun {{.BosunVersion}}
+{{- if .EventModule}}
+	{{.EventModule}} {{.BosunVersion}}
+{{- end}}
+)
+{{- if .BosunReplace}}
+
+replace github.com/bluebeard63/bosun => {{.BosunReplace}}
+{{- end}}
+{{- if .EventReplace}}
+
+replace {{.EventModule}} => {{.EventReplace}}
+{{- end}}
 `
 
 const tmplMain = `package main
@@ -244,7 +359,7 @@ func (c *HelloController) Hello(ctx context.Context, _ *bosun.Req[struct{}]) (He
 }
 `
 
-const tmplDockerfile = `FROM golang:1.22 AS build
+const tmplDockerfile = `FROM golang:{{.GoImage}} AS build
 WORKDIR /src
 COPY . .
 RUN CGO_ENABLED=0 go build -o /app .
@@ -255,7 +370,7 @@ EXPOSE {{.Port}}
 ENTRYPOINT ["/app"]
 `
 
-const tmplGoWork = `go 1.22
+const tmplGoWork = `go {{.GoVersion}}
 
 use (
 	./services/{{.Service}}

@@ -83,6 +83,8 @@ Scaffolds a new service or a new workspace. Both subcommands prompt for their op
 
 `bosun new service <name>` creates a single deployable service directory. Its `main.go` has a `//go:generate bosun gen registry` directive and a generated `zz_bosun_registry.go`, so new packages are wired in with `go generate` rather than hand-written imports.
 
+The generated `go.mod` requires bosun at the version the CLI was built against, plus the driver module for a broker backend (`amqp`, `nats`, `redis`). The command then runs `go mod tidy` to resolve dependencies and write `go.sum`, so the service builds straight away; if `go` isn't on your `PATH` or tidy fails (for example offline), it prints a warning and you run `go mod tidy` yourself. The `Dockerfile` builds with the `golang` image matching the `go` directive in `go.mod`.
+
 ```bash
 bosun new service billing --module example.com/billing --event inmem --yes
 ```
@@ -93,6 +95,7 @@ bosun new service billing --module example.com/billing --event inmem --yes
 | `--event` | `inmem` | Event backend: `inmem`, `amqp`, `nats`, `redis`, or `none`. |
 | `--port` | `8080` | Listen port baked into the service. |
 | `--yes`, `-y` | `false` | Accept defaults without prompting. |
+| `--bosun-dir` | none | Build against a local bosun checkout by adding `replace` directives to `go.mod`. For working on Bosun itself. |
 
 `bosun new project <name>` creates a workspace with a shared contracts package and a first service.
 
@@ -107,3 +110,4 @@ bosun new project acme --module example.com/acme --service api --yes
 | `--event` | `inmem` | Event backend for the first service. |
 | `--port` | `8080` | Listen port for the first service. |
 | `--yes`, `-y` | `false` | Accept defaults without prompting. |
+| `--bosun-dir` | none | As for `bosun new service`. |

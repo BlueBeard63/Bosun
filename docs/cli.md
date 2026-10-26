@@ -1,6 +1,6 @@
 # The bosun CLI
 
-The `bosun` command is the framework's tooling: it serves the documentation, exposes it to AI over MCP, fetches deploy manifests, generates typed clients and registry imports, and scaffolds new services. This page is the reference for every command and its options.
+The `bosun` command is the framework's tooling: it serves the documentation, exposes it to AI over MCP, fetches deploy manifests, generates typed clients and registry imports, and scaffolds new monoliths, services and workspaces. This page is the reference for every command and its options.
 
 ## Installing
 
@@ -83,7 +83,51 @@ When the module requires bosun v0.8.0 or later, or replaces bosun with a local c
 
 ## bosun new
 
-Scaffolds a new service or a new workspace. Both subcommands prompt for their options interactively, or take them as flags; pass `--yes` to accept every default without prompting, which is what you want in a script. The [microservices guide](./microservices.md) explains the layout they produce.
+Scaffolds a new codebase. There are three shapes:
+
+| Command | Produces | Use it for |
+| --- | --- | --- |
+| `bosun new mono <name>` | One module, one binary, code organised by feature under `internal/<feature>/`. | A single application. |
+| `bosun new service <name>` | One service module; inside a workspace, another service in it. | One microservice. |
+| `bosun new project <name>` | A Go workspace: a shared `contracts` module and a first service under `services/`. | A microservice architecture. |
+
+Every subcommand prompts for its options interactively, or takes them as flags; pass `--yes` to accept every default without prompting, which is what you want in a script. Pass `--bare` to get only the wiring (`go.mod`, `main.go`, the registry, the `Dockerfile`, and `go.work` and `contracts` for a project) without the demo controller; a bare scaffold still builds and starts, serving the health and manifest endpoints. The [microservices guide](./microservices.md) explains the workspace layout.
+
+### bosun new mono
+
+`bosun new mono <name>` (alias `monolith`) creates a monolith in `./<name>`: a single Go module and binary with no `go.work`, `contracts` module or `services/` split. Code is organised by feature, one package per feature under `internal/<feature>/` holding that feature's controller, service and contract (request and response) types.
+
+```bash
+bosun new mono shop --module example.com/shop --yes
+```
+
+```text
+shop/
+  go.mod
+  main.go                  # bosun.New() and Run; //go:generate bosun gen registry
+  modules.go               # framework modules (health) and the event backend
+  zz_bosun_registry.go     # generated: blank-imports every registering package
+  Dockerfile
+  README.md
+  internal/hello/          # demo feature, left out by --bare
+    contract.go            # GreetIn, GreetOut
+    service.go             # HelloService (bosun.Service)
+    controller.go          # HelloController (bosun.Controller), injects *HelloService
+```
+
+As with `bosun new service`, the command runs `go mod tidy` afterwards, the name and module path are validated, and it refuses a non-empty directory unless you pass `--force`. Build an image with `docker build .` in the project directory.
+
+| Flag | Default | Description |
+| --- | --- | --- |
+| `--module` | `example.com/<name>` | Go module path. |
+| `--event` | `inmem` | Event backend: `inmem`, `amqp`, `nats`, `redis`, or `none`. |
+| `--port` | `8080` | Listen port baked into the app. |
+| `--bare` | `false` | Leave out the demo `hello` feature. |
+| `--yes`, `-y` | `false` | Accept defaults without prompting. |
+| `--force` | `false` | Write into a non-empty directory, overwriting the generated files. |
+| `--bosun-dir` | none | As for `bosun new service`. |
+
+### bosun new service
 
 `bosun new service <name>` creates a single deployable service directory. Its `main.go` has a `//go:generate bosun gen registry` directive and a generated `zz_bosun_registry.go`, so new packages are wired in with `go generate` rather than hand-written imports.
 
@@ -102,9 +146,12 @@ bosun new service billing --module example.com/billing --event inmem --yes
 | `--module` | `example.com/<name>`, or `<workspace module>/services/<name>` in a workspace | Go module path. |
 | `--event` | `inmem` | Event backend: `inmem`, `amqp`, `nats`, `redis`, or `none`. |
 | `--port` | `8080` | Listen port baked into the service. |
+| `--bare` | `false` | Leave out the demo `HelloController`; the framework modules and event backend are wired in `modules.go`. |
 | `--yes`, `-y` | `false` | Accept defaults without prompting. |
 | `--force` | `false` | Write into a non-empty directory, overwriting the generated files. |
 | `--bosun-dir` | none | Build against a local bosun checkout by adding `replace` directives to `go.mod`. For working on Bosun itself. |
+
+### bosun new project
 
 `bosun new project <name>` creates a workspace: a `go.work` that uses a shared `contracts` module and a first service under `services/`.
 
@@ -118,6 +165,7 @@ bosun new project acme --module example.com/acme --service api --yes
 | `--service` | `api` | Name of the first service. |
 | `--event` | `inmem` | Event backend for the first service. |
 | `--port` | `8080` | Listen port for the first service. |
+| `--bare` | `false` | Create the first service bare (no demo `HelloController`). |
 | `--yes`, `-y` | `false` | Accept defaults without prompting. |
 | `--force` | `false` | Write into a non-empty directory, overwriting the generated files. |
 | `--bosun-dir` | none | As for `bosun new service`. |

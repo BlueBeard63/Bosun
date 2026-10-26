@@ -115,12 +115,16 @@ jobs:
         run: go test -race -count=1 ./...
 
   scaffold:
-    name: bosun new service --event ${{ matrix.event }} (build and docker)
+    name: bosun new ${{ matrix.kind }}${{ matrix.flags }} --event ${{ matrix.event }} (build and docker)
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
+        kind: [service]
         event: [inmem, amqp, nats, redis, none]
+        include:
+          - { kind: mono, event: inmem }
+          - { kind: mono, event: none, flags: " --bare" }
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
@@ -135,7 +139,7 @@ jobs:
           go build -o "$RUNNER_TEMP/bosun" ./cmd/bosun
       - name: Scaffold
         working-directory: ${{ runner.temp }}
-        run: ./bosun new service svc --event ${{ matrix.event }} --yes --bosun-dir "$GITHUB_WORKSPACE"
+        run: ./bosun new ${{ matrix.kind }} svc --event ${{ matrix.event }}${{ matrix.flags }} --yes --bosun-dir "$GITHUB_WORKSPACE"
       - name: Build and vet
         working-directory: ${{ runner.temp }}/svc
         env:
@@ -149,7 +153,7 @@ jobs:
         working-directory: ${{ runner.temp }}/svc
         run: |
           GOWORK=off go mod vendor
-          docker build -t "bosun-scaffold-${{ matrix.event }}" .
+          docker build -t "bosun-scaffold-${{ matrix.kind }}-${{ matrix.event }}" .
 
   integration:
     name: Broker and storage integration

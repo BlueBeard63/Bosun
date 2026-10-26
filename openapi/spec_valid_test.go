@@ -231,8 +231,8 @@ func checkSchema(t *testing.T, where string, s any, schemas map[string]any) {
 		if n != true {
 			t.Errorf("%s: nullable = %v", where, n)
 		}
-		if m["type"] == nil && m["allOf"] == nil {
-			t.Errorf("%s: nullable without a type or allOf", where)
+		if m["type"] == nil {
+			t.Errorf("%s: nullable without a type, which OpenAPI 3.0.3 ignores", where)
 		}
 	}
 	if all, ok := m["allOf"]; ok {

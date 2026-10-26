@@ -173,7 +173,7 @@ func TestSpecNullableAndExamples(t *testing.T) {
 	if due := props["due"].(map[string]any); due["type"] != "string" || due["nullable"] != true || due["example"] != "2024-05-01" {
 		t.Fatalf("due = %v", due)
 	}
-	if parent := props["parent"].(map[string]any); parent["nullable"] != true ||
+	if parent := props["parent"].(map[string]any); parent["nullable"] != true || parent["type"] != "object" ||
 		!reflect.DeepEqual(parent["allOf"], []any{map[string]any{"$ref": "#/components/schemas/OpenapiSecNote"}}) {
 		t.Fatalf("parent = %v", parent)
 	}

@@ -71,6 +71,11 @@ func decorate(schema any, sf reflect.StructField, nullable bool) any {
 	extra := map[string]any{}
 	if nullable && sf.Type.Kind() == reflect.Pointer {
 		extra["nullable"] = true
+		// nullable only takes effect next to a type (OpenAPI 3.0.3), and a
+		// $ref always names a struct schema, so its allOf wrapper is an object.
+		if m, ok := schema.(map[string]any); ok && m["$ref"] != nil {
+			extra["type"] = "object"
+		}
 	}
 	if ex, ok := sf.Tag.Lookup("example"); ok {
 		extra["example"] = exampleValue(ex, schema)

@@ -179,7 +179,7 @@ Codes from the three layers are combined, and each code appears once.
 | `[]byte` | `{"type":"string","format":"byte"}` (base64, as `encoding/json` sends it) |
 | `[]T`, `[N]T` | `{"type":"array","items":<T>}` |
 | `map[K]V` | `{"type":"object","additionalProperties":<V>}` |
-| `*T` | Same as `T`. As a struct property it also gets `"nullable": true` (a `$ref` is wrapped as `{"allOf":[{"$ref":...}],"nullable":true}`). |
+| `*T` | Same as `T`. As a struct property it also gets `"nullable": true` (a `$ref` is wrapped as `{"allOf":[{"$ref":...}],"type":"object","nullable":true}`, since `nullable` only applies next to a `type`). |
 | Named struct | `{"$ref":"#/components/schemas/<Name>"}`, with the definition stored once (see [Schema names](#schema-names)). Recursive types are supported. |
 | Anonymous struct | Inline `{"type":"object","properties":{...}}` |
 | Anything else (interfaces, `any`, channels) | `{}` (any value) |

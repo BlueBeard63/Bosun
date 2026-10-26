@@ -76,6 +76,7 @@ bosun gen registry --check            # CI: fail if the file is stale
 | `--dir` | `.` | Package directory to write into. |
 | `--out`, `-o` | `zz_bosun_registry.go` | Generated file name, relative to `--dir`. |
 | `--check` | `false` | Exit non-zero if the file is missing or out of date, without writing it. |
+| `--tags` | none | Comma-separated build tags to satisfy, as for `go build -tags`. Files excluded by build constraints are skipped. |
 
 ## bosun new
 

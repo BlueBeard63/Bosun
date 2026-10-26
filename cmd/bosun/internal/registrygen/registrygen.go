@@ -15,6 +15,7 @@ import (
 	"errors"
 	"fmt"
 	"go/ast"
+	"go/build"
 	"go/format"
 	"go/parser"
 	"go/token"
@@ -56,6 +57,29 @@ type Module struct {
 	Path     string // module path from go.mod
 	Packages []Package
 	Skipped  []string // registering package main dirs, which can't be imported
+
+	ctx *build.Context // build constraints files are matched against
+}
+
+// buildContext returns the context Scan matches files against: the host's
+// GOOS, GOARCH and cgo setting, as for `go build`, plus the given tags.
+func buildContext(tags []string) *build.Context {
+	ctx := build.Default
+	ctx.BuildTags = append(append([]string(nil), ctx.BuildTags...), tags...)
+	return &ctx
+}
+
+// included reports whether file name in dir is part of the package: a
+// non-test, non-generated .go file whose build constraints (//go:build lines
+// and _GOOS/_GOARCH name suffixes) are satisfied.
+func included(ctx *build.Context, dir, name string) (bool, error) {
+	if !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") || name == FileName {
+		return false, nil
+	}
+	if ctx == nil {
+		ctx = &build.Default
+	}
+	return ctx.MatchFile(dir, name)
 }
 
 // FindModuleRoot walks up from dir to the nearest directory holding go.mod.
@@ -76,8 +100,9 @@ func FindModuleRoot(dir string) (string, error) {
 
 // Scan parses every package under root (a module root) and returns those
 // that register with Bosun. Nested modules, vendor, testdata and directories
-// starting with "." or "_" are skipped; _test.go files are ignored.
-func Scan(root string) (*Module, error) {
+// starting with "." or "_" are skipped; _test.go files and files excluded by
+// build constraints (for the host platform plus tags) are ignored.
+func Scan(root string, tags ...string) (*Module, error) {
 	root, err := filepath.Abs(root)
 	if err != nil {
 		return nil, err
@@ -86,7 +111,7 @@ func Scan(root string) (*Module, error) {
 	if err != nil {
 		return nil, err
 	}
-	m := &Module{Root: root, Path: modPath}
+	m := &Module{Root: root, Path: modPath, ctx: buildContext(tags)}
 	err = filepath.WalkDir(root, func(p string, d os.DirEntry, err error) error {
 		if err != nil {
 			return err
@@ -103,7 +128,7 @@ func Scan(root string) (*Module, error) {
 				return filepath.SkipDir // nested module: not part of this one
 			}
 		}
-		pkgName, decls, err := scanDir(p)
+		pkgName, decls, err := scanDir(m.ctx, p)
 		if err != nil {
 			return err
 		}
@@ -150,9 +175,10 @@ func readModulePath(gomod string) (string, error) {
 	return "", fmt.Errorf("%s: no module directive", gomod)
 }
 
-// scanDir parses the non-test Go files in dir and returns the package name
-// and the registration declarations found at package level.
-func scanDir(dir string) (string, []string, error) {
+// scanDir parses the Go files in dir that are part of the package (see
+// included) and returns the package name and the registration declarations
+// found at package level.
+func scanDir(ctx *build.Context, dir string) (string, []string, error) {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		return "", nil, err
@@ -162,7 +188,14 @@ func scanDir(dir string) (string, []string, error) {
 	var decls []string
 	for _, e := range entries {
 		name := e.Name()
-		if e.IsDir() || !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") || name == FileName {
+		if e.IsDir() {
+			continue
+		}
+		ok, err := included(ctx, dir, name)
+		if err != nil {
+			return "", nil, fmt.Errorf("%s: %w", filepath.Join(dir, name), err)
+		}
+		if !ok {
 			continue
 		}
 		f, err := parser.ParseFile(fset, filepath.Join(dir, name), nil, parser.SkipObjectResolution)
@@ -330,7 +363,7 @@ func TargetFor(m *Module, dir string) (Options, error) {
 	if rel != "." {
 		importPath = path.Join(m.Path, filepath.ToSlash(rel))
 	}
-	name, err := packageName(abs)
+	name, err := packageName(m.ctx, abs)
 	if err != nil {
 		return Options{}, err
 	}
@@ -340,7 +373,7 @@ func TargetFor(m *Module, dir string) (Options, error) {
 	return Options{PkgName: name, ImportPath: importPath}, nil
 }
 
-func packageName(dir string) (string, error) {
+func packageName(ctx *build.Context, dir string) (string, error) {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		return "", err
@@ -348,7 +381,14 @@ func packageName(dir string) (string, error) {
 	fset := token.NewFileSet()
 	for _, e := range entries {
 		n := e.Name()
-		if e.IsDir() || !strings.HasSuffix(n, ".go") || strings.HasSuffix(n, "_test.go") || n == FileName {
+		if e.IsDir() {
+			continue
+		}
+		ok, err := included(ctx, dir, n)
+		if err != nil {
+			return "", fmt.Errorf("%s: %w", filepath.Join(dir, n), err)
+		}
+		if !ok {
 			continue
 		}
 		f, err := parser.ParseFile(fset, filepath.Join(dir, n), nil, parser.PackageClauseOnly)

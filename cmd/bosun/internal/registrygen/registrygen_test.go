@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"reflect"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -36,7 +37,8 @@ func TestScanFindsRegisteringPackages(t *testing.T) {
 	want := map[string][]string{
 		// aliased import, var block, multiple type params
 		"example.com/shop/internal/billing": {"Service[memStore]", "DefaultBind[Store, memStore]", "Middleware[Auth]"},
-		"example.com/shop/internal/users":   {"Service[Repo]", "Controller[UsersController]"},
+		// despite aaa_tool.go, an ignored package main file that sorts first
+		"example.com/shop/internal/users": {"Service[Repo]", "Controller[UsersController]"},
 	}
 	// Not included: internal/dto (imports bosun, registers nothing),
 	// internal/testsonly (_test.go only), pkg/util (no bosun), nested
@@ -72,13 +74,53 @@ func TestRenderGolden(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if string(src) != string(want) {
+	// A checkout with core.autocrlf=true has a CRLF golden; Render emits LF.
+	if string(src) != strings.ReplaceAll(string(want), "\r\n", "\n") {
 		t.Fatalf("generated file differs from golden (run with -update):\n%s", src)
 	}
 	// Deterministic: rendering again yields identical bytes.
 	again, _ := Render(scanFixture(t), target)
 	if string(again) != string(src) {
 		t.Fatal("output is not deterministic")
+	}
+}
+
+func TestScanBuildTags(t *testing.T) {
+	dir := t.TempDir()
+	reg := "import \"github.com/bluebeard63/bosun\"\n\ntype X struct{}\n\nvar _ = bosun.Service[X]()\n"
+	for rel, body := range map[string]string{
+		"go.mod":            "module example.com/app\n\ngo 1.22\n",
+		"main.go":           "package main\n\nfunc main() {}\n",
+		"extra/extra.go":    "//go:build extra\n\npackage extra\n\n" + reg,
+		"plain/plain.go":    "package plain\n\n" + reg,
+		"plain/aa_never.go": "//go:build never\n\npackage plain\n\nimport \"github.com/bluebeard63/bosun\"\n\ntype Y struct{}\n\nvar _ = bosun.Service[Y]()\n",
+	} {
+		p := filepath.Join(dir, rel)
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	scan := func(tags ...string) map[string][]string {
+		m, err := Scan(dir, tags...)
+		if err != nil {
+			t.Fatal(err)
+		}
+		got := map[string][]string{}
+		for _, p := range m.Packages {
+			got[p.ImportPath] = p.Decls
+		}
+		return got
+	}
+	want := map[string][]string{"example.com/app/plain": {"Service[X]"}}
+	if got := scan(); !reflect.DeepEqual(got, want) {
+		t.Fatalf("no tags: %v, want %v", got, want)
+	}
+	want["example.com/app/extra"] = []string{"Service[X]"}
+	if got := scan("extra"); !reflect.DeepEqual(got, want) {
+		t.Fatalf("tags=extra: %v, want %v", got, want)
 	}
 }
 
@@ -180,7 +222,9 @@ func TestGeneratedFileCompiles(t *testing.T) {
 		top := strings.Split(rel, string(filepath.Separator))[0]
 		return top == "vendor" || top == "_scratch" || top == "nested"
 	})
-	gomod := "module example.com/shop\n\ngo 1.22\n\nrequire github.com/bluebeard63/bosun v0.0.0\n\nreplace github.com/bluebeard63/bosun => " + repoRoot + "\n"
+	// Quoted, so a repo path with spaces or a Windows drive letter parses.
+	gomod := "module example.com/shop\n\ngo 1.22\n\nrequire github.com/bluebeard63/bosun v0.0.0\n\nreplace github.com/bluebeard63/bosun => " +
+		strconv.Quote(filepath.ToSlash(repoRoot)) + "\n"
 	if err := os.WriteFile(filepath.Join(dir, "go.mod"), []byte(gomod), 0o644); err != nil {
 		t.Fatal(err)
 	}

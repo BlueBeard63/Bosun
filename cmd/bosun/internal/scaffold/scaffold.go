@@ -364,12 +364,20 @@ func Tidy(dir string) error {
 }
 
 func goCmd(dir string, args ...string) error {
+	return goCmdEnv(dir, nil, args...)
+}
+
+// goCmdEnv is goCmd with extra environment variables appended.
+func goCmdEnv(dir string, env []string, args ...string) error {
 	bin, err := exec.LookPath("go")
 	if err != nil {
 		return ErrNoGo
 	}
 	cmd := exec.Command(bin, args...)
 	cmd.Dir = dir
+	if env != nil {
+		cmd.Env = append(os.Environ(), env...)
+	}
 	if out, err := cmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("go %s in %s: %v\n%s", strings.Join(args, " "), dir, err, out)
 	}
@@ -503,7 +511,8 @@ func unquote(s string) string {
 }
 
 // Use adds the module in dir to go.work with `go work use`, which also
-// raises go.work's go line to the module's if needed.
+// raises go.work's go line to the module's if needed. GOWORK is pinned to
+// this workspace's go.work, so an inherited GOWORK can't redirect the edit.
 func (w *Workspace) Use(dir string) error {
 	abs, err := filepath.Abs(dir)
 	if err != nil {
@@ -513,7 +522,8 @@ func (w *Workspace) Use(dir string) error {
 	if err != nil {
 		return err
 	}
-	return goCmd(w.Root, "work", "use", "./"+filepath.ToSlash(rel))
+	gowork := "GOWORK=" + filepath.Join(w.Root, "go.work")
+	return goCmdEnv(w.Root, []string{gowork}, "work", "use", "./"+filepath.ToSlash(rel))
 }
 
 // Project describes a workspace to scaffold, including its first service.

@@ -140,6 +140,38 @@ func TestNackDoesNotRedeliverToOtherGroups(t *testing.T) {
 	}
 }
 
+// Every delivery carries a non-empty ID that stays the same on redelivery.
+func TestMessageIDStable(t *testing.T) {
+	b := newBus(t)
+	subj := uniqueSubject()
+	ids := make(chan string, 2)
+	if _, err := b.Subscribe(context.Background(), subj, func(_ context.Context, d eventmod.Delivery) error {
+		ids <- d.Message().ID
+		if d.Message().Attempt == 1 {
+			return d.Nack(context.Background(), true)
+		}
+		return d.Ack(context.Background())
+	}); err != nil {
+		t.Fatalf("subscribe: %v", err)
+	}
+	time.Sleep(50 * time.Millisecond)
+	if err := b.Publish(context.Background(), subj, []byte("x")); err != nil {
+		t.Fatalf("publish: %v", err)
+	}
+	var got []string
+	for len(got) < 2 {
+		select {
+		case id := <-ids:
+			got = append(got, id)
+		case <-time.After(5 * time.Second):
+			t.Fatalf("got %d deliveries, want 2", len(got))
+		}
+	}
+	if got[0] == "" || got[0] != got[1] {
+		t.Fatalf("IDs %q then %q, want the same non-empty ID", got[0], got[1])
+	}
+}
+
 func TestNackRedelivers(t *testing.T) {
 	b := newBus(t)
 	subj := uniqueSubject()

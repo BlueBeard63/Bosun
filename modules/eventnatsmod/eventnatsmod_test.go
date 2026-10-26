@@ -163,6 +163,70 @@ func TestNackDoesNotRedeliverToOtherGroups(t *testing.T) {
 	}
 }
 
+// Every delivery carries a non-empty ID that stays the same on redelivery.
+func TestMessageIDStable(t *testing.T) {
+	b := newBus(t)
+	subj := "bosuntest." + suffix()
+	ids := make(chan string, 2)
+	if _, err := b.Subscribe(context.Background(), subj, func(_ context.Context, d eventmod.Delivery) error {
+		ids <- d.Message().ID
+		if d.Message().Attempt == 1 {
+			return d.Nack(context.Background(), true)
+		}
+		return d.Ack(context.Background())
+	}); err != nil {
+		t.Fatalf("subscribe: %v", err)
+	}
+	time.Sleep(50 * time.Millisecond)
+	if err := b.Publish(context.Background(), subj, []byte("x")); err != nil {
+		t.Fatalf("publish: %v", err)
+	}
+	var got []string
+	for len(got) < 2 {
+		select {
+		case id := <-ids:
+			got = append(got, id)
+		case <-time.After(5 * time.Second):
+			t.Fatalf("got %d deliveries, want 2", len(got))
+		}
+	}
+	if got[0] == "" || got[0] != got[1] {
+		t.Fatalf("IDs %q then %q, want the same non-empty ID", got[0], got[1])
+	}
+}
+
+// Close drains: a handler already running when Close is called finishes
+// before Close returns.
+func TestCloseWaitsForInFlightHandler(t *testing.T) {
+	b := newBus(t)
+	subj := "bosuntest." + suffix()
+	started := make(chan struct{})
+	var finished atomic.Bool
+	if _, err := b.Subscribe(context.Background(), subj, func(_ context.Context, d eventmod.Delivery) error {
+		close(started)
+		time.Sleep(500 * time.Millisecond)
+		finished.Store(true)
+		return d.Ack(context.Background())
+	}); err != nil {
+		t.Fatalf("subscribe: %v", err)
+	}
+	time.Sleep(50 * time.Millisecond)
+	if err := b.Publish(context.Background(), subj, []byte("x")); err != nil {
+		t.Fatalf("publish: %v", err)
+	}
+	select {
+	case <-started:
+	case <-time.After(5 * time.Second):
+		t.Fatal("no delivery")
+	}
+	if err := b.Close(); err != nil {
+		t.Fatalf("close: %v", err)
+	}
+	if !finished.Load() {
+		t.Fatal("Close returned before the in-flight handler finished")
+	}
+}
+
 func TestRPC(t *testing.T) {
 	b := newBus(t)
 	subj := "bosuntest." + suffix()

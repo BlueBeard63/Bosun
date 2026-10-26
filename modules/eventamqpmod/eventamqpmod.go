@@ -217,7 +217,8 @@ func (b *Bus) Close() error {
 }
 
 // Publish routes data to the exchange with the subject as the routing key and
-// waits for the broker to confirm it.
+// waits for the broker to confirm it. Each message gets a random MessageId,
+// which consumers see as Message.ID.
 func (b *Bus) Publish(ctx context.Context, subject string, data []byte, opts ...eventmod.PubOption) error {
 	cfg := eventmod.ResolvePub(opts)
 	headers := amqp.Table{}
@@ -229,6 +230,7 @@ func (b *Bus) Publish(ctx context.Context, subject string, data []byte, opts ...
 	}
 	return b.publish(ctx, b.Opts.Exchange, subject, b.Opts.Mandatory, amqp.Publishing{
 		ContentType: "application/octet-stream",
+		MessageId:   newID(),
 		Body:        data,
 		Headers:     headers,
 	})

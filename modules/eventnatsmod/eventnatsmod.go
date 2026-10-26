@@ -17,6 +17,7 @@ package eventnatsmod
 
 import (
 	"context"
+	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
 	"strconv"
@@ -45,25 +46,29 @@ var _ = bosun.Default[*Options](func() *Options { return &Options{URL: nats.Defa
 type Bus struct {
 	Opts *Options // injected
 
-	mu     sync.Mutex
-	nc     *nats.Conn
-	subs   []*nats.Subscription
-	closed bool
+	mu      sync.Mutex
+	nc      *nats.Conn
+	drained chan struct{} // closed once the connection has fully closed
+	closed  bool
 }
 
 var _ eventmod.Bus = (*Bus)(nil)
 
 // Init dials the NATS server.
 func (b *Bus) Init() error {
-	nc, err := nats.Connect(b.Opts.URL)
+	drained := make(chan struct{})
+	nc, err := nats.Connect(b.Opts.URL, nats.ClosedHandler(func(*nats.Conn) { close(drained) }))
 	if err != nil {
 		return err
 	}
 	b.nc = nc
+	b.drained = drained
 	return nil
 }
 
-// Close unsubscribes and drops the connection.
+// Close drains the connection: every subscription stops receiving, messages
+// already delivered to the client are still handled, and Close returns once
+// in-flight handlers have finished and the connection is closed.
 func (b *Bus) Close() error {
 	b.mu.Lock()
 	if b.closed {
@@ -71,17 +76,24 @@ func (b *Bus) Close() error {
 		return nil
 	}
 	b.closed = true
-	subs := b.subs
-	b.subs = nil
 	nc := b.nc
 	b.mu.Unlock()
-	for _, s := range subs {
-		_ = s.Unsubscribe()
+	if nc == nil {
+		return nil
 	}
-	if nc != nil {
-		nc.Close()
+	if err := nc.Drain(); err != nil {
+		nc.Close() // already closed or not connected; nothing to drain
+		return nil
 	}
+	<-b.drained
 	return nil
+}
+
+// newID returns a random message ID, sent as the Nats-Msg-Id header.
+func newID() string {
+	var b [16]byte
+	_, _ = rand.Read(b[:])
+	return hex.EncodeToString(b[:])
 }
 
 // Publish sends data to a subject, carrying eventmod headers as NATS headers.
@@ -97,6 +109,9 @@ func (b *Bus) Publish(ctx context.Context, subject string, data []byte, opts ...
 	}
 	if msg.Header.Get(hdrAttempt) == "" {
 		msg.Header.Set(hdrAttempt, "1")
+	}
+	if msg.Header.Get(nats.MsgIdHdr) == "" {
+		msg.Header.Set(nats.MsgIdHdr, newID())
 	}
 	return b.nc.PublishMsg(msg)
 }
@@ -120,9 +135,6 @@ func (b *Bus) Subscribe(ctx context.Context, subject string, h eventmod.Handler,
 		_ = sub.Unsubscribe()
 		return nil, err
 	}
-	b.mu.Lock()
-	b.subs = append(b.subs, sub, rsub)
-	b.mu.Unlock()
 	return &subHandle{subs: []*nats.Subscription{sub, rsub}}, nil
 }
 
@@ -160,7 +172,7 @@ func toMessage(m *nats.Msg) eventmod.Message {
 	if s := m.Header.Get(hdrSubject); s != "" {
 		subject = s
 	}
-	return eventmod.Message{Subject: subject, Data: m.Data, Headers: hdr, ID: m.Reply, Attempt: attempt}
+	return eventmod.Message{Subject: subject, Data: m.Data, Headers: hdr, ID: m.Header.Get(nats.MsgIdHdr), Attempt: attempt}
 }
 
 type delivery struct {

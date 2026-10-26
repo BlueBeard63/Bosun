@@ -17,7 +17,8 @@ var (
 	_ eventmod.Responder = (*Bus)(nil)
 )
 
-func newCorrID() string {
+// newID returns a random id, used for message ids and RPC correlation ids.
+func newID() string {
 	var b [16]byte
 	_, _ = rand.Read(b[:])
 	return hex.EncodeToString(b[:])
@@ -55,9 +56,10 @@ func (b *Bus) Request(ctx context.Context, subject string, data []byte, opts ...
 	for k, v := range cfg.Headers {
 		headers[k] = v
 	}
-	corr := newCorrID()
+	corr := newID()
 	if err := ch.PublishWithContext(ctx, ex, translateKey(subject), false, false, amqp.Publishing{
 		ContentType:   "application/octet-stream",
+		MessageId:     newID(),
 		Body:          data,
 		Headers:       headers,
 		ReplyTo:       replyQ.Name,

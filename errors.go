@@ -46,22 +46,115 @@ func E(status int, msg string, cause error) *Error {
 	return &Error{Status: status, Msg: msg, Cause: cause, origin: origin}
 }
 
-// errStatus is the HTTP status for err: an *Error's Status, or 500 when err
-// carries no *Error or its Status isn't a code WriteHeader accepts.
-func errStatus(err error) int {
-	var e *Error
-	if asErr(err, &e) && e.Status >= 100 && e.Status <= 999 {
-		return e.Status
-	}
-	return http.StatusInternalServerError
+// --- mapping errors to responses ---
+
+// errorMapping is one MapError registration.
+type errorMapping struct {
+	target error
+	status int
+	msg    string
 }
 
-func publicMessage(err error) string {
+// MapError makes typed handlers answer with status and msg when they return
+// an error matching target (errors.Is, so wrapped errors match too), instead
+// of a 500. Use it for sentinels returned from deep inside services, so
+// handlers don't each translate them:
+//
+//	app := bosun.New(
+//	    bosun.MapError(billing.ErrCardDeclined, http.StatusPaymentRequired, "card declined"),
+//	    bosun.MapError(repomod.ErrConflict, http.StatusConflict, ""),
+//	)
+//
+// An empty msg uses the status text ("conflict"). A *bosun.Error in the
+// returned chain still wins; mappings are tried in registration order; and
+// they override an error's own HTTPStatus (see errors.md). The mapping is
+// per App. MapError panics if target is nil or status is not a valid HTTP
+// status code.
+func MapError(target error, status int, msg string) Option {
+	if target == nil || !validStatus(status) {
+		panic(fmt.Sprintf("bosun.MapError(%v, %d): need a non-nil target and a status in 100-999", target, status))
+	}
+	if msg == "" {
+		msg = statusMessage(status)
+	}
+	return func(a *App) { a.errMaps = append(a.errMaps, errorMapping{target, status, msg}) }
+}
+
+// httpStatuser is implemented by errors that carry their own HTTP status,
+// such as repomod.ErrNotFound and storemod.ErrNotFound (404). Packages
+// implement it without importing bosun, so modules can give their sentinels
+// a default status without an import cycle.
+type httpStatuser interface{ HTTPStatus() int }
+
+// publicMessager optionally supplies the client-facing message for an
+// httpStatuser; without it the status text is used. Error() is never shown.
+type publicMessager interface{ PublicMessage() string }
+
+func validStatus(s int) bool { return s >= 100 && s <= 999 }
+
+// statusMessage is the lower-case status text, matching the framework's own
+// messages ("internal server error").
+func statusMessage(status int) string {
+	if t := http.StatusText(status); t != "" {
+		return strings.ToLower(t)
+	}
+	return "error"
+}
+
+// knownError resolves the status and public message for err, in order: a
+// *Error in the chain (its Status, or 500 if invalid, and its Msg), the
+// first matching MapError mapping, then an error carrying its own
+// HTTPStatus. ok is false when none applies.
+func knownError(maps []errorMapping, err error) (status int, msg string, ok bool) {
 	var e *Error
 	if asErr(err, &e) {
-		return e.Msg // never leak the cause to clients
+		status = e.Status
+		if !validStatus(status) {
+			status = http.StatusInternalServerError
+		}
+		return status, e.Msg, true // never leak the cause to clients
 	}
-	return "internal server error"
+	for _, m := range maps {
+		if errors.Is(err, m.target) {
+			return m.status, m.msg, true
+		}
+	}
+	var hs httpStatuser
+	if errors.As(err, &hs) {
+		if status = hs.HTTPStatus(); validStatus(status) {
+			if pm, ok := hs.(publicMessager); ok {
+				return status, pm.PublicMessage(), true
+			}
+			return status, statusMessage(status), true
+		}
+	}
+	return 0, "", false
+}
+
+// errorResponse is the status and public message a typed handler's error
+// is answered with on this app: see knownError, falling back to 500.
+func (a *App) errorResponse(err error) (int, string) {
+	return errorResponse(a.errMaps, err)
+}
+
+func errorResponse(maps []errorMapping, err error) (int, string) {
+	if status, msg, ok := knownError(maps, err); ok {
+		return status, msg
+	}
+	return http.StatusInternalServerError, "internal server error"
+}
+
+// errStatus is the HTTP status for err without app mappings: an *Error's
+// Status, an error's own HTTPStatus, or 500.
+func errStatus(err error) int {
+	s, _ := errorResponse(nil, err)
+	return s
+}
+
+// publicMessage is the client-facing message for err without app mappings.
+func publicMessage(err error) string {
+	_, m := errorResponse(nil, err)
+	return m
 }
 
 func errOrigin(err error) string {

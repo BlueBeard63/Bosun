@@ -20,13 +20,23 @@ package repomod
 
 import (
 	"context"
-	"errors"
+	"net/http"
 )
 
 // ErrNotFound is returned by Get and Query.One when a row does not exist.
 // Drivers translate their own "not found" sentinels into this value so
 // callers can use errors.Is(err, repomod.ErrNotFound) portably.
-var ErrNotFound = errors.New("repo: not found")
+//
+// It carries HTTP status 404: a typed handler that returns it, wrapped or
+// not, answers 404 "not found" without mapping it. Override that per app
+// with bosun.MapError.
+var ErrNotFound error = notFoundError{}
+
+type notFoundError struct{}
+
+func (notFoundError) Error() string         { return "repo: not found" }
+func (notFoundError) HTTPStatus() int       { return http.StatusNotFound }
+func (notFoundError) PublicMessage() string { return "not found" }
 
 // Query is a chainable read query builder. Builder methods (Where, Order,
 // Limit, Offset) return a new Query; terminal methods (One, All, Count)

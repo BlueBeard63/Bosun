@@ -119,6 +119,20 @@ func authed(roles ...string) []bosun.RouteOpt {
 bosun.Get(r, "/admin/wipe", c.Wipe, authed("admin")...)
 ```
 
+## Record the permission on the route
+
+A closure is opaque: nothing outside it can tell which roles a route needs. Attach them as route metadata with `WithMeta` under the conventional `bosun.MetaPermissions` key, and every route that uses the helper records what it enforces.
+
+```go
+func HasPermission(roles ...string) bosun.MWRef {
+    return bosun.UseFunc(func(next http.Handler) http.Handler {
+        // ... as above
+    }).WithMeta(bosun.MetaPermissions, roles)
+}
+```
+
+After `Start`, `app.Routes()` lists each route with its `Meta`, so a test can assert that every mutating route requires a permission. See [inspecting registered routes](./routing-internals.md#inspecting-registered-routes). `WithMeta` works the same on a `bosun.Use[T](args...)` ref.
+
 ## Alternative: a registered singleton with Configure
 
 If the permission check needs its own injected dependencies, or you simply want it to look like every other `bosun.Use[T]` reference, make it a registered singleton with a `Configure` method. Bosun calls `Configure` once per route at startup with the arguments you pass to `bosun.Use[T](args...)`, and the returned handler closes over them.

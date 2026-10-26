@@ -30,6 +30,8 @@ type App struct {
 
 	shutdownTimeout time.Duration        // grace period for in-flight requests
 	serverConfig    []func(*http.Server) // set via WithHTTPServer
+
+	errMaps []errorMapping // sentinel -> status mappings, set via MapError
 }
 
 // New creates an App, applies options, then applies every enabled
@@ -108,6 +110,7 @@ func (a *App) start() error {
 		}
 		var errs []error
 		router := &Router{app: a, ctrl: c.typ, prefix: prefix, base: base, errs: &errs}
+		router.inherit(c.mws)
 		inst.(BaseController).Routes(router)
 		if err := errors.Join(errs...); err != nil {
 			return err
@@ -138,6 +141,9 @@ func (a *App) Shutdown() error { return a.Reg.Shutdown() }
 func (a *App) resolveMWs(refs []MWRef) ([]MiddlewareHandler, error) {
 	out := make([]MiddlewareHandler, 0, len(refs))
 	for _, ref := range refs {
+		if ref.metaOnly() {
+			continue // bosun.Meta: recorded on RouteInfo, no middleware
+		}
 		if ref.inline != nil {
 			out = append(out, ref.inline)
 			continue

@@ -90,7 +90,7 @@ func (c *Files) Routes(r *bosun.Router) {
 }
 ```
 
-Reach for the raw form only when you need that control; use typed handlers everywhere else. The [files guide](./files.md) shows a full worked example of serving a file with the raw form.
+Raw routes have no OpenAPI entry, but they are listed in `app.Routes()` with `Raw: true` and any `bosun.Meta` you pass them (see [inspecting registered routes](./routing-internals.md#inspecting-registered-routes)). Reach for the raw form only when you need that control; use typed handlers everywhere else. The [files guide](./files.md) shows a full worked example of serving a file with the raw form.
 
 ## Lifecycle
 

@@ -1,6 +1,6 @@
 # The bosun CLI
 
-The `bosun` command is the framework's tooling: it serves the documentation, exposes it to AI over MCP, fetches deploy manifests, generates typed clients and registry imports, and scaffolds new monoliths, services and workspaces. This page is the reference for every command and its options.
+The `bosun` command is the framework's tooling: it serves the documentation, exposes it to AI over MCP, fetches deploy manifests, generates typed clients and registry imports, scaffolds new monoliths, services and workspaces, and adds controllers, services and middleware to existing ones. This page is the reference for every command and its options.
 
 ## Installing
 
@@ -91,7 +91,7 @@ Scaffolds a new codebase. There are three shapes:
 | `bosun new service <name>` | One service module; inside a workspace, another service in it. | One microservice. |
 | `bosun new project <name>` | A Go workspace: a shared `contracts` module and a first service under `services/`. | A microservice architecture. |
 
-Every subcommand prompts for its options interactively, or takes them as flags; pass `--yes` to accept every default without prompting, which is what you want in a script. Pass `--bare` to get only the wiring (`go.mod`, `main.go`, the registry, the `Dockerfile`, and `go.work` and `contracts` for a project) without the demo controller; a bare scaffold still builds and starts, serving the health and manifest endpoints. The [microservices guide](./microservices.md) explains the workspace layout.
+Every subcommand prompts for its options interactively, or takes them as flags; pass `--yes` to accept every default without prompting, which is what you want in a script. Pass `--bare` to get only the wiring (`go.mod`, `main.go`, the registry, the `Dockerfile`, and `go.work` and `contracts` for a project) without the demo controller; a bare scaffold still builds and starts, serving the health and manifest endpoints. The [microservices guide](./microservices.md) explains the workspace layout. To add a controller, service type or middleware to a codebase that already exists, use [`bosun add`](#bosun-add).
 
 ### bosun new mono
 
@@ -169,3 +169,33 @@ bosun new project acme --module example.com/acme --service api --yes
 | `--yes`, `-y` | `false` | Accept defaults without prompting. |
 | `--force` | `false` | Write into a non-empty directory, overwriting the generated files. |
 | `--bosun-dir` | none | As for `bosun new service`. |
+
+## bosun add
+
+Adds one controller, service or middleware to an existing Bosun module, then regenerates the module's `zz_bosun_registry.go` so the new package is wired in. It is a separate verb from `bosun new` on purpose: `bosun new service <name>` creates a whole service module, while `bosun add service <name>` adds a service type to the module you are in.
+
+| Command | Writes (default) | Declares |
+| --- | --- | --- |
+| `bosun add controller <name>` | `internal/<name>/<name>_controller.go` | `<Name>Controller` with `bosun.Controller[T]("/<name>")` and a typed `GET /<name>/:id` handler registered with `bosun.Get(r, ...)`. |
+| `bosun add service <name>` | `internal/<name>/<name>_service.go` | `<Name>Service` with `bosun.Service[T]()`. |
+| `bosun add middleware <name>` | `internal/middleware/<name>.go` | `<Name>` with `bosun.Middleware[T]()` and `Handle(next http.Handler) http.Handler`. |
+
+A name such as `order-items` becomes the type prefix `OrderItems`, the file name `order_items_...go` and, for a controller, the route prefix `/order-items`. Controllers and services go into a feature package, so `bosun add service users` and `bosun add controller users` share `internal/users`, which matches the [monolith layout](#bosun-new-mono); middleware shares one `middleware` package. The generated types have a comment showing where injected fields go.
+
+```bash
+cd shop
+bosun add service users
+bosun add controller users          # then add `Users *UsersService` to UsersController
+bosun add middleware request-log
+go build ./...
+```
+
+The target module is the nearest `go.mod` above the current directory. Inside a workspace made by `bosun new project`, run the command in a service's directory; from the workspace root (or `contracts`, which must not register anything) it picks the only service, or asks for `--in <service>` when there are several. The command never overwrites an existing file without `--force`, and refuses to declare a type the package already has. Every `zz_bosun_registry.go` in the module is regenerated as `bosun gen registry` would write it; if the module has none, it prints a reminder to run `bosun gen registry` in your main package.
+
+| Flag | Default | Description |
+| --- | --- | --- |
+| `--dir` | `internal/<name>`, or `internal/middleware` for middleware | Package directory, relative to the module root. |
+| `--pkg` | the package already in `--dir`, else its base name | Package name. |
+| `--prefix` | `/<name>` | Route prefix (`add controller` only). |
+| `--in` | the current module | Module to add to: a directory with a `go.mod`, or the name of a service in the workspace. |
+| `--force` | `false` | Overwrite the file if it exists. |

@@ -402,10 +402,11 @@ func syncDockerfile(dir string) error {
 
 // Workspace is a Go workspace (go.work) that services are added to.
 type Workspace struct {
-	Root            string // absolute directory holding go.work
-	Module          string // module path prefix, e.g. example.com/acme; "" if unknown
-	ContractsModule string // module path of the shared contracts module; "" if none
-	ContractsDir    string // absolute directory of the contracts module
+	Root            string   // absolute directory holding go.work
+	Module          string   // module path prefix, e.g. example.com/acme; "" if unknown
+	ContractsModule string   // module path of the shared contracts module; "" if none
+	ContractsDir    string   // absolute directory of the contracts module
+	Modules         []string // absolute directories of the modules go.work uses
 }
 
 // FindWorkspace walks up from dir to the nearest go.work and describes it,
@@ -438,6 +439,9 @@ func describeWorkspace(root string, gowork []byte) *Workspace {
 	for _, use := range workUses(gowork) {
 		dir := filepath.Join(root, filepath.FromSlash(use))
 		mod := modulePath(filepath.Join(dir, "go.mod"))
+		if mod != "" {
+			ws.Modules = append(ws.Modules, dir)
+		}
 		switch {
 		case mod == "":
 		case path.Base(mod) == "contracts" && ws.ContractsModule == "":
@@ -775,7 +779,13 @@ A Bosun monolith: one Go module and one binary, organised by feature.
 - ` + "`modules.go`" + ` lists the framework modules the app uses and selects its event backend.
 - ` + "`internal/<feature>/`" + ` holds one package per feature: its controller, service and contract (request and response) types.
 
-Run it with ` + "`go run .`" + `. After adding a feature package, run ` + "`go generate`" + ` to regenerate ` + "`zz_bosun_registry.go`" + `.
+Run it with ` + "`go run .`" + ` and add to it with:
+
+    bosun add controller <name>    # internal/<name>/<name>_controller.go
+    bosun add service <name>       # internal/<name>/<name>_service.go
+    bosun add middleware <name>    # internal/middleware/<name>.go
+
+Each of those regenerates ` + "`zz_bosun_registry.go`" + `; after adding a registering package by hand, run ` + "`go generate`" + `.
 Build an image with ` + "`docker build .`" + `.
 `
 
@@ -837,6 +847,9 @@ A Bosun microservice workspace.
 
 Add another service with ` + "`bosun new service <name>`" + ` from anywhere in this
 workspace: it is created under ` + "`services/`" + ` and added to ` + "`go.work`" + `.
+Add a controller, service type or middleware to a service with
+` + "`bosun add controller|service|middleware <name>`" + ` from its directory (or
+` + "`--in <service>`" + `).
 Build a service image from this directory with
 ` + "`docker build -f services/<name>/Dockerfile .`" + `.
 `

@@ -68,6 +68,6 @@ bosun new service orders --event nats --yes   # creates services/orders, module 
 docker build -f services/orders/Dockerfile .
 ```
 
-Each generated service is a runnable Bosun app with a sample route, health and manifest endpoints, and the event backend wired in, ready for you to add controllers and services. Pass `--bare` to either command to leave out the sample route.
+Each generated service is a runnable Bosun app with a sample route, health and manifest endpoints, and the event backend wired in, ready for you to add controllers and services. Pass `--bare` to either command to leave out the sample route. Inside a service's directory, `bosun add controller|service|middleware <name>` generates a component and wires it into the service's registry; from the workspace root, pass `--in <service>`.
 
 If you don't need separate deployables yet, start with `bosun new mono` instead: one module and one binary, organised by feature under `internal/<feature>/`. The [CLI reference](./cli.md#bosun-new-mono) covers both.

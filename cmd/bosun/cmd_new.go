@@ -18,7 +18,8 @@ func newCmd() *cobra.Command {
 		Use:   "new",
 		Short: "Scaffold a new Bosun monolith, service or microservice project",
 		Long: "Scaffolds a new Bosun codebase: a monolith (new mono), a single service (new service) " +
-			"or a microservice workspace (new project).",
+			"or a microservice workspace (new project). To add a controller, service or middleware " +
+			"to an existing codebase, use `bosun add`.",
 	}
 	n.AddCommand(newMonoCmd(), newServiceCmd(), newProjectCmd())
 	return n
@@ -90,7 +91,8 @@ func newServiceCmd() *cobra.Command {
 		Long: "Scaffolds a service in ./<name>. Inside a Go workspace (a go.work in this " +
 			"directory or a parent, such as one made by `bosun new project`), the service is " +
 			"created under services/<name> instead, requires the workspace's contracts module, " +
-			"and is added to go.work. --bare leaves out the demo HelloController.",
+			"and is added to go.work. --bare leaves out the demo HelloController. To add a service " +
+			"type to an existing codebase, use `bosun add service`.",
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			name := args[0]

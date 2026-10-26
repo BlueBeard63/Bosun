@@ -13,11 +13,11 @@ type KVGetter interface {
 }
 
 // KVSource reads config from a key-value store. If Decrypt is set, every
-// value is passed through it first — pair with SecretBox for AES-GCM
-// encrypted-at-rest config.
+// value is passed through it first, along with the row's key — pair with
+// SecretBox.Open for AES-GCM encrypted-at-rest config bound to its key.
 type KVSource struct {
 	Store   KVGetter
-	Decrypt func([]byte) ([]byte, error)
+	Decrypt func(key string, value []byte) ([]byte, error)
 }
 
 func (s KVSource) Load(ctx context.Context) (map[string]json.RawMessage, error) {
@@ -28,7 +28,7 @@ func (s KVSource) Load(ctx context.Context) (map[string]json.RawMessage, error) 
 	out := make(map[string]json.RawMessage, len(rows))
 	for k, v := range rows {
 		if s.Decrypt != nil {
-			plain, err := s.Decrypt(v)
+			plain, err := s.Decrypt(k, v)
 			if err != nil {
 				return nil, fmt.Errorf("decrypting config key %q: %w", k, err)
 			}

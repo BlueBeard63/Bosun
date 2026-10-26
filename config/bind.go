@@ -27,6 +27,10 @@ var bindings []binding
 // JSON document is unmarshalled into a fresh *T and swapped into the app's
 // *bosun.Dynamic[T]. When the key is later removed from every source, the
 // value the Dynamic held before config was first applied is restored.
+//
+// A document is rejected, and the previous value kept, when it has a field T
+// doesn't declare (a typo such as "PerMinite") or when T implements
+// Validator and Validate returns an error.
 func Bind[T any](key string) struct{} {
 	dynType := reflect.TypeOf((**bosun.Dynamic[T])(nil)).Elem()
 	resolve := func(reg *registry.Registry) (*bosun.Dynamic[T], error) {
@@ -41,8 +45,13 @@ func Bind[T any](key string) struct{} {
 		typ: reflect.TypeOf((*T)(nil)).Elem(),
 		apply: func(reg *registry.Registry, raw json.RawMessage) error {
 			v := new(T)
-			if err := json.Unmarshal(raw, v); err != nil {
+			if err := decodeStrict(raw, v); err != nil {
 				return fmt.Errorf("config key %q: %w", key, err)
+			}
+			if vd, ok := any(v).(Validator); ok {
+				if err := vd.Validate(); err != nil {
+					return fmt.Errorf("config key %q: invalid: %w", key, err)
+				}
 			}
 			d, err := resolve(reg)
 			if err != nil {

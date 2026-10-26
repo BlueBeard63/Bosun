@@ -163,7 +163,7 @@ func (c *AdminController) Routes(r *bosun.Router) {
 
 func (c *AdminController) SetLimit(ctx context.Context, req *bosun.Req[SetLimitRequest]) (struct{ OK bool }, error) {
 	plain, _ := json.Marshal(mw.RateLimitOptions{PerMinute: req.Body.PerMinute})
-	sealed, err := c.box.Seal(plain)
+	sealed, err := c.box.Seal("ratelimit", plain)
 	if err != nil {
 		return struct{ OK bool }{}, bosun.E(http.StatusInternalServerError, "seal failed", err)
 	}

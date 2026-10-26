@@ -71,11 +71,11 @@ func (m *RateLimit) Handle(next http.Handler) http.Handler {
 
 ## Built-in sources
 
-`config.FileSource` reads a JSON document of `{key: object}` from disk, where a missing file is fine but a malformed one is an error. `config.EnvSource` reads variables prefixed `<KEY>_` and decodes each one into a field of the bound type (covered below). `config.KVSource` reads from a key/value store you provide, typically a database table, with an optional `Decrypt` hook to unseal stored bytes on read.
+`config.FileSource` reads a JSON document of `{key: object}` from disk, where a missing file is fine but a malformed one is an error. `config.EnvSource` reads variables prefixed `<KEY>_` and decodes each one into a field of the bound type (covered below). `config.KVSource` reads from a key/value store you provide, typically a database table, with an optional `Decrypt(key, value)` hook to unseal stored bytes on read.
 
 ```go
 config.Add(config.KVSource{
-    Store:   configTable, // any implementation of config.KVStore
+    Store:   configTable, // any implementation of config.KVGetter
     Decrypt: secretBox.Open,
 })
 ```
@@ -141,10 +141,57 @@ opts.OnChange(func(v *RateLimitOptions) {
 })
 ```
 
+## Validation
+
+Before a value is swapped in, the watcher checks it in two ways.
+
+**Unknown fields.** A field the bound type doesn't declare is an error rather than being silently dropped, so a typo such as `"PerMinite"` can't leave `PerMinute` at zero. Names are matched the way `encoding/json` matches them: by `json` tag or Go field name, case-insensitively, with embedded struct fields promoted. Fields tagged `json:"-"` count as unknown. Each source is checked on its own before the sources are merged, so the error names the field's full path and the source that holds it:
+
+```text
+config key "ratelimit": unknown field "PerMinite", "pool.mx" in file config.json
+```
+
+Values inside `map[string]any`, `json.RawMessage`, and types with their own `UnmarshalJSON` or `UnmarshalText` aren't inspected. `EnvSource` never produces unknown fields, because variables that name no field are ignored.
+
+**The `Validate` hook.** If the bound type implements `config.Validator`, with either a value or a pointer receiver, the watcher calls `Validate()` on each freshly decoded value and rejects the update when it returns an error:
+
+```go
+func (o RateLimitOptions) Validate() error {
+    if o.PerMinute <= 0 {
+        return errors.New("per_minute must be positive")
+    }
+    return nil
+}
+```
+
+The default from `bosun.DefaultDynamic` isn't passed through `Validate`. Rejected values follow the same rules as values that fail to unmarshal, described next.
+
 ## Failure semantics
 
-At startup, an error from any source or a failed unmarshal makes `app.Start()` return the error, so the process fails fast. Every key is still attempted, and the error names each key that failed. During a runtime reload, a source error is logged and the whole poll is skipped, so a partial view of the sources is never applied. A key whose value fails to unmarshal is logged once with its key and keeps its previous value, while every other key still updates.
+At startup, an error from any source, a failed unmarshal, an unknown field, or a `Validate` error makes `app.Start()` return the error, so the process fails fast. Every key is still attempted, and the error names each key that failed. During a runtime reload, a source error is logged and the whole poll is skipped, so a partial view of the sources is never applied. A key whose value is rejected for any of the other reasons is logged once with its key and keeps its previous value, while every other key still updates.
 
 ## Custom sources and encryption
 
-A custom source implements `config.Source` with a single `Load` method, registered either as a ready-made instance with `config.Add` or as a DI-resolved service with `config.AddSource[T]`. Sources are called on every poll, so make a remote-backed source cheap with caching or etags. For sensitive values, combine `config.SecretBox` (AES-GCM) with `KVSource`: an admin endpoint seals plaintext with `box.Seal` and writes the bytes, and the watcher unseals them on each poll. A complete encrypted-config example is wired in `examples/kitchen-sink/main.go`.
+A custom source implements `config.Source` with a single `Load` method, registered either as a ready-made instance with `config.Add` or as a DI-resolved service with `config.AddSource[T]`. Sources are called on every poll, so make a remote-backed source cheap with caching or etags. For sensitive values, combine `config.SecretBox` (AES-GCM) with `KVSource`: an admin endpoint seals plaintext with `box.Seal(key, plaintext)` and writes the bytes under that key, and the watcher unseals them on each poll. A complete encrypted-config example is wired in `examples/kitchen-sink/main.go`.
+
+```go
+sealed, err := box.Seal("ratelimit", plaintext)
+// UPDATE config SET value = ? WHERE key = 'ratelimit'
+config.Add(config.KVSource{Store: table, Decrypt: box.Open})
+```
+
+Each value is bound to its config key, which is passed to the AEAD as additional authenticated data. A ciphertext copied from one row to another, for example from `featureflags` to `ratelimit`, fails to decrypt instead of being accepted under the wrong key.
+
+### Migrating values sealed before key binding
+
+Sealed values now start with a version byte (`0x01 || nonce || ciphertext`). Values written by earlier versions (`nonce || ciphertext`, not bound to a key) are rejected by `Open` with an error that says to re-encrypt them. To migrate a table, re-encrypt each row once with `box.Reseal(key, value)` and write the result back. `Reseal` returns values already in the current format unchanged, so it is safe to run more than once. If the application has to keep reading old rows while the migration runs, set `box.AllowLegacy = true` before the box is first used, and remove it once every row has been resealed, since legacy values aren't bound to a key.
+
+```go
+for key, value := range rows {
+    sealed, err := box.Reseal(key, value)
+    if err != nil {
+        return fmt.Errorf("resealing %q: %w", key, err)
+    }
+    table.Put(key, sealed)
+}
+```

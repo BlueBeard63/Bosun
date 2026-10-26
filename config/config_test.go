@@ -86,19 +86,19 @@ func TestSecretBoxRoundTripAndTamper(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	sealed, err := box.Seal([]byte(`{"N":7}`))
+	sealed, err := box.Seal("k", []byte(`{"N":7}`))
 	if err != nil {
 		t.Fatal(err)
 	}
-	plain, err := box.Open(sealed)
+	plain, err := box.Open("k", sealed)
 	if err != nil || string(plain) != `{"N":7}` {
 		t.Fatalf("roundtrip failed: %v %s", err, plain)
 	}
 	sealed[len(sealed)-1] ^= 0xff
-	if _, err := box.Open(sealed); err == nil {
+	if _, err := box.Open("k", sealed); err == nil {
 		t.Fatal("tampered ciphertext must not open")
 	}
-	if _, err := box.Open([]byte("short")); err == nil {
+	if _, err := box.Open("k", []byte("short")); err == nil {
 		t.Fatal("short input must error")
 	}
 	if _, err := NewSecretBox([]byte("badlen")); err == nil {
@@ -130,7 +130,7 @@ func (m *memKV) put(k string, v []byte) {
 func TestKVSourceWithDecryption(t *testing.T) {
 	key := sha256.Sum256([]byte("k"))
 	box, _ := NewSecretBox(key[:])
-	sealed, _ := box.Seal([]byte(`{"N":3}`))
+	sealed, _ := box.Seal("envtest", []byte(`{"N":3}`))
 	kv := &memKV{rows: map[string][]byte{"envtest": sealed}}
 
 	doc, err := KVSource{Store: kv, Decrypt: box.Open}.Load(context.Background())
@@ -190,11 +190,11 @@ func TestWatcherLayeringAndHotReload(t *testing.T) {
 		t.Fatalf("env should beat file: got %d", dyn.Get().N)
 	}
 
-	sealed, _ := box.Seal([]byte(`{"N":3}`))
+	sealed, _ := box.Seal("w", []byte(`{"N":3}`))
 	kv.put("w", sealed)
 	waitFor(t, func() bool { return dyn.Get().N == 3 }, "encrypted KV should beat env")
 
-	sealed, _ = box.Seal([]byte(`{"N":4}`))
+	sealed, _ = box.Seal("w", []byte(`{"N":4}`))
 	kv.put("w", sealed)
 	waitFor(t, func() bool { return dyn.Get().N == 4 }, "live KV update should apply")
 }

@@ -68,12 +68,7 @@ func (a *App) Start() error {
 }
 
 func (a *App) start() error {
-	for _, d := range pendingDefaults {
-		if a.disabled[d.pkg] {
-			continue
-		}
-		d.apply(a)
-	}
+	a.ApplyDefaults()
 	if err := a.Reg.Validate(); err != nil {
 		return err
 	}
@@ -114,6 +109,21 @@ func (a *App) start() error {
 		}
 	}
 	return nil
+}
+
+// ApplyDefaults registers every enabled bosun.Default and bosun.DefaultBind
+// provider whose type the host hasn't registered itself. Start calls it
+// first; it is exported for test helpers (bosuntest.Build) that resolve one
+// service's subgraph without starting the app. Register host overrides
+// before calling it, since a Default registered here then counts as taken.
+// Calling it again is a no-op for types that are already registered.
+func (a *App) ApplyDefaults() {
+	for _, d := range pendingDefaults {
+		if a.disabled[d.pkg] {
+			continue
+		}
+		d.apply(a)
+	}
 }
 
 // Handler returns the app's root http.Handler: Mux wrapped in the app-wide

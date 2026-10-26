@@ -114,6 +114,43 @@ jobs:
         working-directory: ${{ matrix.module }}
         run: go test -race -count=1 ./...
 
+  scaffold:
+    name: bosun new service --event ${{ matrix.event }} (build and docker)
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        event: [inmem, amqp, nats, redis, none]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: stable
+          cache-dependency-path: "**/go.sum"
+      # Build the CLI from this checkout and point the scaffold at it too
+      # (--bosun-dir), so template changes are tested before they're released.
+      - name: Build bosun
+        run: |
+          go work init . $NESTED_MODULES
+          go build -o "$RUNNER_TEMP/bosun" ./cmd/bosun
+      - name: Scaffold
+        working-directory: ${{ runner.temp }}
+        run: ./bosun new service svc --event ${{ matrix.event }} --yes --bosun-dir "$GITHUB_WORKSPACE"
+      - name: Build and vet
+        working-directory: ${{ runner.temp }}/svc
+        env:
+          GOWORK: "off"
+        run: |
+          go build ./...
+          go vet ./...
+      # The replace directives point outside the build context, so vendor the
+      # dependencies first; a vendored build never reads the replaced paths.
+      - name: Docker build
+        working-directory: ${{ runner.temp }}/svc
+        run: |
+          GOWORK=off go mod vendor
+          docker build -t "bosun-scaffold-${{ matrix.event }}" .
+
   integration:
     name: Broker and storage integration
     runs-on: ubuntu-latest

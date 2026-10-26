@@ -109,6 +109,7 @@ func readManifest(src string) ([]byte, error) {
 func genRegistryCmd() *cobra.Command {
 	var dir, out string
 	var check bool
+	var tags []string
 	cmd := &cobra.Command{
 		Use:   "registry",
 		Short: "Generate blank imports for every package that registers with Bosun",
@@ -122,7 +123,7 @@ func genRegistryCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			mod, err := registrygen.Scan(root)
+			mod, err := registrygen.Scan(root, tags...)
 			if err != nil {
 				return err
 			}
@@ -162,6 +163,7 @@ func genRegistryCmd() *cobra.Command {
 	cmd.Flags().StringVar(&dir, "dir", ".", "package directory to write into (the one that calls bosun.New)")
 	cmd.Flags().StringVarP(&out, "out", "o", registrygen.FileName, "generated file name, relative to --dir")
 	cmd.Flags().BoolVar(&check, "check", false, "verify the file is up to date instead of writing it (for CI)")
+	cmd.Flags().StringSliceVar(&tags, "tags", nil, "comma-separated build tags to satisfy, as for go build -tags")
 	return cmd
 }
 

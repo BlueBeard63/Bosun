@@ -16,15 +16,19 @@ import (
 // module version embedded in the binary's build info.
 var version = "dev"
 
-// cliVersion resolves the string reported by `bosun --version`: an explicit
-// -ldflags value wins; otherwise the module version stamped in by
-// `go install <path>@vX.Y.Z` is used, falling back to "dev" for local
-// (`go build`/`go run`) builds that carry no released version.
+// readBuildInfo is debug.ReadBuildInfo, swappable in tests.
+var readBuildInfo = debug.ReadBuildInfo
+
+// cliVersion resolves the version every command reports (`bosun --version`,
+// the MCP serverInfo, the docs site header): an explicit -ldflags value wins;
+// otherwise the module version stamped in by `go install <path>@vX.Y.Z` is
+// used, falling back to "dev" for local (`go build`/`go run`) builds that
+// carry no released version. Never read the version variable directly.
 func cliVersion() string {
 	if version != "dev" {
 		return version
 	}
-	if bi, ok := debug.ReadBuildInfo(); ok {
+	if bi, ok := readBuildInfo(); ok {
 		if v := bi.Main.Version; strings.HasPrefix(v, "v") && !strings.Contains(v, "devel") {
 			return v
 		}

@@ -4,7 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -108,11 +110,13 @@ func (w *Watcher) Close() error {
 // others.
 func (w *Watcher) load(ctx context.Context) (keyErrs []error, err error) {
 	merged := map[string]json.RawMessage{}
-	for _, s := range w.sources {
+	docs := make([]map[string]json.RawMessage, len(w.sources))
+	for i, s := range w.sources {
 		doc, err := s.Load(ctx)
 		if err != nil {
 			return nil, err
 		}
+		docs[i] = doc
 		for k, v := range doc {
 			if prev, ok := merged[k]; ok {
 				v = mergeJSON(prev, v) // later sources override per field
@@ -138,7 +142,11 @@ func (w *Watcher) load(ctx context.Context) (keyErrs []error, err error) {
 		// remember these bytes even on failure so a bad value is reported
 		// once, not on every poll
 		w.applied[b.key] = string(raw)
-		if err := w.apply(b, raw); err != nil {
+		err := w.checkUnknown(b, docs)
+		if err == nil {
+			err = w.apply(b, raw)
+		}
+		if err != nil {
 			slog.Error("config apply failed", "key", b.key, "error", err)
 			keyErrs = append(keyErrs, err)
 			continue
@@ -146,6 +154,34 @@ func (w *Watcher) load(ctx context.Context) (keyErrs []error, err error) {
 		slog.Info("config applied", "key", b.key)
 	}
 	return keyErrs, nil
+}
+
+// checkUnknown rejects b's key when any source's document for it has fields
+// the bound type doesn't declare. Each source is checked before merging, so
+// the error names the source that holds the typo and the field's full path.
+func (w *Watcher) checkUnknown(b binding, docs []map[string]json.RawMessage) error {
+	var errs []error
+	for i, doc := range docs {
+		raw, ok := doc[b.key]
+		if !ok {
+			continue
+		}
+		var unknown []string
+		unknownFields(b.typ, raw, "", &unknown)
+		if len(unknown) > 0 {
+			errs = append(errs, fmt.Errorf("config key %q: unknown field %s in %s",
+				b.key, quoteJoin(unknown), describeSource(w.sources[i])))
+		}
+	}
+	return errors.Join(errs...)
+}
+
+func quoteJoin(names []string) string {
+	q := make([]string, len(names))
+	for i, n := range names {
+		q[i] = strconv.Quote(n)
+	}
+	return strings.Join(q, ", ")
 }
 
 func (w *Watcher) apply(b binding, raw json.RawMessage) error {

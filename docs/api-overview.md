@@ -35,7 +35,7 @@ These functions run at package-init time through `var _ = ...` and return a mean
 
 ## Typed routes and errors
 
-The five typed generics share the signature `func[In, Out any](r *Router, path string, h Handler[In, Out], opts ...RouteOpt)`, and type inference means you never write the type parameters. `bosun.Errors(codes ...int) RouteOpt` declares extra status codes for OpenAPI. `bosun.E(status, publicMessage, cause) *Error` returns a controlled error: the client sees the status and message while the cause is recorded for the audit log with the call site. Any other error becomes a 500. The [typed handlers](./typed-handlers.md) and [errors](./errors.md) guides cover these fully.
+The five typed generics share the signature `func[In, Out any](r *Router, path string, h Handler[In, Out], opts ...RouteOpt)`, and type inference means you never write the type parameters. `bosun.Errors(codes ...int) RouteOpt` declares extra status codes for OpenAPI. `bosun.E(status, publicMessage, cause) *Error` returns a controlled error: the client sees the status and message while the cause is recorded for the audit log with the call site. `bosun.MapError(target, status, msg) Option` maps a sentinel (matched with `errors.Is`) to a status for one app, and an error with an `HTTPStatus() int` method carries its own. Any other error becomes a 500. The [typed handlers](./typed-handlers.md) and [errors](./errors.md) guides cover these fully.
 
 ## Context values and dynamic values
 

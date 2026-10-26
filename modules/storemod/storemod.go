@@ -18,6 +18,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"net/http"
 	"time"
 )
 
@@ -52,11 +53,21 @@ type Store interface {
 var (
 	// ErrNotFound is returned by Get when no object has the key. Drivers
 	// translate their own not-found sentinels into this value.
-	ErrNotFound = errors.New("store: object not found")
+	//
+	// It carries HTTP status 404: a typed handler that returns it, wrapped
+	// or not, answers 404 "not found" without mapping it. Override that per
+	// app with bosun.MapError.
+	ErrNotFound error = notFoundError{}
 	// ErrUnsupported is returned for an operation a driver cannot perform,
 	// such as presigning on a local filesystem with no signing secret.
 	ErrUnsupported = errors.New("store: operation unsupported by driver")
 )
+
+type notFoundError struct{}
+
+func (notFoundError) Error() string         { return "store: object not found" }
+func (notFoundError) HTTPStatus() int       { return http.StatusNotFound }
+func (notFoundError) PublicMessage() string { return "not found" }
 
 // PutConfig is the resolved set of put options.
 type PutConfig struct {

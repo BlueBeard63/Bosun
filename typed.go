@@ -195,14 +195,15 @@ func typed[In, Out any](r *Router, method, p string, h func(context.Context, *Re
 
 		if bindErr != nil {
 			var body any
-			status, body = inputErrorBody(bindErr)
+			status, body = app.inputErrorBody(bindErr)
 			handlerErr = bindErr
 			writeJSON(w, status, body)
 		} else {
 			out, handlerErr = h(req.Context(), typedReq)
 			if handlerErr != nil {
-				status = errStatus(handlerErr)
-				writeJSON(w, status, map[string]string{"error": publicMessage(handlerErr)})
+				var msg string
+				status, msg = app.errorResponse(handlerErr)
+				writeJSON(w, status, map[string]string{"error": msg})
 			} else if err := writeOut(w, status, out, outIsString, outIsBytes, outIsEmptyStruct); err != nil {
 				status = http.StatusInternalServerError
 				handlerErr = fmt.Errorf("encoding response: %w", err)

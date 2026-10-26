@@ -30,6 +30,8 @@ type App struct {
 
 	shutdownTimeout time.Duration        // grace period for in-flight requests
 	serverConfig    []func(*http.Server) // set via WithHTTPServer
+
+	errMaps []errorMapping // sentinel -> status mappings, set via MapError
 }
 
 // New creates an App, applies options, then applies every enabled

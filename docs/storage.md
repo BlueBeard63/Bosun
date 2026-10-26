@@ -28,7 +28,7 @@ Bosun provides a driver-agnostic object store for blobs such as uploads, documen
 
 ## The Store interface
 
-A store reads and writes objects by key. `Get` returns `storemod.ErrNotFound` when the key is absent, and `Presign` returns `storemod.ErrUnsupported` on drivers that cannot sign URLs. `List` returns every object whose key starts with the prefix, at any depth, on every driver: `List(ctx, "docs/")` includes `docs/2024/report.pdf`.
+A store reads and writes objects by key. `Get` returns `storemod.ErrNotFound` when the key is absent (a typed handler that returns it answers `404`), and `Presign` returns `storemod.ErrUnsupported` on drivers that cannot sign URLs. `List` returns every object whose key starts with the prefix, at any depth, on every driver: `List(ctx, "docs/")` includes `docs/2024/report.pdf`.
 
 ```go
 type Store interface {

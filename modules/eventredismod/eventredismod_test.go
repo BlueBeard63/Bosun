@@ -17,11 +17,18 @@ import (
 // e.g. `docker run -p 6379:6379 redis` then BOSUN_REDIS_ADDR=localhost:6379.
 func newBus(t *testing.T) *eventredismod.Bus {
 	t.Helper()
+	return newBusWith(t, func(*eventredismod.Options) {})
+}
+
+func newBusWith(t *testing.T, configure func(*eventredismod.Options)) *eventredismod.Bus {
+	t.Helper()
 	addr := os.Getenv("BOSUN_REDIS_ADDR")
 	if addr == "" {
 		t.Skip("set BOSUN_REDIS_ADDR to run the Redis integration tests")
 	}
-	b := &eventredismod.Bus{Opts: &eventredismod.Options{Addr: addr}}
+	opts := &eventredismod.Options{Addr: addr}
+	configure(opts)
+	b := &eventredismod.Bus{Opts: opts}
 	if err := b.Init(); err != nil {
 		t.Fatalf("init: %v", err)
 	}
@@ -169,6 +176,119 @@ func TestMessageIDStable(t *testing.T) {
 	}
 	if got[0] == "" || got[0] != got[1] {
 		t.Fatalf("IDs %q then %q, want the same non-empty ID", got[0], got[1])
+	}
+}
+
+// Two replicas (two Buses) with an ungrouped subscription each get every
+// message, and closing one leaves the other working.
+func TestReplicasEachReceiveAndSurviveShutdown(t *testing.T) {
+	a := newBus(t)
+	b := newBus(t)
+	subj := uniqueSubject()
+	gotA := make(chan string, 4)
+	gotB := make(chan string, 4)
+	for bus, got := range map[*eventredismod.Bus]chan string{a: gotA, b: gotB} {
+		got := got
+		if _, err := bus.Subscribe(context.Background(), subj, func(_ context.Context, d eventmod.Delivery) error {
+			got <- string(d.Message().Data)
+			return d.Ack(context.Background())
+		}); err != nil {
+			t.Fatalf("subscribe: %v", err)
+		}
+	}
+	time.Sleep(50 * time.Millisecond)
+	expect := func(name string, got chan string, want string) {
+		t.Helper()
+		select {
+		case v := <-got:
+			if v != want {
+				t.Fatalf("replica %s got %q, want %q", name, v, want)
+			}
+		case <-time.After(5 * time.Second):
+			t.Fatalf("replica %s never received %q", name, want)
+		}
+	}
+	if err := a.Publish(context.Background(), subj, []byte("one")); err != nil {
+		t.Fatalf("publish: %v", err)
+	}
+	expect("a", gotA, "one")
+	expect("b", gotB, "one")
+
+	if err := a.Close(); err != nil {
+		t.Fatalf("close a: %v", err)
+	}
+	if err := b.Publish(context.Background(), subj, []byte("two")); err != nil {
+		t.Fatalf("publish: %v", err)
+	}
+	expect("b", gotB, "two")
+}
+
+// A message delivered to a consumer that dies before acking it is claimed and
+// redelivered to another member of the group.
+func TestCrashedConsumerMessageRedelivered(t *testing.T) {
+	subj := uniqueSubject()
+	group := "workers-" + strconv.FormatInt(time.Now().UnixNano(), 36)
+
+	crashed := newBus(t)
+	held := make(chan eventmod.Message, 1)
+	if _, err := crashed.Subscribe(context.Background(), subj, func(_ context.Context, d eventmod.Delivery) error {
+		held <- d.Message() // never acked: the process "dies" holding it
+		return nil
+	}, eventmod.WithGroup(group)); err != nil {
+		t.Fatalf("subscribe: %v", err)
+	}
+	time.Sleep(50 * time.Millisecond)
+	if err := crashed.Publish(context.Background(), subj, []byte("x")); err != nil {
+		t.Fatalf("publish: %v", err)
+	}
+	var first eventmod.Message
+	select {
+	case first = <-held:
+	case <-time.After(5 * time.Second):
+		t.Fatal("no first delivery")
+	}
+	_ = crashed.Close()
+
+	survivor := newBusWith(t, func(o *eventredismod.Options) { o.ClaimIdle = 300 * time.Millisecond })
+	got := make(chan eventmod.Message, 1)
+	if _, err := survivor.Subscribe(context.Background(), subj, func(_ context.Context, d eventmod.Delivery) error {
+		got <- d.Message()
+		return d.Ack(context.Background())
+	}, eventmod.WithGroup(group)); err != nil {
+		t.Fatalf("subscribe: %v", err)
+	}
+	select {
+	case m := <-got:
+		if m.ID != first.ID {
+			t.Fatalf("redelivered ID %q, want %q", m.ID, first.ID)
+		}
+		if m.Attempt != 2 {
+			t.Fatalf("redelivered with attempt %d, want 2", m.Attempt)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("message held by the crashed consumer was never redelivered")
+	}
+}
+
+func TestMaxLenTrimsStream(t *testing.T) {
+	b := newBusWith(t, func(o *eventredismod.Options) { o.MaxLen = 10 })
+	subj := uniqueSubject()
+	const n = 1000
+	for i := 0; i < n; i++ {
+		if err := b.Publish(context.Background(), subj, []byte("x")); err != nil {
+			t.Fatalf("publish: %v", err)
+		}
+	}
+	rdb := redis.NewClient(&redis.Options{Addr: os.Getenv("BOSUN_REDIS_ADDR")})
+	defer rdb.Close()
+	defer rdb.Del(context.Background(), subj)
+	got, err := rdb.XLen(context.Background(), subj).Result()
+	if err != nil {
+		t.Fatalf("xlen: %v", err)
+	}
+	// MAXLEN ~ trims whole macro nodes, so the length lands near, not at, 10.
+	if got >= n/2 {
+		t.Fatalf("stream holds %d of %d entries; MaxLen did not trim", got, n)
 	}
 }
 

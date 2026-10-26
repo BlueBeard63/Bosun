@@ -5,7 +5,8 @@
 // every message (fan-out). A Nack with requeue leaves the entry pending in the
 // subscription's group and claims it back for another attempt (at-least-once
 // redelivery); Attempt is the entry's delivery count, and other groups on the
-// stream are unaffected.
+// stream are unaffected. Entries left pending by a consumer that died are
+// claimed by another member of the group once idle for Options.ClaimIdle.
 //
 //	import _ "github.com/bluebeard63/bosun/modules/eventredismod"
 //	var _ = eventredismod.Use()
@@ -16,6 +17,8 @@ package eventredismod
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"strconv"
@@ -33,6 +36,24 @@ type Options struct {
 	Addr     string
 	Password string
 	DB       int
+	// ClaimIdle is how long an entry may sit unacknowledged with one consumer
+	// before another member of the group claims and redelivers it, which is
+	// how messages held by a crashed consumer are recovered. A handler that
+	// runs longer than this may see its message handled twice. Default 30s.
+	ClaimIdle time.Duration
+	// MaxLen caps each stream at roughly this many entries (XADD MAXLEN ~).
+	// 0 means streams are never trimmed. Entries trimmed before every group
+	// has read them are lost to those groups, so size it for the slowest one.
+	MaxLen int64
+}
+
+const defaultClaimIdle = 30 * time.Second
+
+func (o *Options) claimIdle() time.Duration {
+	if o.ClaimIdle <= 0 {
+		return defaultClaimIdle
+	}
+	return o.ClaimIdle
 }
 
 var _ = bosun.Default[*Options](func() *Options { return &Options{Addr: "localhost:6379"} })
@@ -41,9 +62,10 @@ var _ = bosun.Default[*Options](func() *Options { return &Options{Addr: "localho
 type Bus struct {
 	Opts *Options // injected
 
-	rdb    *redis.Client
-	ctx    context.Context
-	cancel context.CancelFunc
+	rdb      *redis.Client
+	ctx      context.Context
+	cancel   context.CancelFunc
+	instance string // random per Bus; makes group and consumer names unique across replicas
 
 	mu     sync.Mutex
 	subs   map[uint64]*subscription
@@ -59,6 +81,9 @@ func (b *Bus) Init() error {
 	b.rdb = redis.NewClient(&redis.Options{Addr: b.Opts.Addr, Password: b.Opts.Password, DB: b.Opts.DB})
 	b.ctx, b.cancel = context.WithCancel(context.Background())
 	b.subs = map[uint64]*subscription{}
+	var id [8]byte
+	_, _ = rand.Read(id[:])
+	b.instance = hex.EncodeToString(id[:])
 	return b.rdb.Ping(b.ctx).Err()
 }
 
@@ -99,7 +124,10 @@ func (b *Bus) Publish(ctx context.Context, subject string, data []byte, opts ...
 		return eventmod.ErrClosed
 	}
 	cfg := eventmod.ResolvePub(opts)
-	return b.rdb.XAdd(ctx, &redis.XAddArgs{Stream: subject, Values: encode(data, cfg.Headers, 1)}).Err()
+	return b.rdb.XAdd(ctx, &redis.XAddArgs{
+		Stream: subject, Values: encode(data, cfg.Headers, 1),
+		MaxLen: b.Opts.MaxLen, Approx: true,
+	}).Err()
 }
 
 func encode(data []byte, headers map[string]string, attempt int) map[string]any {
@@ -171,21 +199,28 @@ func (b *Bus) Subscribe(ctx context.Context, subject string, h eventmod.Handler,
 	}
 	id := b.nextID
 	b.nextID++
+	// Names include the Bus's random instance id: a per-process counter alone
+	// gives every replica the same names, so ungrouped subscribers in two
+	// replicas would share (and on shutdown destroy) one group, and group
+	// members in two replicas would act as one consumer.
+	name := b.instance + "-" + strconv.FormatUint(id, 10)
 	group := cfg.Group
 	ephemeral := false
 	if group == "" {
-		group = "bosun-" + strconv.FormatUint(id, 10)
+		group = "bosun-" + name
 		ephemeral = true
 	}
 	s := &subscription{
 		id: id, subject: subject, group: group, ephemeral: ephemeral,
-		consumer: "c-" + strconv.FormatUint(id, 10), quit: make(chan struct{}), bus: b,
+		consumer: name, quit: make(chan struct{}), bus: b,
 	}
 	b.subs[id] = s
 	b.mu.Unlock()
 
-	// "$" starts the group at new messages only, matching in-memory fan-out.
-	if err := b.rdb.XGroupCreateMkStream(b.ctx, subject, group, "$").Err(); err != nil && !isBusyGroup(err) {
+	if err := s.createGroup(); err != nil {
+		b.mu.Lock()
+		delete(b.subs, id)
+		b.mu.Unlock()
 		return nil, err
 	}
 	b.wg.Add(1)
@@ -193,18 +228,33 @@ func (b *Bus) Subscribe(ctx context.Context, subject string, h eventmod.Handler,
 	return &subHandle{bus: b, sub: s}, nil
 }
 
+// createGroup creates the subscription's group if it doesn't exist. "$" starts
+// the group at new messages only, matching in-memory fan-out.
+func (s *subscription) createGroup() error {
+	if err := s.bus.rdb.XGroupCreateMkStream(s.bus.ctx, s.subject, s.group, "$").Err(); err != nil && !isBusyGroup(err) {
+		return err
+	}
+	return nil
+}
+
 func (s *subscription) run(h eventmod.Handler) {
 	defer s.bus.wg.Done()
+	claimIdle := s.bus.Opts.claimIdle()
+	var lastClaim time.Time
 	for {
 		select {
 		case <-s.quit:
 			return
 		default:
 		}
+		if time.Since(lastClaim) >= claimIdle {
+			s.claimStale(h, claimIdle)
+			lastClaim = time.Now()
+		}
 		if ids := s.takeRetries(); len(ids) > 0 {
 			s.redeliver(h, ids)
 		}
-		block := time.Second
+		block := min(time.Second, claimIdle)
 		if s.hasRetries() {
 			block = -1 // don't wait for new messages while retries are queued
 		}
@@ -219,6 +269,9 @@ func (s *subscription) run(h eventmod.Handler) {
 			if s.bus.ctx.Err() != nil {
 				return // bus closing
 			}
+			if strings.Contains(err.Error(), "NOGROUP") {
+				_ = s.createGroup() // stream or group deleted out from under us
+			}
 			select {
 			case <-s.quit:
 				return
@@ -228,6 +281,34 @@ func (s *subscription) run(h eventmod.Handler) {
 		}
 		for _, stream := range res {
 			s.dispatch(h, stream.Messages, nil)
+		}
+	}
+}
+
+// claimStale takes over entries in the group that have been pending with any
+// consumer (including a previous, crashed incarnation of this process) for at
+// least idle, and hands them to h.
+func (s *subscription) claimStale(h eventmod.Handler, idle time.Duration) {
+	start := "0-0"
+	for {
+		msgs, next, err := s.bus.rdb.XAutoClaim(s.bus.ctx, &redis.XAutoClaimArgs{
+			Stream: s.subject, Group: s.group, Consumer: s.consumer,
+			MinIdle: idle, Start: start, Count: 16,
+		}).Result()
+		if err != nil {
+			return // retried on the next sweep
+		}
+		if len(msgs) > 0 {
+			s.dispatch(h, msgs, s.deliveryCounts(msgs))
+		}
+		if next == "0-0" || next == "" {
+			return
+		}
+		start = next
+		select {
+		case <-s.quit:
+			return
+		default:
 		}
 	}
 }

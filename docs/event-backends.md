@@ -58,7 +58,7 @@ func main() {
 | **in-memory** (`eventmemmod`) | `*`, `>` | yes | yes | The default; no durability, so undelivered messages are lost on shutdown. |
 | **RabbitMQ** (`eventamqpmod`) | `*`, `>` (mapped to `#`) | yes | yes | Topic exchange; durable queues for groups. |
 | **NATS** (`eventnatsmod`) | `*`, `>` | yes | yes | Core NATS; back it with JetStream for durability. |
-| **Redis Streams** (`eventredismod`) | none (exact subjects) | yes | no | `XADD` / `XREADGROUP` / `XACK`. |
+| **Redis Streams** (`eventredismod`) | none (exact subjects) | yes | no | `XADD` / `XREADGROUP` / `XACK`; streams are untrimmed unless `Options.MaxLen` is set. |
 
 ## RabbitMQ patterns
 
@@ -85,8 +85,18 @@ registry.RegisterInstance[*eventamqpmod.Options](app.Reg, &eventamqpmod.Options{
 On a handler error (a nack with requeue) the message is redelivered to the subscriber or consumer group that failed, and only to it: other subscribers and groups on the same subject do not receive it again.
 
 - **RabbitMQ** puts a copy with an incremented `Attempt` on the subscription's own queue and acks the original only after the broker confirms the copy. If the copy cannot be published, the original is returned to the broker and the nack returns the error, so the message is not lost.
-- **Redis** leaves the entry pending in the group and claims it back, so `Attempt` is the entry's delivery count. The stream itself is not touched.
+- **Redis** leaves the entry pending in the group and claims it back, so `Attempt` is the entry's delivery count. The stream itself is not touched. An entry held by a consumer that stopped without acking it (for example, a crashed replica) is claimed and redelivered by another member of the group once it has been idle for `Options.ClaimIdle` (30 seconds by default). A handler that runs longer than `ClaimIdle` may therefore see its message handled twice.
 - **In-memory** re-enqueues the message with an incremented `Attempt`.
 - **NATS** re-publishes the message with an incremented `Attempt` to a retry subject that only the failing subscription, or the members of its queue group, listen on. Core NATS stores nothing, so this is best effort: a message that is being handled when the process stops is not redelivered. Back the subject with JetStream if you need durable delivery.
+
+Redis streams grow without limit by default. Set `Options.MaxLen` to trim each stream to roughly that many entries on every publish (`XADD MAXLEN ~`), and size it for your slowest group, because entries trimmed before a group reads them are lost to that group.
+
+```go
+registry.RegisterInstance[*eventredismod.Options](app.Reg, &eventredismod.Options{
+    Addr:      "redis:6379",
+    ClaimIdle: time.Minute, // reclaim entries a dead consumer left unacked
+    MaxLen:    100_000,     // keep roughly the last 100k entries per stream
+})
+```
 
 RabbitMQ, Redis, and the in-memory bus are at-least-once. Because redelivery is always possible, handlers must be idempotent, as described on the [events](./events.md) page.

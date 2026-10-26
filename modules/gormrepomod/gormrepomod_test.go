@@ -3,6 +3,7 @@ package gormrepomod_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"reflect"
 	"testing"
 
@@ -319,6 +320,75 @@ func TestNamedDB_Isolation(t *testing.T) {
 	n, _ = events.Query().Count(ctx)
 	if n != 1 {
 		t.Fatalf("event count want 1, got %d", n)
+	}
+}
+
+// A Tx on one database must not capture repos bound to another: they keep
+// using their own database, and their own Tx opens a real transaction there.
+// Repos on the same database (here primaryDB wraps the default DB) still join.
+func TestNamedDB_TxStaysOnItsDatabase(t *testing.T) {
+	pdb := privateDB(t, &tUser{}, &tMetric{})
+	adb, err := gorm.Open(sqlite.Open("file:"+t.Name()+"_analytics?mode=memory&cache=shared"), &gorm.Config{})
+	if err != nil {
+		t.Fatalf("open analytics: %v", err)
+	}
+	if err := adb.AutoMigrate(&tEvent{}); err != nil {
+		t.Fatalf("migrate analytics: %v", err)
+	}
+
+	app := bosun.New()
+	registry.RegisterInstance[*gorm.DB](app.Reg, pdb)
+	registry.RegisterInstance[*primaryDB](app.Reg, &primaryDB{DB: pdb})
+	registry.RegisterInstance[*analyticsDB](app.Reg, &analyticsDB{DB: adb})
+	if err := app.Start(); err != nil {
+		t.Fatalf("start: %v", err)
+	}
+	users := repoOf[tUser](t, app)
+	metrics := repoOf[tMetric](t, app)
+	events := repoOf[tEvent](t, app)
+	ctx := context.Background()
+
+	inner := errors.New("inner rollback")
+	outer := errors.New("outer rollback")
+	err = users.Tx(ctx, func(ctx context.Context) error {
+		if err := users.Create(ctx, &tUser{Email: "tx@example.com"}); err != nil {
+			return err
+		}
+		// Same database: joins the outer transaction.
+		if err := metrics.Create(ctx, &tMetric{Label: "joined"}); err != nil {
+			return err
+		}
+		// Other database: runs on analytics, not inside the primary tx.
+		if err := events.Create(ctx, &tEvent{Name: "kept"}); err != nil {
+			return fmt.Errorf("event on analytics inside primary tx: %w", err)
+		}
+		// Its own Tx is a real transaction on analytics.
+		err := events.Tx(ctx, func(ctx context.Context) error {
+			if err := events.Create(ctx, &tEvent{Name: "rolledback"}); err != nil {
+				return err
+			}
+			return inner
+		})
+		if !errors.Is(err, inner) {
+			return fmt.Errorf("inner tx = %v, want %v", err, inner)
+		}
+		return outer
+	})
+	if !errors.Is(err, outer) {
+		t.Fatalf("outer tx = %v, want %v", err, outer)
+	}
+
+	if n, _ := users.Query().Count(ctx); n != 0 {
+		t.Fatalf("users after outer rollback = %d, want 0", n)
+	}
+	if n, _ := metrics.Query().Count(ctx); n != 0 {
+		t.Fatalf("metrics after outer rollback = %d, want 0 (should have joined the tx)", n)
+	}
+	if n, _ := events.Query().Where("name = ?", "kept").Count(ctx); n != 1 {
+		t.Fatalf("kept events = %d, want 1 (analytics write must not join the primary tx)", n)
+	}
+	if n, _ := events.Query().Where("name = ?", "rolledback").Count(ctx); n != 0 {
+		t.Fatalf("rolled-back events = %d, want 0 (analytics Tx must be a real transaction)", n)
 	}
 }
 

@@ -1,6 +1,6 @@
 # OpenAPI
 
-Bosun generates an OpenAPI 3.0 spec from your typed handlers and serves it at `GET /openapi.json`. There are no annotations or separate schema files: route paths, parameters, request bodies and response schemas come from your Go types, and error responses come from three sources that you control. This page is a set of how-to guides for common tasks. For a guided first run, follow the [OpenAPI tutorial](./openapi-tutorial.md). For exact mappings and limits, see the [OpenAPI reference](./openapi-reference.md).
+Bosun generates an OpenAPI 3.0 spec from your typed handlers and serves it at `GET /openapi.json`, with an interactive Swagger UI page at `GET /docs`. There are no annotations or separate schema files: route paths, parameters, request bodies and response schemas come from your Go types, and error responses come from three sources that you control. This page is a set of how-to guides for common tasks. For a guided first run, follow the [OpenAPI tutorial](./openapi-tutorial.md). For exact mappings and limits, see the [OpenAPI reference](./openapi-reference.md).
 
 <figure class="diagram">
 <svg viewBox="0 0 620 250" role="img" aria-labelledby="oa-title oa-desc" xmlns="http://www.w3.org/2000/svg">
@@ -41,7 +41,7 @@ Import the package for its side effects, anywhere in your binary:
 import _ "github.com/bluebeard63/bosun/openapi"
 ```
 
-The package registers `openapi.SpecController`, which mounts `GET /openapi.json` when the app starts. The spec is built from the typed routes of the app that serves it (`app.TypedRoutes()`) on the first request and then served from memory, so it always matches the running code. It is rebuilt when the app observes a new error status. Raw routes registered with `r.Get` and similar methods are not included.
+The package registers `openapi.SpecController`, which mounts `GET /openapi.json` and the [docs page](#add-an-interactive-documentation-page) at `GET /docs` when the app starts. The spec is built from the typed routes of the app that serves it (`app.TypedRoutes()`) on the first request and then served from memory, so it always matches the running code. It is rebuilt when the app observes a new error status. Raw routes registered with `r.Get` and similar methods are not included.
 
 ## Serve the spec at another path
 
@@ -49,7 +49,8 @@ Remount the controller with `OverridePrefix`:
 
 ```go
 app := bosun.New(bosun.OverridePrefix[openapi.SpecController]("/api"))
-// spec now at GET /api/openapi.json; /openapi.json returns 404
+// spec now at GET /api/openapi.json and the docs page at GET /api/docs;
+// /openapi.json and /docs return 404
 ```
 
 ## Turn the spec off
@@ -79,7 +80,8 @@ Builds made with `go build -tags prod` then contain no spec endpoint and no scan
 ```go
 func internalOnly(next http.Handler) http.Handler {
     return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-        if r.URL.Path == "/openapi.json" && r.Header.Get("X-Internal-Token") != os.Getenv("INTERNAL_TOKEN") {
+        internal := r.URL.Path == "/openapi.json" || strings.HasPrefix(r.URL.Path, "/docs")
+        if internal && r.Header.Get("X-Internal-Token") != os.Getenv("INTERNAL_TOKEN") {
             http.NotFound(w, r)
             return
         }
@@ -225,7 +227,25 @@ Tags on non-string fields are read as JSON. `example` also works on `path`, `que
 
 ## Add an interactive documentation page
 
-Serve Swagger UI (or Redoc) from a raw route and point it at the spec. The [tutorial](./openapi-tutorial.md#step-8-browse-the-api-in-swagger-ui) has a complete `DocsController` you can copy. Because it uses a raw route, the page itself stays out of the spec.
+`SpecController` also serves a Swagger UI page at `GET /docs`, so there is nothing to add: open <http://localhost:8080/docs>. The page loads Swagger UI 5.17.14 from jsDelivr and the spec by a URL relative to itself, so it keeps working under `OverridePrefix` and behind a proxy that strips a path prefix. It is a raw route, so it is not in the spec.
+
+To change the path or title, or to serve the Swagger UI files yourself, register `openapi.DocsOptions` before `Start`:
+
+```go
+registry.RegisterInstance[*openapi.DocsOptions](app.Reg, &openapi.DocsOptions{
+    Path:      "/reference",          // default "/docs"
+    Title:     "Notes API reference", // default Options.Title
+    AssetsURL: "/static/swagger-ui",  // a copy of swagger-ui-dist, for offline or strict CSP
+})
+```
+
+The page has no inline script, so a Content Security Policy that allows scripts from your own origin (and the assets origin, if different) is enough. To turn the page off and keep the spec, set an empty `Path`:
+
+```go
+registry.RegisterInstance[*openapi.DocsOptions](app.Reg, &openapi.DocsOptions{})
+```
+
+If your app already has its own `/docs` route, starting it fails with a duplicate route error: move or turn off one of the two.
 
 ## Export the spec in CI
 

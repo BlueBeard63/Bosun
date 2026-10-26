@@ -133,7 +133,7 @@ Add one blank import to `main.go`:
 import (
     // ...
     "github.com/bluebeard63/bosun"
-    _ "github.com/bluebeard63/bosun/openapi" // serves GET /openapi.json
+    _ "github.com/bluebeard63/bosun/openapi" // serves GET /openapi.json and GET /docs
 )
 ```
 
@@ -265,39 +265,37 @@ The fourth answers `507`. Fetch the spec again: `POST /notes` now lists `507 Ins
 
 ## Step 8: browse the API in Swagger UI
 
-The JSON spec is meant for tools. For people, serve Swagger UI. Add a second controller to `main.go` that returns a small HTML page, which loads Swagger UI from a CDN and points it at your spec:
+The JSON spec is meant for tools. For people, the same import also serves a Swagger UI page, so there is no code to write. With the server running, open <http://localhost:8080/docs> in a browser.
+
+You see the three notes operations with their schemas and error responses. Expand `POST /notes`, choose **Try it out**, and send a request straight from the page.
+
+The page is a raw route, so it doesn't appear in the spec. It is titled `bosun API`, like the spec. To give both your API's name, register `openapi.Options` before the app runs. Change `main` to:
 
 ```go
-type DocsController struct{}
-
-var _ = bosun.Controller[DocsController]("")
-
-func (c *DocsController) Routes(r *bosun.Router) {
-    r.Get("/docs", c.ui) // raw route: not part of the spec itself
+func main() {
+    app := bosun.New()
+    registry.RegisterInstance[*openapi.Options](app.Reg, &openapi.Options{
+        Title:   "Notes API",
+        Version: "0.1.0",
+    })
+    if err := app.Run(":8080"); err != nil {
+        log.Fatal(err)
+    }
 }
-
-func (c *DocsController) ui(w http.ResponseWriter, _ *http.Request) {
-    w.Header().Set("Content-Type", "text/html; charset=utf-8")
-    _, _ = w.Write([]byte(swaggerUI))
-}
-
-const swaggerUI = `<!doctype html>
-<html>
-<head>
-  <title>Notes API</title>
-  <link rel="stylesheet" href="https://unpkg.com/swagger-ui-dist@5/swagger-ui.css">
-</head>
-<body>
-  <div id="swagger-ui"></div>
-  <script src="https://unpkg.com/swagger-ui-dist@5/swagger-ui-bundle.js"></script>
-  <script>SwaggerUIBundle({ url: "/openapi.json", dom_id: "#swagger-ui" });</script>
-</body>
-</html>`
 ```
 
-`/docs` is registered with the raw `r.Get`, so it doesn't appear in the spec. Raw routes are never included.
+This needs the `registry` package, and the `openapi` package by name, so replace the blank import:
 
-Restart the server and open <http://localhost:8080/docs> in a browser. You see the three notes operations with their schemas and error responses. Expand `POST /notes`, choose **Try it out**, and send a request straight from the page.
+```go
+import (
+    // ...
+    "github.com/bluebeard63/bosun"
+    "github.com/bluebeard63/bosun/openapi"
+    "github.com/bluebeard63/bosun/registry"
+)
+```
+
+Restart the server and reload the page: it now shows **Notes API 0.1.0**.
 
 ## Step 9: save the spec to a file
 

@@ -18,9 +18,12 @@ import (
 )
 
 type SpecController struct {
-	app     *bosun.App  // injected: the app this controller is mounted on
-	scanner *errScanner // injected (has injected ScanOptions itself)
-	opts    *Options    // injected: info, servers, security schemes
+	app     *bosun.App   // injected: the app this controller is mounted on
+	scanner *errScanner  // injected (has injected ScanOptions itself)
+	opts    *Options     // injected: info, servers, security schemes
+	docs    *DocsOptions // injected: interactive docs page
+
+	docsPage docsPage // rendered by Docs, set in Routes
 
 	mu     sync.Mutex
 	doc    []byte // cached spec document
@@ -32,7 +35,8 @@ var _ = bosun.Service[errScanner]()
 var _ = bosun.Controller[SpecController]("")
 
 func (c *SpecController) Routes(r *bosun.Router) {
-	r.Get("/openapi.json", c.Spec)
+	r.Get(specPath, c.Spec)
+	c.docsRoutes(r)
 }
 
 func (c *SpecController) Spec(w http.ResponseWriter, req *http.Request) {

@@ -6,15 +6,17 @@ This page describes exactly what `github.com/bluebeard63/bosun/openapi` generate
 
 | Symbol | Description |
 |---|---|
-| `SpecController` | Controller that serves the spec. Registered with prefix `""`, so it serves `GET /openapi.json`. Remount it with `bosun.OverridePrefix[openapi.SpecController](prefix)`. |
+| `SpecController` | Controller that serves the spec and the docs page. Registered with prefix `""`, so it serves `GET /openapi.json` and `GET /docs`. Remount it with `bosun.OverridePrefix[openapi.SpecController](prefix)`. |
 | `ScanOptions{SourceDir string}` | Where the source scanner looks for files on disk. Default: `&ScanOptions{SourceDir: "."}`. Override it with `registry.RegisterInstance[*openapi.ScanOptions]`. An empty `SourceDir` turns off on-disk scanning. |
 | `Sources(fsys fs.FS) struct{}` | Registers an embedded source tree for scanning. Use it as `var _ = openapi.Sources(src)`. The registration applies to every app in the process. |
 | `Options` | The document's `info`, `servers` and `securitySchemes`, and which schemes routes with permissions require. Default: `&Options{}`. Override it with `registry.RegisterInstance[*openapi.Options]`. See [Options](#options). |
 | `Server{URL, Description string}` | One entry of `Options.Servers`. |
 | `SecurityScheme` | One entry of `Options.SecuritySchemes`: an OpenAPI 3.0 security scheme. See [Security](#security). |
+| `DocsOptions{Path, Title, AssetsURL string}` | The interactive docs page. Default: `&DocsOptions{Path: "/docs"}`. Override it with `registry.RegisterInstance[*openapi.DocsOptions]`. See [Docs page](#docs-page). |
+| `DefaultAssetsURL` | `https://cdn.jsdelivr.net/npm/swagger-ui-dist@5.17.14`, the Swagger UI build the docs page loads by default. |
 | `OAuthFlows`, `OAuthFlow` | The flows of an `oauth2` `SecurityScheme`: `Implicit`, `Password`, `ClientCredentials` and `AuthorizationCode`, each with `AuthorizationURL`, `TokenURL`, `RefreshURL` and `Scopes map[string]string`. |
 
-Importing the package registers the controller, the scanner service and the `ScanOptions` and `Options` defaults. `bosun.Disable("github.com/bluebeard63/bosun/openapi")` removes them all from an app.
+Importing the package registers the controller, the scanner service and the `ScanOptions`, `Options` and `DocsOptions` defaults. `bosun.Disable("github.com/bluebeard63/bosun/openapi")` removes them all from an app.
 
 ## Options
 
@@ -73,6 +75,23 @@ Every permission used by a route is also added to the `scopes` of each `oauth2` 
 `info` comes from [Options](#options). `servers` and `components.securitySchemes` are added when `Options` configures them.
 
 The document is built from the serving app's `app.TypedRoutes()` on the first request, which comes after `Start` when the route list is complete, and the encoded bytes are served from then on. It is rebuilt only when the observed layer (see [Error layers](#error-layers)) has recorded a new status since. The source scan runs once per app, on the first request.
+
+## Docs page
+
+When `DocsOptions.Path` is not empty, `SpecController` mounts two raw routes under its prefix. Raw routes are listed by `app.Routes()` with `Raw` set and are never in the spec.
+
+| Route | Response |
+|---|---|
+| `GET <Path>` | `200`, `text/html; charset=utf-8`: a page that loads `<AssetsURL>/swagger-ui.css`, `<AssetsURL>/swagger-ui-bundle.js` and the init script, with no inline script. |
+| `GET <Path without trailing slash>/init.js` | `200`, `text/javascript`: starts Swagger UI with the spec URL. |
+
+| Field | Meaning | Default |
+|---|---|---|
+| `Path` | The page's path. A missing leading `/` is added. A trailing `/` is kept and matched exactly (`/docs/` serves only `/docs/`). Empty turns the page off; `/openapi.json` is still served. | `/docs` |
+| `Title` | The page's `<title>`, HTML-escaped. | `Options.Title`, else `bosun API` |
+| `AssetsURL` | Base URL of a [swagger-ui-dist](https://www.npmjs.com/package/swagger-ui-dist) build. A trailing `/` is removed. | `DefaultAssetsURL` |
+
+The page refers to the spec and the init script by URLs relative to itself (`./openapi.json` from `/docs`, `../openapi.json` from `/docs/`), so the links hold under any `OverridePrefix` and behind a proxy that removes a path prefix before forwarding.
 
 ## Operations
 

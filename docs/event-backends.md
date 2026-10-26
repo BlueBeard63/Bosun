@@ -64,16 +64,19 @@ func main() {
 
 The RabbitMQ driver expresses the classic messaging patterns through the generic API rather than exposing broker-specific calls.
 
-**Publish/Subscribe** delivers a copy to every consumer: subscribe without a group, and each subscriber gets its own queue bound to the subject. **Work Queues** load-balance across instances: use `WithGroup("workers")` so members share one durable queue. **Topics** route by pattern: publish to a dotted subject such as `orders.eu.created` and subscribe with wildcards such as `orders.*.created` or `orders.>`. **Routing** is exact-subject topic matching. **Request/reply (RPC)** is covered on the [event RPC](./event-rpc.md) page.
+**Publish/Subscribe** delivers a copy to every consumer: subscribe without a group, and each subscriber gets its own queue bound to the subject. **Work Queues** load-balance across instances: use `WithGroup("workers")` so members share one durable queue per subject, named `<group>.<subject>` (for example `workers.orders.placed`), so one group consuming several subjects keeps each subject's messages with its own handler. **Topics** route by pattern: publish to a dotted subject such as `orders.eu.created` and subscribe with wildcards such as `orders.*.created` or `orders.>`. **Routing** is exact-subject topic matching. **Request/reply (RPC)** is covered on the [event RPC](./event-rpc.md) page.
 
 The exchange type defaults to `topic`, which covers all of the above. Set `Options.Kind` to `direct` for exact-only routing or `fanout` for a broadcast exchange where the routing key is ignored.
 
+`Publish` uses publisher confirms: it returns only after the broker has accepted the message, and returns `eventamqpmod.ErrNacked` if the broker rejects it. By default a message that no queue is bound to is dropped by the broker, as AMQP specifies; set `Options.Mandatory` to have `Publish` return `eventamqpmod.ErrUnroutable` instead.
+
 ```go
 registry.RegisterInstance[*eventamqpmod.Options](app.Reg, &eventamqpmod.Options{
-    URL:      "amqp://guest:guest@rabbit:5672/",
-    Exchange: "app.events",
-    Kind:     "topic", // topic | direct | fanout
-    Prefetch: 32,
+    URL:       "amqp://guest:guest@rabbit:5672/",
+    Exchange:  "app.events",
+    Kind:      "topic", // topic | direct | fanout
+    Prefetch:  32,
+    Mandatory: true, // fail Publish when nothing is bound to the subject
 })
 ```
 

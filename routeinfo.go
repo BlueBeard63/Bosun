@@ -29,6 +29,7 @@ type RouteInfo struct {
 	Handler  string
 	In       reflect.Type
 	Out      reflect.Type
+	Status   int   // success status set via bosun.Status(...); 0 means 200
 	Declared []int // error statuses declared via bosun.Errors(...)
 }
 

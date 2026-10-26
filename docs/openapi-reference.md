@@ -48,7 +48,7 @@ Raw routes (`r.Get`, `r.Post` and so on) are not included.
 
 | Code | When it is listed | Body schema |
 |---|---|---|
-| `200` | Always. Description `OK`. | Schema of `Out` |
+| `200`, or the route's `bosun.Status` code | Always. Description from `http.StatusText`, such as `OK` or `Created`. | Schema of `Out`; none for `204`, `205` and `304` |
 | `400` | When `In` is a struct with at least one field (description "invalid request body or parameters"), or when one of the error layers adds it | `ValidationError` when `In` is a struct with fields, otherwise `ErrorResponse` |
 | `500` | Always (description "internal server error") | `ErrorResponse` |
 | Any other code | Declared, scanned or observed (see below). Description from `http.StatusText`. | `ErrorResponse` |
@@ -163,7 +163,7 @@ The scanner links recorded statuses to a route by matching the package import pa
 These describe the current generator. Use [declarations](./openapi.md#declare-statuses-on-the-route) or your own tooling where they matter.
 
 - **Fixed document info.** `info.title` is always `bosun API` and `info.version` is always `1.0.0`. There are no `servers`, `tags` or `securitySchemes`.
-- **Success is always `200` with JSON.** A `string` or `[]byte` `Out` is still described as `application/json`, and an empty `struct{}` appears as an empty object. Bosun actually sends `text/plain`, `application/octet-stream` and no body respectively.
+- **One success response, described as JSON.** It is `200` unless the route sets `bosun.Status(code)`; a status chosen at runtime with `bosun.SetStatus` isn't visible. A `string` or `[]byte` `Out` is still described as `application/json`, and an empty `struct{}` appears as an empty object. Bosun actually sends `text/plain`, `application/octet-stream` and no body respectively.
 - **Form bodies are described as JSON.** Fields tagged `form` appear as JSON body properties, and form and multipart request bodies get an `application/json` content type.
 - **Custom validation is invisible.** Checks made in `Validate()` methods aren't reflected in schemas.
 - **Observed statuses reset on restart** and only include codes `>= 400`.

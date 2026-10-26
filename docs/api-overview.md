@@ -35,7 +35,7 @@ These functions run at package-init time through `var _ = ...` and return a mean
 
 ## Typed routes and errors
 
-The five typed generics share the signature `func[In, Out any](r *Router, path string, h Handler[In, Out], opts ...RouteOpt)`, and type inference means you never write the type parameters. `bosun.Errors(codes ...int) RouteOpt` declares extra status codes for OpenAPI, and `bosun.MaxBody(n int64) RouteOpt` overrides the body limit for one route. `bosun.E(status, publicMessage, cause) *Error` returns a controlled error: the client sees the status and message while the cause is recorded for the audit log with the call site. Any other error becomes a 500. The [typed handlers](./typed-handlers.md) and [errors](./errors.md) guides cover these fully.
+The five typed generics share the signature `func[In, Out any](r *Router, path string, h Handler[In, Out], opts ...RouteOpt)`, and type inference means you never write the type parameters. `bosun.Errors(codes ...int) RouteOpt` declares extra status codes for OpenAPI, `bosun.MaxBody(n int64) RouteOpt` overrides the body limit for one route, and `bosun.Status(code int) RouteOpt` sets the success status. Inside a handler, `bosun.SetStatus(ctx, code)`, `bosun.ResponseHeader(ctx) http.Header` and `bosun.SetCookie(ctx, *http.Cookie)` adjust the response. `bosun.E(status, publicMessage, cause) *Error` returns a controlled error: the client sees the status and message while the cause is recorded for the audit log with the call site. Any other error becomes a 500. The [typed handlers](./typed-handlers.md) and [errors](./errors.md) guides cover these fully.
 
 ## Context values and dynamic values
 

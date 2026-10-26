@@ -100,7 +100,47 @@ func (c *Items) Delete(ctx context.Context, req *bosun.Req[DeleteIn]) (struct{},
 }
 ```
 
-For a custom `Content-Type` or streaming, use the raw router methods instead; the [files guide](./files.md) shows a worked example.
+A `Content-Type` set with `bosun.ResponseHeader` (see below) replaces the default in this table. For streaming, use the raw router methods instead; the [files guide](./files.md) shows a worked example.
+
+## Status, headers and cookies
+
+A typed handler answers `200` on success unless told otherwise. For a fixed status, pass the `bosun.Status(code)` route option. OpenAPI generation documents that code as the success response.
+
+```go
+bosun.Post(r, "/notes", c.Create, bosun.Status(http.StatusCreated))
+bosun.Delete(r, "/notes/{id}", c.Delete, bosun.Status(http.StatusNoContent))
+```
+
+To decide at runtime, or to set response headers and cookies, call the response helpers with the handler's `ctx`, or with any context derived from it:
+
+```go
+func (c *Notes) Create(ctx context.Context, req *bosun.Req[NewNote]) (Note, error) {
+    n, err := c.store.Create(ctx, req.Body)
+    if err != nil {
+        return Note{}, err
+    }
+    bosun.SetStatus(ctx, http.StatusCreated)               // overrides bosun.Status
+    bosun.ResponseHeader(ctx).Set("Location", "/notes/"+n.ID)
+    return n, nil
+}
+
+func (c *Auth) Login(ctx context.Context, req *bosun.Req[LoginIn]) (LoginOut, error) {
+    sess, err := c.auth.Login(ctx, req.Body.Email, req.Body.Password)
+    if err != nil {
+        bosun.ResponseHeader(ctx).Set("WWW-Authenticate", `Bearer realm="api"`)
+        return LoginOut{}, bosun.E(http.StatusUnauthorized, "invalid credentials", err)
+    }
+    bosun.SetCookie(ctx, &http.Cookie{Name: "session", Value: sess.ID, HttpOnly: true, Secure: true})
+    return LoginOut{Name: sess.Name}, nil
+}
+```
+
+The rules:
+
+- `SetStatus` and `Status` take a `2xx` or `3xx` code. An invalid code panics in `SetStatus` and fails `app.Start()` for `Status`. They apply only on success; a returned error still decides the error response's status.
+- `204 No Content`, `205 Reset Content` and `304 Not Modified` are sent with no body, whatever `Out` holds.
+- Headers and cookies apply to error responses too, so `Retry-After` and `WWW-Authenticate` work with `bosun.E`. An error response is always sent as `application/json`.
+- The helpers work only with the context the handler received. The embedded `req.Context()` doesn't carry them, and outside a typed handler they do nothing.
 
 ## Body content types
 

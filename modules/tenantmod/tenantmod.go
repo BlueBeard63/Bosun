@@ -12,8 +12,10 @@ package tenantmod
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"reflect"
+	"strconv"
 	"strings"
 
 	"github.com/bluebeard63/bosun"
@@ -63,7 +65,11 @@ type Resolver interface {
 	Resolve(r *http.Request) (*Tenant, error)
 }
 
-// HeaderResolver reads the tenant from the X-Tenant-ID header.
+// HeaderResolver reads the tenant from the X-Tenant-ID header. The header is
+// not tied to the caller's identity, so any client can name any tenant: use
+// it only for trusted internal traffic (behind a gateway that sets the
+// header), and register a Resolver backed by the authenticated identity for
+// anything public.
 type HeaderResolver struct{}
 
 func (HeaderResolver) Resolve(r *http.Request) (*Tenant, error) {
@@ -133,7 +139,9 @@ func (s *scoped[T]) Create(ctx context.Context, entity *T) error {
 	if err != nil {
 		return err
 	}
-	setField(entity, s.column, tid)
+	if err := setField(entity, s.column, tid); err != nil {
+		return err
+	}
 	return s.base.Create(ctx, entity)
 }
 
@@ -142,7 +150,20 @@ func (s *scoped[T]) Update(ctx context.Context, entity *T) error {
 	if err != nil {
 		return err
 	}
-	setField(entity, s.column, tid)
+	// The base Update (GORM Save) matches on the primary key alone, so check
+	// the existing row belongs to this tenant before overwriting it.
+	pk, ok := primaryKey(entity)
+	if !ok {
+		return fmt.Errorf("tenantmod: %T has no primary key field", entity)
+	}
+	if !pk.IsZero() {
+		if _, err := s.Get(ctx, pk.Interface()); err != nil {
+			return err // not found or another tenant's row
+		}
+	}
+	if err := setField(entity, s.column, tid); err != nil {
+		return err
+	}
 	return s.base.Update(ctx, entity)
 }
 
@@ -266,15 +287,36 @@ func normColumn(s string) string {
 	return strings.ToLower(strings.ReplaceAll(s, "_", ""))
 }
 
-func setField(entity any, column, val string) {
+// setField stamps the tenant id on entity's column field, converting it for
+// integer fields. It fails rather than leave a row untenanted.
+func setField(entity any, column, val string) error {
 	v := reflect.ValueOf(entity)
 	if v.Kind() != reflect.Pointer || v.IsNil() {
-		return
+		return fmt.Errorf("tenantmod: entity %T is not a non-nil pointer", entity)
 	}
 	f := fieldFor(v.Elem(), column)
-	if f.IsValid() && f.CanSet() && f.Kind() == reflect.String {
-		f.SetString(val)
+	if !f.IsValid() || !f.CanSet() {
+		return fmt.Errorf("tenantmod: %T has no settable field for column %q", entity, column)
 	}
+	switch f.Kind() {
+	case reflect.String:
+		f.SetString(val)
+	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
+		n, err := strconv.ParseInt(val, 10, f.Type().Bits())
+		if err != nil {
+			return fmt.Errorf("tenantmod: tenant id %q for column %q: %w", val, column, err)
+		}
+		f.SetInt(n)
+	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
+		n, err := strconv.ParseUint(val, 10, f.Type().Bits())
+		if err != nil {
+			return fmt.Errorf("tenantmod: tenant id %q for column %q: %w", val, column, err)
+		}
+		f.SetUint(n)
+	default:
+		return fmt.Errorf("tenantmod: column %q on %T has unsupported type %s", column, entity, f.Type())
+	}
+	return nil
 }
 
 func fieldValue(entity any, column string) (string, bool) {
@@ -286,10 +328,40 @@ func fieldValue(entity any, column string) (string, bool) {
 		v = v.Elem()
 	}
 	f := fieldFor(v, column)
-	if f.IsValid() && f.Kind() == reflect.String {
+	if !f.IsValid() {
+		return "", false
+	}
+	switch f.Kind() {
+	case reflect.String:
 		return f.String(), true
+	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
+		return strconv.FormatInt(f.Int(), 10), true
+	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
+		return strconv.FormatUint(f.Uint(), 10), true
 	}
 	return "", false
+}
+
+// primaryKey returns entity's primary key field: the one tagged
+// gorm:"primaryKey", or else the field named ID (GORM's default).
+func primaryKey(entity any) (reflect.Value, bool) {
+	v := reflect.ValueOf(entity)
+	if v.Kind() != reflect.Pointer || v.IsNil() {
+		return reflect.Value{}, false
+	}
+	v = v.Elem()
+	t := v.Type()
+	for i := 0; i < t.NumField(); i++ {
+		for _, part := range strings.Split(t.Field(i).Tag.Get("gorm"), ";") {
+			if k := strings.TrimSpace(part); strings.EqualFold(k, "primaryKey") || strings.EqualFold(k, "primary_key") {
+				return v.Field(i), true
+			}
+		}
+	}
+	if f := v.FieldByName("ID"); f.IsValid() {
+		return f, true
+	}
+	return reflect.Value{}, false
 }
 
 func gormColumn(sf reflect.StructField) string {

@@ -123,20 +123,13 @@ A raw route does not emit an audit event or an OpenAPI entry; that is the trade 
 
 ## Limiting request size
 
-Cap the body with `http.MaxBytesReader`, applied in a middleware so it covers typed upload routes. Exceeding the cap surfaces as a parse error and a 400 response.
+Typed routes that parse the body (the small-upload pattern above) read at most 1 MiB by default and answer a larger body with `413`. Raise the cap for an upload route with the `bosun.MaxBody` route option, or for the whole app with `bosun.WithMaxBody`.
 
 ```go
-type LimitBody struct{}
-
-func (LimitBody) Handle(next http.Handler) http.Handler {
-    return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-        r.Body = http.MaxBytesReader(w, r.Body, 50<<20) // 50 MiB
-        next.ServeHTTP(w, r)
-    })
-}
-
-var _ = bosun.Middleware[LimitBody]()
+bosun.Post(r, "/avatar", c.Upload, bosun.MaxBody(20<<20)) // 20 MiB
 ```
+
+Streaming and raw-body routes declare `In` as `struct{}`, so the framework doesn't read the body and the app-wide cap doesn't apply. Give them an explicit `bosun.MaxBody(n)` when you want a ceiling; reading past it then fails with an `*http.MaxBytesError`, and a declared `Content-Length` over it is refused with `413` before the handler runs. The [typed handlers reference](./typed-handlers.md#body-size-limit) has the full rules.
 
 ## Validating content type
 

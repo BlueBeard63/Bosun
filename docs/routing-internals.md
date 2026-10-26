@@ -100,6 +100,44 @@ for _, rt := range app.TypedRoutes() {
 }
 ```
 
-Both are scoped to the `App`. Two apps in one process, such as two tests or an app built with `OverridePrefix`, never see each other's routes. Services that need this information can inject `*bosun.App`, which every app registers as itself. The OpenAPI and manifest controllers use this to describe only the app they are mounted on.
+`app.Routes()` returns every route the app's controllers mounted, typed and raw, in mount order. A raw route (`r.Get` and the other router methods) has `Raw: true`, and its `In` and `Out` are nil. `app.TypedRoutes()` leaves raw routes out, so OpenAPI and the manifest are unaffected by them.
+
+Each `RouteInfo` also carries:
+
+- `Meta map[string]any`: the metadata attached with `bosun.Meta(key, val)` or `MWRef.WithMeta(key, val)` at the controller, group or route level (nil when there is none). It has no effect on request handling.
+- `Middleware []string`: the controller, group and route middleware wrapping the handler, outermost first. A `bosun.Use[T]()` ref is listed by its type (`mw.RequireAuth`), a `bosun.UseFunc` closure by its function name. App-wide middleware is not listed.
+
+`bosun.Meta` is accepted wherever a middleware ref is: as a typed route option, on raw routes, on `r.Group` and on `bosun.Controller`. When several levels set the same key, `[]string` values accumulate, starting with the controller's, and any other value is replaced by the innermost one.
+
+```go
+var _ = bosun.Controller[Notes]("/notes", bosun.Meta("owner", "notes-team"))
+
+func (c *Notes) Routes(r *bosun.Router) {
+    bosun.Get(r, "/", c.List)
+    bosun.Post(r, "/", c.Create, HasPermission("notes:write"), bosun.Meta("audit", "notes.create"))
+    r.Delete("/{id}", c.Delete, bosun.Meta(bosun.MetaPermissions, []string{"notes:delete"}))
+}
+```
+
+`bosun.MetaDoc` (`"doc"`) holds the `bosun.RouteDoc{Summary, Description}` set with `bosun.Doc`, which the [OpenAPI spec](./openapi.md#describe-operations-and-schemas) uses. `bosun.MetaPermissions` (`"permissions"`) is the conventional key for the permissions a route requires, as a `[]string`. Permission middleware should attach it with `WithMeta` (see [auth and permissions](./auth-and-permissions.md#record-the-permission-on-the-route)), so tooling and tests can read it. A test can then check that no mutating route was added without one:
+
+```go
+func TestEveryMutatingRouteDeclaresPermission(t *testing.T) {
+    app := bosun.New()
+    if err := app.Start(); err != nil {
+        t.Fatal(err)
+    }
+    for _, rt := range app.Routes() {
+        if rt.Method == http.MethodGet {
+            continue
+        }
+        if _, ok := rt.Meta[bosun.MetaPermissions]; !ok {
+            t.Errorf("%s %s declares no permission", rt.Method, rt.Path)
+        }
+    }
+}
+```
+
+All three are scoped to the `App`. Two apps in one process, such as two tests or an app built with `OverridePrefix`, never see each other's routes. Services that need this information can inject `*bosun.App`, which every app registers as itself. The OpenAPI and manifest controllers use this to describe only the app they are mounted on.
 
 The package-level `bosun.TypedRoutes()` and `bosun.ObservedStatuses()` are deprecated. They return a cumulative list across every app in the process and will be removed in a future release. To migrate, replace `bosun.TypedRoutes()` with `app.TypedRoutes()` and `bosun.ObservedStatuses(m, p)` with `app.ObservedStatuses(m, p)`. In the manifest module, replace `manifestmod.Build(info)` with `manifestmod.BuildFor(app, info)` and `EmitIfRequested(info)` with `EmitIfRequestedFor(app, info)`.

@@ -43,7 +43,7 @@ Each `Event` carries the provider, the event type, a delivery id (for dedupe), t
 
 ## Verifying signatures
 
-Configure a verifier per provider so unsigned or forged requests are rejected before any handler sees them. The receiver ships verifiers for GitHub and Stripe, plus a generic HMAC verifier for your own services; a provider with no verifier is accepted as-is, which you should use only behind a trusted proxy.
+Configure a verifier per provider so unsigned or forged requests are rejected before any handler sees them. The receiver ships verifiers for GitHub and Stripe, plus a generic HMAC verifier for your own services. The receiver fails closed: a request for a provider with no verifier is rejected with 401.
 
 ```go
 func main() {
@@ -62,6 +62,22 @@ func main() {
 ```
 
 The GitHub verifier checks the `X-Hub-Signature-256` HMAC, the Stripe verifier checks the timestamped `Stripe-Signature` scheme, and the generic `HMACVerifier` checks a hex HMAC-SHA256 of the body against a header you name.
+
+The Stripe verifier rejects an event whose signed timestamp is more than five minutes old, so a captured request cannot be replayed. Set `Tolerance` to change the window. When the header carries several `v1` signatures, as it does while you roll a secret, the request is accepted if any of them matches.
+
+```go
+"stripe": webhookmod.StripeVerifier{Secret: os.Getenv("STRIPE_SECRET"), Tolerance: 10 * time.Minute},
+```
+
+For local development, or for a provider that a trusted proxy has already authenticated, map the provider to `webhookmod.Unverified()` to accept its events without a signature check. Never use it on a public endpoint.
+
+```go
+Verifiers: map[string]webhookmod.Verifier{
+    "local": webhookmod.Unverified(),
+},
+```
+
+Request bodies are limited to 1 MiB by default; a larger body is rejected with 413. Set `Options.MaxBody` to change the limit.
 
 ## Reliability
 

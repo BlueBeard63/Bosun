@@ -31,15 +31,34 @@ A Bosun service already knows its own shape: its routes, its health endpoints, a
 
 ## The runtime endpoint
 
-Importing the manifest module mounts `GET /.bosun/manifest`, which serves the live manifest. Configure the service name, version, and port with an `*Options` instance.
+The manifest module can serve the live manifest at `GET /.bosun/manifest`. The manifest lists every route, environment variable name, and secret name, so importing the module does not mount the endpoint: set `Expose` to opt in. Configure the service name, version, and port in the same `*Options` instance.
 
 ```go
 registry.RegisterInstance[*manifestmod.Options](app.Reg, &manifestmod.Options{
     Service: "billing", Version: buildVersion, Port: 8080,
+    Expose: true,
 })
 ```
 
-The response lists each route with its method, path, operation, and declared statuses; the health endpoints; and every event subject the service declared, with its direction.
+Keep the endpoint off the public internet. Either have your reverse proxy refuse `/.bosun/` from outside the deploy network, or guard it with app-wide middleware, for example a shared token that the deploy platform sends:
+
+```go
+app := bosun.New(bosun.WithMiddleware(bosun.UseFunc(func(next http.Handler) http.Handler {
+    token := os.Getenv("MANIFEST_TOKEN")
+    return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+        if strings.HasPrefix(r.URL.Path, "/.bosun/") &&
+            subtle.ConstantTimeCompare([]byte(r.Header.Get("Authorization")), []byte("Bearer "+token)) != 1 {
+            http.NotFound(w, r)
+            return
+        }
+        next.ServeHTTP(w, r)
+    })
+})))
+```
+
+A build step that only needs the JSON does not need the endpoint at all; see `EmitIfRequestedFor` below.
+
+The response lists each route with its method, path, operation, and declared statuses, plus its request and response types for [`bosun gen client`](./client-gen.md) (`in`/`out` as Go prints them, `in_import`/`out_import` for their packages, and `in_type`/`out_type` with every named type qualified by its import path); the health endpoints; and every event subject the service declared, with its direction.
 
 ```json
 {
@@ -66,7 +85,7 @@ var _ = manifestmod.Register(manifestmod.ContributorFunc(func(m *manifestmod.Man
 
 ## From the command line
 
-The `bosun manifest` command fetches a running service's manifest, and with `--caddy` prints a Caddy reverse-proxy site block derived from it. For a build-time step that does not run a server, call `manifestmod.EmitIfRequestedFor(app, info)` in `main` after `app.Start()`; with `BOSUN_MANIFEST=1` set, the process prints the manifest and exits. `manifestmod.BuildFor(app, info)` returns the manifest without printing it. Both describe only the given app's routes. The older `Build(info)` and `EmitIfRequested(info)` are deprecated because they aggregate across every app in the process.
+The `bosun manifest` command fetches a running service's manifest (the service must set `Expose`), and with `--caddy` prints a Caddy reverse-proxy site block derived from it. For a build-time step that does not run a server, call `manifestmod.EmitIfRequestedFor(app, info)` in `main` after `app.Start()`; with `BOSUN_MANIFEST=1` set, the process prints the manifest and exits. `manifestmod.BuildFor(app, info)` returns the manifest without printing it. Both describe only the given app's routes. The older `Build(info)` and `EmitIfRequested(info)` are deprecated because they aggregate across every app in the process.
 
 ```bash
 bosun manifest http://localhost:8080

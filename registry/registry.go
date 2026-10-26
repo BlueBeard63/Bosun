@@ -31,6 +31,7 @@ type Registry struct {
 	nodes map[reflect.Type]*node
 	stack []*node // active resolution chain: cycle detection + edge recording
 	seq   int
+	down  bool // set by Shutdown: constructed services are not rebuilt
 }
 
 // New creates an empty Registry.
@@ -116,6 +117,9 @@ func (r *Registry) resolve(t reflect.Type) (any, error) {
 		return n.instance, nil
 	case stateResolving:
 		return nil, fmt.Errorf("registry: dependency cycle detected: %s", r.cycleString(t))
+	}
+	if r.down {
+		return nil, fmt.Errorf("registry: %v requested after Shutdown%s", t, r.chainSuffix())
 	}
 
 	n.state = stateResolving

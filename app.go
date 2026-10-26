@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"reflect"
+	"sync"
 	"time"
 
 	"github.com/bluebeard63/bosun/registry"
@@ -21,10 +22,19 @@ type App struct {
 	mws      []MWRef      // app-wide middleware, set via WithMiddleware
 	handler  http.Handler // Mux wrapped in app-wide middleware; built by Start
 
-	routes routeTable // typed-route metadata mounted on this app
+	routes  routeTable              // typed-route metadata mounted on this app
+	mounted map[string]reflect.Type // "METHOD /path" -> controller that mounted it
+
+	observed observedTable // statuses each typed route has returned
+
+	startOnce sync.Once
+	startErr  error
 
 	shutdownTimeout time.Duration        // grace period for in-flight requests
 	serverConfig    []func(*http.Server) // set via WithHTTPServer
+	maxBody         int64                // typed-route body limit; set via WithMaxBody
+
+	errMaps []errorMapping // sentinel -> status mappings, set via MapError
 }
 
 // New creates an App, applies options, then applies every enabled
@@ -39,6 +49,7 @@ func New(opts ...Option) *App {
 		prefixes: map[reflect.Type]string{},
 
 		shutdownTimeout: DefaultShutdownTimeout,
+		maxBody:         DefaultMaxBody,
 	}
 	for _, o := range opts {
 		o(app)
@@ -55,14 +66,15 @@ func New(opts ...Option) *App {
 }
 
 // Start applies module defaults (host registrations win), validates the full
-// dependency graph, and mounts all controller routes.
+// dependency graph, and mounts all controller routes. It runs once: later
+// calls, including the one Run and Serve make, return the first result.
 func (a *App) Start() error {
-	for _, d := range pendingDefaults {
-		if a.disabled[d.pkg] {
-			continue
-		}
-		d.apply(a)
-	}
+	a.startOnce.Do(func() { a.startErr = a.start() })
+	return a.startErr
+}
+
+func (a *App) start() error {
+	a.ApplyDefaults()
 	if err := a.Reg.Validate(); err != nil {
 		return err
 	}
@@ -96,13 +108,29 @@ func (a *App) Start() error {
 			prefix = p
 		}
 		var errs []error
-		router := &Router{app: a, prefix: prefix, base: base, errs: &errs}
+		router := &Router{app: a, ctrl: c.typ, prefix: prefix, base: base, errs: &errs}
+		router.inherit(c.mws)
 		inst.(BaseController).Routes(router)
 		if err := errors.Join(errs...); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+// ApplyDefaults registers every enabled bosun.Default and bosun.DefaultBind
+// provider whose type the host hasn't registered itself. Start calls it
+// first; it is exported for test helpers (bosuntest.Build) that resolve one
+// service's subgraph without starting the app. Register host overrides
+// before calling it, since a Default registered here then counts as taken.
+// Calling it again is a no-op for types that are already registered.
+func (a *App) ApplyDefaults() {
+	for _, d := range pendingDefaults {
+		if a.disabled[d.pkg] {
+			continue
+		}
+		d.apply(a)
+	}
 }
 
 // Handler returns the app's root http.Handler: Mux wrapped in the app-wide
@@ -127,6 +155,9 @@ func (a *App) Shutdown() error { return a.Reg.Shutdown() }
 func (a *App) resolveMWs(refs []MWRef) ([]MiddlewareHandler, error) {
 	out := make([]MiddlewareHandler, 0, len(refs))
 	for _, ref := range refs {
+		if ref.metaOnly() {
+			continue // bosun.Meta: recorded on RouteInfo, no middleware
+		}
 		if ref.inline != nil {
 			out = append(out, ref.inline)
 			continue

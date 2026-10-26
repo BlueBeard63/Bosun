@@ -106,7 +106,8 @@ func (in BookingIn) Validate() error {
 | `nil` | The handler runs. |
 | `bosun.Invalid(field, message)` or any `*bosun.ValidationError` | `400` with those field errors. The rule is `custom` for `Invalid`; build a `ValidationError` yourself to set your own `Rule` or `In`. |
 | `bosun.E(status, message, cause)` | That status and message, for example `422` for a business rule. |
-| Any other error | `400` with `{"error": err.Error()}`. The message is shown to the client, so keep it free of internals. |
+| An error mapped with `bosun.MapError`, or one with its own `HTTPStatus()` | The mapped status and message, as on the handler path (see [errors](./errors.md#mapping-sentinel-errors)). |
+| Any other error | `400` with `{"error":"invalid request"}`. The error's text is never shown to the client; it is recorded in the audit event. |
 
 `Validate` may have a value or a pointer receiver. It is only called on the top-level `In` type, not on nested structs.
 
@@ -122,7 +123,7 @@ Input that can't be converted into the `In` type is rejected in the same format 
 
 The last form is used for malformed JSON, where no single field is to blame. Decoder messages such as `json: cannot unmarshal ...` are never sent to clients.
 
-A binding tag on a field type that binding doesn't support (for example `[]string` with a `query` tag) is a mistake in the code, not bad input. It is answered with a `500` and the real cause is kept for the audit log.
+A binding tag on a field type that binding doesn't support (for example a `map` or `time.Time` with a `query` tag) is a mistake in the code, not bad input, so it fails at startup like a bad `validate` tag (below).
 
 ## Mistakes in tags fail at startup
 
@@ -130,6 +131,12 @@ A binding tag on a field type that binding doesn't support (for example `[]strin
 
 ```
 POST /users: invalid validate tag: CreateUserIn.Age: unknown validate rule "minimum"
+```
+
+Binding tags are checked the same way: a `path`, `query`, `header`, or `form` tag on a type binding can't fill, or on an unexported field, fails `Start`.
+
+```
+GET /events: invalid binding tag: field Since: query tag on unsupported type time.Time
 ```
 
 ## Rule reference

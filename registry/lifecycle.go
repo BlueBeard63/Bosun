@@ -23,7 +23,15 @@ func (r *Registry) Validate() error {
 // Shutdown closes every constructed service that implements io.Closer, in
 // reverse construction order — dependents are closed before the things they
 // depend on (so e.g. AuthService closes before *gorm.DB).
+//
+// Shutdown is final and runs once; later calls return nil. Instances added
+// with RegisterInstance stay resolvable afterwards, but constructed services
+// are dropped and resolving one returns an error instead of rebuilding it.
 func (r *Registry) Shutdown() error {
+	if r.down {
+		return nil
+	}
+	r.down = true
 	ready := []*node{}
 	for _, n := range r.nodes {
 		if n.state == stateReady {
@@ -38,6 +46,9 @@ func (r *Registry) Shutdown() error {
 			if err := c.Close(); err != nil {
 				errs = append(errs, fmt.Errorf("registry: closing %v: %w", n.typ, err))
 			}
+		}
+		if n.construct == nil {
+			continue // RegisterInstance node: nothing to rebuild it from
 		}
 		n.state = stateIdle
 		n.instance = nil

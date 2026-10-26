@@ -44,14 +44,27 @@ func genClientCmd() *cobra.Command {
 			if err := json.Unmarshal(data, &m); err != nil {
 				return fmt.Errorf("decode manifest: %w", err)
 			}
+			// in_type and out_type are read separately so the CLI also builds
+			// against bosun releases whose manifestmod predates them.
+			var qualified struct {
+				Routes []struct {
+					InType  string `json:"in_type"`
+					OutType string `json:"out_type"`
+				} `json:"routes"`
+			}
+			if err := json.Unmarshal(data, &qualified); err != nil {
+				return fmt.Errorf("decode manifest: %w", err)
+			}
 			if service == "" {
 				service = m.Service
 			}
 			routes := make([]clientgen.Route, 0, len(m.Routes))
-			for _, r := range m.Routes {
+			for i, r := range m.Routes {
+				q := qualified.Routes[i]
 				routes = append(routes, clientgen.Route{
 					Method: r.Method, Path: r.Path, Operation: r.Operation,
 					In: r.In, Out: r.Out, InImport: r.InImport, OutImport: r.OutImport,
+					InType: q.InType, OutType: q.OutType,
 				})
 			}
 			src, err := clientgen.Generate(pkg, service, routes)
@@ -95,21 +108,25 @@ func readManifest(src string) ([]byte, error) {
 
 func genRegistryCmd() *cobra.Command {
 	var dir, out string
-	var check bool
+	var check, noDocs bool
+	var tags []string
 	cmd := &cobra.Command{
 		Use:   "registry",
 		Short: "Generate blank imports for every package that registers with Bosun",
 		Long: "Scans the current Go module for packages with package-level Bosun registrations " +
 			"(var _ = bosun.Controller[...], Service, Middleware, Default, DefaultBind, DefaultDynamic) " +
 			"and writes a file that blank-imports them, so main.go needs no hand-maintained side-effect imports. " +
-			"Run it from the package that calls bosun.New(), usually via //go:generate bosun gen registry.",
+			"Run it from the package that calls bosun.New(), usually via //go:generate bosun gen registry. " +
+			"When the module requires bosun " + registrygen.DocsMinVersion + " or later (or replaces it), the file also " +
+			"registers the doc comments of typed handlers and of struct types and fields, which the OpenAPI spec " +
+			"uses for summaries and descriptions; --no-docs leaves them out.",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			root, err := registrygen.FindModuleRoot(dir)
 			if err != nil {
 				return err
 			}
-			mod, err := registrygen.Scan(root)
+			mod, err := registrygen.Scan(root, tags...)
 			if err != nil {
 				return err
 			}
@@ -117,6 +134,7 @@ func genRegistryCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			target.NoDocs = noDocs
 			src, err := registrygen.Render(mod, target)
 			if err != nil {
 				return err
@@ -149,6 +167,8 @@ func genRegistryCmd() *cobra.Command {
 	cmd.Flags().StringVar(&dir, "dir", ".", "package directory to write into (the one that calls bosun.New)")
 	cmd.Flags().StringVarP(&out, "out", "o", registrygen.FileName, "generated file name, relative to --dir")
 	cmd.Flags().BoolVar(&check, "check", false, "verify the file is up to date instead of writing it (for CI)")
+	cmd.Flags().StringSliceVar(&tags, "tags", nil, "comma-separated build tags to satisfy, as for go build -tags")
+	cmd.Flags().BoolVar(&noDocs, "no-docs", false, "leave doc comments for the OpenAPI spec out of the file")
 	return cmd
 }
 

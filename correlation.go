@@ -60,10 +60,35 @@ func NewCorrelationID() string {
 
 // CorrelationIDFromTraceparent extracts the 32-hex trace-id from a W3C
 // traceparent header ("00-<traceid>-<spanid>-<flags>"), or "" if malformed.
+// Validation follows the Trace Context spec: lowercase hex fields of the
+// right length, a version other than "ff", non-zero trace-id and parent-id,
+// and for version 00 nothing after the flags.
 func CorrelationIDFromTraceparent(tp string) string {
-	parts := strings.Split(tp, "-")
-	if len(parts) < 3 || len(parts[1]) != 32 {
+	if len(tp) < 55 || tp[2] != '-' || tp[35] != '-' || tp[52] != '-' {
 		return ""
 	}
-	return parts[1]
+	version, traceID, parentID, flags := tp[0:2], tp[3:35], tp[36:52], tp[53:55]
+	if !isLowerHex(version) || version == "ff" || !isLowerHex(flags) ||
+		!isLowerHex(traceID) || isAllZero(traceID) ||
+		!isLowerHex(parentID) || isAllZero(parentID) {
+		return ""
+	}
+	if len(tp) > 55 && (version == "00" || tp[55] != '-') {
+		return ""
+	}
+	return traceID
+}
+
+func isLowerHex(s string) bool {
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if (c < '0' || c > '9') && (c < 'a' || c > 'f') {
+			return false
+		}
+	}
+	return true
+}
+
+func isAllZero(s string) bool {
+	return strings.Trim(s, "0") == ""
 }

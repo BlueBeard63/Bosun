@@ -304,7 +304,7 @@ step "Done"
 if [[ $EXECUTE -eq 1 ]]; then
   ok "released $VERSION: root plus ${#NESTED_MODULES[@]} nested modules"
   info "Verify:  GOPRIVATE=$GOPRIVATE go install $ROOT_MODULE/cmd/bosun@$VERSION && bosun --version"
-  info "Release: gh release create $VERSION --title $VERSION --notes \"\$(scripts/release.sh $VERSION --print-notes)\""
+  info "Release: the release workflow (.github/workflows/release.yml) publishes the GitHub release; check the Actions tab"
 else
   ok "dry run complete; re-run with --execute to release"
 fi

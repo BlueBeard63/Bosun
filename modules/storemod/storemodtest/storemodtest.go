@@ -7,13 +7,16 @@ import (
 	"context"
 	"errors"
 	"io"
+	"mime"
+	"slices"
+	"sort"
 	"testing"
 
 	"github.com/bluebeard63/bosun/modules/storemod"
 )
 
-// Run exercises the Store contract: put/get round-trip, listing by prefix,
-// not-found behavior, and delete.
+// Run exercises the Store contract: put/get round-trip, recursive listing by
+// prefix, not-found behavior, and delete.
 func Run(t *testing.T, s storemod.Store) {
 	t.Helper()
 	ctx := context.Background()
@@ -33,7 +36,9 @@ func Run(t *testing.T, s storemod.Store) {
 	if obj.Size != 5 {
 		t.Fatalf("size = %d, want 5", obj.Size)
 	}
-	if obj.ContentType != "text/plain" {
+	// Compare the media type only: WebDAV servers derive the type from the
+	// file extension and add parameters (text/plain; charset=utf-8).
+	if mt, _, _ := mime.ParseMediaType(obj.ContentType); mt != "text/plain" {
 		t.Fatalf("content type = %q, want text/plain", obj.ContentType)
 	}
 
@@ -43,12 +48,28 @@ func Run(t *testing.T, s storemod.Store) {
 	if err := s.Put(ctx, "other/c.txt", bytes.NewReader([]byte("y"))); err != nil {
 		t.Fatalf("put c: %v", err)
 	}
-	objs, err := s.List(ctx, "docs/")
-	if err != nil {
-		t.Fatalf("list: %v", err)
+	if err := s.Put(ctx, "docs/sub/deep/d.txt", bytes.NewReader([]byte("z"))); err != nil {
+		t.Fatalf("put d: %v", err)
 	}
-	if len(objs) != 2 {
-		t.Fatalf("list docs/ returned %d objects, want 2", len(objs))
+	// List matches by key prefix at any depth, including partial segments.
+	for prefix, want := range map[string][]string{
+		"docs/":     {"docs/a.txt", "docs/b.txt", "docs/sub/deep/d.txt"},
+		"docs/s":    {"docs/sub/deep/d.txt"},
+		"docs/sub/": {"docs/sub/deep/d.txt"},
+		"missing/":  nil,
+	} {
+		objs, err := s.List(ctx, prefix)
+		if err != nil {
+			t.Fatalf("list %s: %v", prefix, err)
+		}
+		var got []string
+		for _, o := range objs {
+			got = append(got, o.Key)
+		}
+		sort.Strings(got)
+		if !slices.Equal(got, want) {
+			t.Fatalf("list %s = %v, want %v", prefix, got, want)
+		}
 	}
 
 	if _, _, err := s.Get(ctx, "missing/x"); !errors.Is(err, storemod.ErrNotFound) {

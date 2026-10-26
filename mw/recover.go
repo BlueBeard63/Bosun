@@ -8,6 +8,7 @@ import (
 	"net"
 	"net/http"
 	"runtime/debug"
+	"strings"
 
 	"github.com/bluebeard63/bosun"
 )
@@ -68,7 +69,11 @@ func (m *Recover) Handle(next http.Handler) http.Handler {
 				panic(http.ErrAbortHandler)
 			}
 			h := w.Header()
-			h.Del("Content-Length")
+			for k := range h {
+				if !keepOnPanic(k) {
+					delete(h, k)
+				}
+			}
 			h.Set("Content-Type", "application/json")
 			h.Set("X-Content-Type-Options", "nosniff")
 			w.WriteHeader(http.StatusInternalServerError)
@@ -86,6 +91,20 @@ func (m *Recover) logger() *slog.Logger {
 }
 
 var _ = bosun.Middleware[Recover]()
+
+// keepOnPanic reports whether a header the handler (or earlier middleware)
+// set survives onto Recover's 500. Everything else — Content-Encoding,
+// Set-Cookie, ETag, Cache-Control, Content-Disposition, ... — describes the
+// response the handler meant to send, not the error, so it is dropped. CORS
+// headers stay so browsers can read the error, as does the correlation id.
+func keepOnPanic(key string) bool {
+	key = http.CanonicalHeaderKey(key)
+	switch key {
+	case "Vary", http.CanonicalHeaderKey(bosun.HeaderCorrelationID):
+		return true
+	}
+	return strings.HasPrefix(key, "Access-Control-")
+}
 
 // recoverWriter records whether the response has started so Recover knows
 // if it can still write a 500. It forwards Flush and Hijack and supports

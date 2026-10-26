@@ -54,11 +54,13 @@ func (r *Req[In]) Query() url.Values {
 //
 // In controls body parsing: a struct gets JSON/form decode + path/query/
 // header/form tag binding, string takes the raw body verbatim, struct{}
-// skips parsing, and any decodes loose JSON.
+// skips parsing, and any decodes loose JSON. In must not be a pointer;
+// mounting Req[*T] fails app.Start.
 //
 // Out controls response encoding: structs/maps/etc are JSON, string is
-// text/plain, []byte is application/octet-stream, struct{} writes status
-// only with no body.
+// text/plain, []byte is application/octet-stream (json.RawMessage, or any
+// byte slice that implements json.Marshaler, is JSON), struct{} writes status
+// only with no body. A value that fails to encode becomes a 500.
 //
 // Use bosun.Get(r, ...) — not r.Get(...), which is the untyped escape hatch.
 func Get[In, Out any](r *Router, p string, h func(context.Context, *Req[In]) (Out, error), opts ...RouteOpt) {
@@ -92,14 +94,25 @@ func Patch[In, Out any](r *Router, p string, h func(context.Context, *Req[In]) (
 func typed[In, Out any](r *Router, method, p string, h func(context.Context, *Req[In]) (Out, error), opts []RouteOpt) {
 	var mws []MWRef
 	var declared []int
+	routeMaxBody, hasRouteMaxBody := int64(0), false
+	routeStatus := 0
 	for _, o := range opts {
 		switch v := o.(type) {
 		case MWRef:
 			mws = append(mws, v)
 		case declaredErrors:
 			declared = append(declared, v...)
+		case maxBody:
+			routeMaxBody, hasRouteMaxBody = int64(v), true
+		case successStatus:
+			routeStatus = int(v)
 		}
 	}
+	if routeStatus != 0 && !validSuccessStatus(routeStatus) {
+		*r.errs = append(*r.errs, fmt.Errorf("%s %s: bosun.Status(%d): not a 2xx or 3xx status", method, p, routeStatus))
+		return
+	}
+	meta, mwNames := r.describe(mws)
 
 	p = normalizePath(p)
 	full := r.fullPath(p)
@@ -107,12 +120,23 @@ func typed[In, Out any](r *Router, method, p string, h func(context.Context, *Re
 	handlerName := runtime.FuncForPC(reflect.ValueOf(h).Pointer()).Name()
 
 	inType := reflect.TypeOf((*In)(nil)).Elem()
+	if inType.Kind() == reflect.Pointer {
+		// Binding and validation fill a value, not a pointer to one; a pointer
+		// In would skip both and could leave Body nil.
+		*r.errs = append(*r.errs, fmt.Errorf("%s %s: In type %s must not be a pointer; use Req[%s]", method, p, inType, inType.Elem()))
+		return
+	}
 	isString := inType.Kind() == reflect.String
 	isEmptyStruct := inType.Kind() == reflect.Struct && inType.NumField() == 0
 
-	// Compile validate tags now so malformed rules fail app.Start, not requests.
+	// Compile binding and validate tags now so a field bind can't fill or a
+	// malformed rule fails app.Start, not requests.
 	validates := inType.Kind() == reflect.Struct && !isEmptyStruct
 	if validates {
+		if _, err := bindPlanFor(inType); err != nil {
+			*r.errs = append(*r.errs, fmt.Errorf("%s %s: invalid binding tag: %w", method, p, err))
+			return
+		}
 		if _, err := planFor(inType); err != nil {
 			*r.errs = append(*r.errs, fmt.Errorf("%s %s: invalid validate tag: %w", method, p, err))
 			return
@@ -121,8 +145,20 @@ func typed[In, Out any](r *Router, method, p string, h func(context.Context, *Re
 
 	outType := reflect.TypeOf((*Out)(nil)).Elem()
 	outIsString := outType.Kind() == reflect.String
-	outIsBytes := outType.Kind() == reflect.Slice && outType.Elem().Kind() == reflect.Uint8
+	outIsBytes := outType.Kind() == reflect.Slice && outType.Elem().Kind() == reflect.Uint8 &&
+		!outType.Implements(reflect.TypeFor[json.Marshaler]())
 	outIsEmptyStruct := outType.Kind() == reflect.Struct && outType.NumField() == 0
+
+	// The app limit covers bodies the framework parses; a struct{} In leaves
+	// the body to the handler (e.g. streaming uploads), so only an explicit
+	// MaxBody caps it.
+	bodyLimit := r.app.maxBody
+	if isEmptyStruct {
+		bodyLimit = 0
+	}
+	if hasRouteMaxBody {
+		bodyLimit = routeMaxBody
+	}
 
 	recordRoute(r.app, RouteInfo{
 		Method:   method,
@@ -130,12 +166,22 @@ func typed[In, Out any](r *Router, method, p string, h func(context.Context, *Re
 		Handler:  handlerName,
 		In:       inType,
 		Out:      outType,
+		Status:   routeStatus,
 		Declared: declared,
+
+		Meta:       meta,
+		Middleware: mwNames,
 	})
+	okStatus := http.StatusOK
+	if routeStatus != 0 {
+		okStatus = routeStatus
+	}
 
 	app := r.app
+	observed := statusesFor(app, method, full) // resolved now: no lookup or lock per request
 	var auditorOnce sync.Once
 	var auditor Auditor
+	var auditFilter AuditFilter
 
 	adapter := func(w http.ResponseWriter, req *http.Request) {
 		start := time.Now()
@@ -145,32 +191,50 @@ func typed[In, Out any](r *Router, method, p string, h func(context.Context, *Re
 			if app.Reg.Has(t) {
 				if v, err := app.Reg.ResolveType(t); err == nil {
 					auditor = v.(Auditor)
+					auditFilter, _ = auditor.(AuditFilter)
 				}
 			}
 		})
 
-		typedReq := &Req[In]{Request: req}
+		// One allocation for the handler's Req and its response context.
+		call := &struct {
+			req Req[In]
+			rc  responseCtx
+		}{req: Req[In]{Request: req}, rc: responseCtx{Context: req.Context(), w: w}}
+		typedReq := &call.req
 		if len(paramNames) > 0 {
 			typedReq.Params = make(Params, len(paramNames))
 			for _, name := range paramNames {
 				typedReq.Params[name] = req.PathValue(name)
 			}
 		}
-		status := http.StatusOK
+		var status int
 		var out Out
 		var handlerErr error
 		var bindErr error
 
+		if bodyLimit > 0 && req.Body != nil {
+			if req.ContentLength > bodyLimit {
+				// Declared too large: refuse without reading any of it.
+				bindErr = errBodyTooLarge(fmt.Errorf("content length %d exceeds %d", req.ContentLength, bodyLimit))
+			}
+			req.Body = http.MaxBytesReader(w, req.Body, bodyLimit)
+		}
+
 		switch {
+		case bindErr != nil:
+			// rejected above
 		case isEmptyStruct:
 			// nothing to parse
 		case isString:
 			if req.Body != nil {
 				b, err := io.ReadAll(req.Body)
-				if err != nil {
+				if bodyTooLarge(err) {
+					bindErr = errBodyTooLarge(err)
+				} else if err != nil {
 					bindErr = err
 				} else {
-					*(any(&typedReq.Body).(*string)) = string(b)
+					reflect.ValueOf(&typedReq.Body).Elem().SetString(string(b))
 				}
 			}
 		default:
@@ -182,20 +246,26 @@ func typed[In, Out any](r *Router, method, p string, h func(context.Context, *Re
 
 		if bindErr != nil {
 			var body any
-			status, body = inputErrorBody(bindErr)
+			status, body = app.inputErrorBody(bindErr)
 			handlerErr = bindErr
-			writeJSON(w, status, body)
+			_ = writeJSON(w, status, body) // the client is gone or the body can't be written; nothing more to do
 		} else {
-			out, handlerErr = h(req.Context(), typedReq)
+			out, handlerErr = h(&call.rc, typedReq)
+			status = okStatus
+			if call.rc.status != 0 {
+				status = call.rc.status // bosun.SetStatus
+			}
 			if handlerErr != nil {
-				status = errStatus(handlerErr)
-				writeJSON(w, status, map[string]string{"error": publicMessage(handlerErr)})
-			} else {
-				writeOut(w, status, out, outIsString, outIsBytes, outIsEmptyStruct)
+				var msg string
+				status, msg = app.errorResponse(handlerErr)
+				_ = writeJSON(w, status, map[string]string{"error": msg})
+			} else if err := writeOut(w, status, out, outIsString, outIsBytes, outIsEmptyStruct); err != nil {
+				status = http.StatusInternalServerError
+				handlerErr = fmt.Errorf("encoding response: %w", err)
 			}
 		}
 
-		recordObserved(app, method, full, status)
+		observed.add(status)
 
 		if auditor != nil {
 			ev := AuditEvent{
@@ -206,16 +276,21 @@ func typed[In, Out any](r *Router, method, p string, h func(context.Context, *Re
 				Status:      status,
 				RemoteAddr:  req.RemoteAddr,
 				Duration:    time.Since(start),
-				Request:     Redact(typedReq.Body),
 				Correlation: CorrelationID(req.Context()),
 			}
-			if handlerErr == nil {
-				ev.Response = Redact(out)
-			} else {
+			if handlerErr != nil {
 				ev.Err = handlerErr.Error()
 				ev.ErrOrigin = errOrigin(handlerErr)
 			}
-			auditor.Audit(req.Context(), ev)
+			// Redaction copies the whole request and response, so ask a
+			// filtering auditor first and skip the copies for dropped events.
+			if auditFilter == nil || auditFilter.ShouldAudit(req.Context(), ev) {
+				ev.Request = Redact(typedReq.Body)
+				if handlerErr == nil {
+					ev.Response = Redact(out)
+				}
+				auditor.Audit(req.Context(), ev)
+			}
 		}
 	}
 
@@ -226,31 +301,61 @@ func joinPrefix(prefix, p string) string {
 	return strings.TrimSuffix(prefix, "/") + "/" + strings.TrimPrefix(p, "/")
 }
 
-func writeJSON(w http.ResponseWriter, status int, v any) {
-	w.Header().Set("Content-Type", "application/json")
+// writeJSON encodes v before writing the status line, so a value that can't
+// be encoded is sent as a 500 rather than a success with an empty body. The
+// encoding error is returned.
+func writeJSON(w http.ResponseWriter, status int, v any) error {
+	return encodeJSON(w, status, v, false)
+}
+
+// encodeJSON is writeJSON; keepType leaves a Content-Type the handler set
+// (successful responses only — an encoding failure is always JSON).
+func encodeJSON(w http.ResponseWriter, status int, v any, keepType bool) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		status = http.StatusInternalServerError
+		b, _ = json.Marshal(map[string]string{"error": "internal server error"})
+		keepType = false
+	}
+	if !keepType || w.Header().Get("Content-Type") == "" {
+		w.Header().Set("Content-Type", "application/json")
+	}
 	w.WriteHeader(status)
-	_ = json.NewEncoder(w).Encode(v)
+	_, _ = w.Write(append(b, '\n'))
+	return err
 }
 
 // writeOut emits the handler's Out value. Symmetric with In:
 //
 //   - string  → text/plain; charset=utf-8, verbatim bytes
-//   - []byte  → application/octet-stream, verbatim bytes
+//   - []byte  → application/octet-stream, verbatim bytes (json.RawMessage is JSON)
 //   - struct{} → no body, status only
 //   - any other type → JSON
-func writeOut[Out any](w http.ResponseWriter, status int, v Out, isString, isBytes, isEmptyStruct bool) {
+//
+// A Content-Type the handler set with ResponseHeader is kept, and a status
+// that forbids a body (204, 205, 304) is sent without one. Named string and
+// byte-slice types are handled through reflection, so `type Raw string`
+// works like string. Only JSON encoding can fail.
+func writeOut[Out any](w http.ResponseWriter, status int, v Out, isString, isBytes, isEmptyStruct bool) error {
 	switch {
-	case isEmptyStruct:
+	case isEmptyStruct || !bodyAllowed(status):
 		w.WriteHeader(status)
 	case isString:
-		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+		defaultContentType(w, "text/plain; charset=utf-8")
 		w.WriteHeader(status)
-		_, _ = io.WriteString(w, *(any(&v).(*string)))
+		_, _ = io.WriteString(w, reflect.ValueOf(&v).Elem().String())
 	case isBytes:
-		w.Header().Set("Content-Type", "application/octet-stream")
+		defaultContentType(w, "application/octet-stream")
 		w.WriteHeader(status)
-		_, _ = w.Write(*(any(&v).(*[]byte)))
+		_, _ = w.Write(reflect.ValueOf(&v).Elem().Bytes())
 	default:
-		writeJSON(w, status, v)
+		return encodeJSON(w, status, v, true)
+	}
+	return nil
+}
+
+func defaultContentType(w http.ResponseWriter, ct string) {
+	if w.Header().Get("Content-Type") == "" {
+		w.Header().Set("Content-Type", ct)
 	}
 }

@@ -33,29 +33,43 @@ func (t Topic[T]) Publish(ctx context.Context, p Publisher, v T, opts ...PubOpti
 }
 
 // On subscribes fn to the topic's subject via s. Each delivery is decoded into
-// T; on success the delivery is Acked, on error it is Nacked with requeue
-// (unless the subscription requested manual acks). The per-message context
-// carries any propagated carrier values.
+// T; on success the delivery is Acked. On error it is redelivered after a
+// backoff (WithBackoff) until it has been delivered WithMaxAttempts times,
+// then published to the dead-letter subject (WithDeadLetter) and acked, or
+// acked and logged if no dead-letter subject is set. A payload that cannot be
+// decoded is dead-lettered at once (or dropped without one). None of this
+// applies when the subscription requested manual acks. The per-message
+// context carries any propagated carrier values.
 func (t Topic[T]) On(ctx context.Context, s Subscriber, fn func(context.Context, T) error, opts ...SubOption) (Subscription, error) {
 	cfg := ResolveSub(opts)
+	r, err := newRetrier(s, cfg)
+	if err != nil {
+		return nil, err
+	}
 	return s.Subscribe(ctx, t.Subject, func(dctx context.Context, d Delivery) error {
 		msg := d.Message()
 		dctx = ExtractContext(dctx, msg)
 		var v T
 		if err := json.Unmarshal(msg.Data, &v); err != nil {
-			// A malformed payload will never decode; drop it rather than
-			// redeliver forever. Manual subscribers decide for themselves.
+			err = fmt.Errorf("eventmod: unmarshal %s: %w", t.Subject, err)
+			// A malformed payload will never decode; dead-letter or drop it
+			// rather than redeliver it. Manual subscribers decide for
+			// themselves.
 			if !cfg.Manual {
-				_ = d.Nack(dctx, false)
+				if r.pub != nil {
+					r.giveUp(dctx, d, msg, max(msg.Attempt, 1), err)
+				} else {
+					_ = d.Nack(dctx, false)
+				}
 			}
-			return fmt.Errorf("eventmod: unmarshal %s: %w", t.Subject, err)
+			return err
 		}
 		herr := fn(dctx, v)
 		if cfg.Manual {
 			return herr
 		}
 		if herr != nil {
-			_ = d.Nack(dctx, true)
+			r.fail(dctx, d, herr)
 			return herr
 		}
 		return d.Ack(dctx)

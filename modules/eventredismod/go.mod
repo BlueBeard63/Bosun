@@ -4,7 +4,7 @@ go 1.22
 
 require (
 	github.com/bluebeard63/bosun v0.7.0
-	github.com/redis/go-redis/v9 v9.7.0
+	github.com/redis/go-redis/v9 v9.7.3
 )
 
 require (

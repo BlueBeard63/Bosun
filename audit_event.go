@@ -2,9 +2,12 @@ package bosun
 
 import (
 	"context"
+	"encoding"
+	"encoding/json"
 	"fmt"
 	"reflect"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -34,49 +37,88 @@ type Auditor interface {
 	Audit(ctx context.Context, ev AuditEvent)
 }
 
+// AuditFilter is optionally implemented by an Auditor that keeps only some
+// events. ShouldAudit runs before the request and response are redacted: ev
+// carries every field except Request and Response. Returning false drops the
+// event without building the redacted copies, which matters for large list
+// responses. An Auditor without ShouldAudit receives every event.
+//
+//	func (a *DBAuditor) ShouldAudit(_ context.Context, ev bosun.AuditEvent) bool {
+//	    return ev.Method != http.MethodGet || ev.Status >= 400
+//	}
+type AuditFilter interface {
+	ShouldAudit(ctx context.Context, ev AuditEvent) bool
+}
+
 // sensitive field names that are always redacted, case-insensitive.
 var sensitiveNames = []string{"password", "secret", "token", "apikey", "api_key", "authorization"}
 
 // Redact converts v into a JSON-friendly map/value with sensitive fields
 // replaced by "[REDACTED]". Fields are sensitive if tagged `audit:"-"` or if
-// their (json) name contains a well-known sensitive word.
+// their (json) name contains a well-known sensitive word. Fields tagged
+// `json:"-"` are left out. Values that marshal themselves (such as time.Time)
+// are rendered through encoding.TextMarshaler or json.Marshaler, cycles are
+// cut and nesting stops at redactMaxDepth.
 func Redact(v any) any {
-	return redactValue(reflect.ValueOf(v))
+	r := redactor{seen: map[uintptr]bool{}}
+	return r.value(reflect.ValueOf(v), 0)
 }
 
-func redactValue(v reflect.Value) any {
+const redactMaxDepth = 32
+
+var (
+	textMarshalerType = reflect.TypeFor[encoding.TextMarshaler]()
+	jsonMarshalerType = reflect.TypeFor[json.Marshaler]()
+)
+
+// redactor tracks the pointers, maps and slices on the current path so a
+// back-reference ends the walk instead of overflowing the stack.
+type redactor struct {
+	seen map[uintptr]bool
+}
+
+func (r *redactor) value(v reflect.Value, depth int) any {
 	if !v.IsValid() {
 		return nil
 	}
+	if depth > redactMaxDepth {
+		return "[MAX DEPTH]"
+	}
+	if out, ok := marshalSelf(v); ok {
+		return out
+	}
 	switch v.Kind() {
-	case reflect.Pointer, reflect.Interface:
+	case reflect.Pointer, reflect.Interface, reflect.Map, reflect.Slice:
 		if v.IsNil() {
 			return nil
 		}
-		return redactValue(v.Elem())
+		if v.Kind() != reflect.Interface {
+			p := v.Pointer()
+			if r.seen[p] {
+				return "[CYCLE]"
+			}
+			r.seen[p] = true
+			defer delete(r.seen, p)
+		}
+	}
+	switch v.Kind() {
+	case reflect.Pointer, reflect.Interface:
+		return r.value(v.Elem(), depth+1)
 	case reflect.Struct:
-		out := map[string]any{}
-		t := v.Type()
-		for i := 0; i < t.NumField(); i++ {
-			sf := t.Field(i)
-			if !sf.IsExported() {
+		fields := redactFieldsFor(v.Type())
+		out := make(map[string]any, len(fields))
+		for _, f := range fields {
+			if f.redact {
+				out[f.name] = "[REDACTED]"
 				continue
 			}
-			name := sf.Name
-			if jt := sf.Tag.Get("json"); jt != "" && jt != "-" {
-				name = strings.Split(jt, ",")[0]
-			}
-			if sf.Tag.Get("audit") == "-" || isSensitive(name) {
-				out[name] = "[REDACTED]"
-				continue
-			}
-			out[name] = redactValue(v.Field(i))
+			out[f.name] = r.value(v.Field(f.index), depth+1)
 		}
 		return out
 	case reflect.Slice, reflect.Array:
 		out := make([]any, v.Len())
 		for i := 0; i < v.Len(); i++ {
-			out[i] = redactValue(v.Index(i))
+			out[i] = r.value(v.Index(i), depth+1)
 		}
 		return out
 	case reflect.Map:
@@ -87,12 +129,72 @@ func redactValue(v reflect.Value) any {
 				out[ks] = "[REDACTED]"
 				continue
 			}
-			out[ks] = redactValue(v.MapIndex(k))
+			out[ks] = r.value(v.MapIndex(k), depth+1)
 		}
 		return out
 	default:
 		return v.Interface()
 	}
+}
+
+// marshalSelf renders a value whose type controls its own encoding, as
+// encoding/json would. Byte slices are left to the default case.
+func marshalSelf(v reflect.Value) (any, bool) {
+	t := v.Type()
+	if t.Kind() == reflect.Interface || (t.Kind() == reflect.Pointer && v.IsNil()) {
+		return nil, false
+	}
+	switch {
+	case t.Implements(textMarshalerType):
+		if b, err := v.Interface().(encoding.TextMarshaler).MarshalText(); err == nil {
+			return string(b), true
+		}
+	case t.Implements(jsonMarshalerType):
+		if b, err := v.Interface().(json.Marshaler).MarshalJSON(); err == nil && json.Valid(b) {
+			return json.RawMessage(b), true
+		}
+	}
+	return nil, false
+}
+
+// redactField is one struct field Redact renders: its output name and
+// whether its value is replaced by "[REDACTED]".
+type redactField struct {
+	index  int
+	name   string
+	redact bool
+}
+
+var redactFields sync.Map // reflect.Type -> []redactField
+
+// redactFieldsFor returns (and caches) the fields Redact renders for struct
+// type t, so repeat redactions don't re-read tags or re-check names.
+func redactFieldsFor(t reflect.Type) []redactField {
+	if v, ok := redactFields.Load(t); ok {
+		return v.([]redactField)
+	}
+	var fields []redactField
+	for i := 0; i < t.NumField(); i++ {
+		sf := t.Field(i)
+		if !sf.IsExported() {
+			continue
+		}
+		jt := sf.Tag.Get("json")
+		if jt == "-" {
+			continue
+		}
+		name := sf.Name
+		if n := strings.Split(jt, ",")[0]; n != "" {
+			name = n
+		}
+		fields = append(fields, redactField{
+			index:  i,
+			name:   name,
+			redact: sf.Tag.Get("audit") == "-" || isSensitive(name),
+		})
+	}
+	redactFields.Store(t, fields)
+	return fields
 }
 
 func isSensitive(name string) bool {

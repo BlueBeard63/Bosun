@@ -62,6 +62,9 @@ func run(inDir, outDir string) error {
 	if err := os.MkdirAll(outDir, 0o755); err != nil {
 		return err
 	}
+	if err := clean(outDir); err != nil {
+		return err
+	}
 
 	var index []IndexEntry
 	for _, e := range entries {
@@ -131,6 +134,28 @@ func run(inDir, outDir string) error {
 		return err
 	}
 	fmt.Printf("docgen: prepared %d pages -> %s\n", len(index), outDir)
+	return nil
+}
+
+// clean removes the previous run's output (page .md files, index.json and
+// docassets/) so a deleted or renamed doc doesn't leave a stale page behind.
+func clean(outDir string) error {
+	entries, err := os.ReadDir(outDir)
+	if err != nil {
+		return err
+	}
+	for _, e := range entries {
+		name := e.Name()
+		switch {
+		case e.IsDir() && name == "docassets":
+		case !e.IsDir() && (strings.HasSuffix(name, ".md") || name == "index.json"):
+		default:
+			continue
+		}
+		if err := os.RemoveAll(filepath.Join(outDir, name)); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 

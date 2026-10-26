@@ -110,7 +110,7 @@ func TestSpecGeneration(t *testing.T) {
 		t.Fatal("path/query parameters missing")
 	}
 	schemas := spec["components"].(map[string]any)["schemas"].(map[string]any)
-	if schemas["FixIn"] == nil || schemas["FixOut"] == nil || schemas["ErrorResponse"] == nil {
+	if schemas["OpenapiFixIn"] == nil || schemas["OpenapiFixOut"] == nil || schemas["ErrorResponse"] == nil {
 		t.Fatalf("schemas missing: %v", schemas)
 	}
 
@@ -130,7 +130,7 @@ func TestSpecGeneration(t *testing.T) {
 }
 
 func TestSchemaForKinds(t *testing.T) {
-	schemas := map[string]any{}
+	schemas := newSchemaSet(nil)
 	cases := map[reflect.Type]string{
 		reflect.TypeOf(""):               "string",
 		reflect.TypeOf(true):             "boolean",
@@ -164,11 +164,31 @@ func TestPathHelpers(t *testing.T) {
 	if p != "/a/{x}/b/{y}" || len(params) != 2 || params[0] != "x" || params[1] != "y" {
 		t.Fatalf("convertPath wrong: %s %v", p, params)
 	}
-	if shortHandler("pkg.(*C).Login-fm") != "Login" {
-		t.Fatal("shortHandler wrong")
+	p, params = convertPath("/files/{path...}")
+	if p != "/files/{path}" || len(params) != 1 || params[0] != "path" {
+		t.Fatalf("wildcard: %s %v", p, params)
+	}
+	if p, params = convertPath("/a/{$}"); p != "/a/" || len(params) != 0 {
+		t.Fatalf("end anchor: %s %v", p, params)
+	}
+	ids := map[string]string{
+		"pkg.(*NotesController).Login-fm": "NotesLogin",
+		"pkg.(*Controller).Login-fm":      "ControllerLogin",
+		"pkg.(*Repo[...]).Get-fm":         "RepoGet",
+		"pkg.listNotes":                   "get_notes_id",
+	}
+	for handler, want := range ids {
+		if got := operationID(bosun.RouteInfo{Method: "GET", Path: "/notes/{id}", Handler: handler}); got != want {
+			t.Errorf("operationID(%s) = %s, want %s", handler, got, want)
+		}
+	}
+	used := map[string]bool{}
+	if a, b := uniqueID("X", used), uniqueID("X", used); a != "X" || b != "X2" {
+		t.Fatalf("uniqueID: %s %s", a, b)
 	}
 	if hasBodyFields(reflect.TypeOf(struct {
 		A string `path:"a"`
+		B string `json:"-"`
 	}{})) {
 		t.Fatal("path-only struct has no body fields")
 	}
@@ -180,7 +200,7 @@ func TestPathHelpers(t *testing.T) {
 func TestStatusArgAndDiskScan(t *testing.T) {
 	s := &errScanner{opts: &ScanOptions{SourceDir: ""}}
 	s.scan() // embedded fixtureSrc only
-	codes := s.statusesFor("openapi.(*FixtureController).Create-fm")
+	codes := s.statusesFor("github.com/bluebeard63/bosun/openapi.(*FixtureController).Create-fm")
 	if len(codes) != 2 || codes[0] != 404 || codes[1] != 422 {
 		t.Fatalf("embedded scan wrong: %v", codes)
 	}
@@ -274,7 +294,7 @@ func TestSpecValidationConstraints(t *testing.T) {
 		t.Fatalf("header param missing or not required: %v", h)
 	}
 
-	body := spec["components"].(map[string]any)["schemas"].(map[string]any)["ValIn"].(map[string]any)
+	body := spec["components"].(map[string]any)["schemas"].(map[string]any)["OpenapiValIn"].(map[string]any)
 	props := body["properties"].(map[string]any)
 	if _, leaked := props["Tenant"]; leaked {
 		t.Fatal("header field must not appear in the JSON body schema")

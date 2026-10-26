@@ -83,8 +83,97 @@ jobs:
             exit 1
           fi
 
+  vulncheck:
+    name: govulncheck
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # govulncheck reports standard-library vulnerabilities for the Go it
+      # runs on; the latest release is what users should build with.
+      - uses: actions/setup-go@v5
+        with:
+          go-version: stable
+          cache-dependency-path: "**/go.sum"
+      # Pinned govulncheck, run per module against the dependency versions
+      # users get; known, unfixable findings are in .github/govulncheck-allow.txt.
+      - name: govulncheck
+        run: bash scripts/govulncheck.sh . $NESTED_MODULES modules/outboxmod/pgtest
+
+  lint:
+    name: golangci-lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: stable
+          cache-dependency-path: "**/go.sum"
+      - uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9.3.0
+        with:
+          version: v2.15.0
+          install-only: true
+      - name: Create workspace
+        run: go work init . $NESTED_MODULES modules/outboxmod/pgtest
+      # One run per module (golangci-lint stops at module boundaries); every
+      # module shares the root .golangci.yml.
+      - name: golangci-lint
+        run: |
+          status=0
+          for m in . $NESTED_MODULES modules/outboxmod/pgtest; do
+            echo "::group::$m"
+            (cd "$m" && golangci-lint run ./...) || status=1
+            echo "::endgroup::"
+          done
+          exit $status
+
+  generated:
+    name: Example registries and OpenAPI validity
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: stable
+          cache-dependency-path: "**/go.sum"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Build bosun
+        run: |
+          go work init . $NESTED_MODULES
+          go build -o "$RUNNER_TEMP/bosun" ./cmd/bosun
+      # Every example that keeps a generated registry (a zz_bosun_registry.go
+      # or a //go:generate bosun gen registry directive) must have it up to
+      # date. The go:generate arguments, if any, are reused.
+      - name: bosun gen registry --check (examples)
+        run: |
+          dirs=$( {
+            git ls-files 'examples/*zz_bosun_registry.go' | xargs -r -n1 dirname
+            { git grep -l '^//go:generate bosun gen registry' -- 'examples/*.go' || true; } | xargs -r -n1 dirname
+          } | sort -u)
+          if [ -z "$dirs" ]; then
+            echo "::notice::no example under examples/ uses a generated registry"
+            exit 0
+          fi
+          status=0
+          for d in $dirs; do
+            args=$({ grep -h '^//go:generate bosun gen registry' "$d"/*.go || true; } | head -n1 | sed 's|^//go:generate bosun gen registry||')
+            echo "$d: bosun gen registry$args --check"
+            (cd "$d" && "$RUNNER_TEMP/bosun" gen registry $args --check) || status=1
+          done
+          exit $status
+      # The openapi tests check the rules client generators trip over; this
+      # runs a full validator over the spec built from the same fixtures.
+      - name: Validate the OpenAPI fixture spec
+        env:
+          BOSUN_OPENAPI_SPEC_OUT: ${{ runner.temp }}/openapi.json
+        run: |
+          go test -count=1 -run '^TestWriteSpecForValidator$' ./openapi/
+          test -s "$BOSUN_OPENAPI_SPEC_OUT"
+          npx --yes @redocly/cli@2.62.1 lint --extends=spec "$BOSUN_OPENAPI_SPEC_OUT"
+
   nested:
-    name: ${{ matrix.module }} (against this PR's bosun)
+    name: ${{ matrix.module }} (against this PR's bosun)${{ matrix.go != 'stable' && format(' on Go {0}', matrix.go) || '' }}
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -96,23 +185,97 @@ jobs:
           - modules/eventredismod
           - modules/stores3mod
           - modules/traceotelmod
+        go: [stable]
+        # Modules whose go.mod says go 1.22 are also tested on Go 1.22.
+        include:
+          - module: cmd/bosun
+            go: "1.22.x"
+            # TODO(#86): on Go < 1.25 the project scaffold tidies a nats
+            # service (go 1.25) inside a go 1.22 go.work before raising the
+            # workspace's go line, so tidy fails. Drop this skip once fixed.
+            skip: "^TestProjectWithSecondServiceBuilds$"
+          - module: modules/eventamqpmod
+            go: "1.22.x"
+          - module: modules/eventredismod
+            go: "1.22.x"
+    env:
+      # Stay on the requested Go for this module, but let subprocesses (the
+      # scaffold tests' go mod tidy) switch up when a generated go.mod needs it.
+      GOTOOLCHAIN: auto
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ matrix.go }}
+          cache-dependency-path: "**/go.sum"
+      # Nested modules require the *published* bosun; a workspace points them at
+      # the checked-out root instead, so a PR that breaks them fails here rather
+      # than after release. On Go 1.22 the workspace holds only the root and
+      # this module, since the other nested modules need a newer Go.
+      - name: Create workspace
+        run: |
+          if [ "${{ matrix.go }}" = stable ]; then
+            go work init . $NESTED_MODULES
+          else
+            go work init . "${{ matrix.module }}"
+          fi
+      - name: Go version
+        working-directory: ${{ matrix.module }}
+        run: |
+          go version
+          if [ "${{ matrix.go }}" = 1.22.x ] && ! go version | grep -q ' go1\.22\.'; then
+            echo "::error::expected Go 1.22, got $(go version)"
+            exit 1
+          fi
+      - name: Vet
+        working-directory: ${{ matrix.module }}
+        run: go vet ./...
+      - name: Test
+        working-directory: ${{ matrix.module }}
+        env:
+          SKIP: ${{ matrix.skip }}
+        run: go test -race -count=1 ${SKIP:+-skip "$SKIP"} ./...
+
+  scaffold:
+    name: bosun new ${{ matrix.kind }}${{ matrix.flags }} --event ${{ matrix.event }} (build and docker)
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        kind: [service]
+        event: [inmem, amqp, nats, redis, none]
+        include:
+          - { kind: mono, event: inmem }
+          - { kind: mono, event: none, flags: " --bare" }
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
           go-version: stable
           cache-dependency-path: "**/go.sum"
-      # Nested modules require the *published* bosun; a workspace points them at
-      # the checked-out root instead, so a PR that breaks them fails here rather
-      # than after release.
-      - name: Create workspace
-        run: go work init . $NESTED_MODULES
-      - name: Vet
-        working-directory: ${{ matrix.module }}
-        run: go vet ./...
-      - name: Test
-        working-directory: ${{ matrix.module }}
-        run: go test -race -count=1 ./...
+      # Build the CLI from this checkout and point the scaffold at it too
+      # (--bosun-dir), so template changes are tested before they're released.
+      - name: Build bosun
+        run: |
+          go work init . $NESTED_MODULES
+          go build -o "$RUNNER_TEMP/bosun" ./cmd/bosun
+      - name: Scaffold
+        working-directory: ${{ runner.temp }}
+        run: ./bosun new ${{ matrix.kind }} svc --event ${{ matrix.event }}${{ matrix.flags }} --yes --bosun-dir "$GITHUB_WORKSPACE"
+      - name: Build and vet
+        working-directory: ${{ runner.temp }}/svc
+        env:
+          GOWORK: "off"
+        run: |
+          go build ./...
+          go vet ./...
+      # The replace directives point outside the build context, so vendor the
+      # dependencies first; a vendored build never reads the replaced paths.
+      - name: Docker build
+        working-directory: ${{ runner.temp }}/svc
+        run: |
+          GOWORK=off go mod vendor
+          docker build -t "bosun-scaffold-${{ matrix.kind }}-${{ matrix.event }}" .
 
   integration:
     name: Broker and storage integration
@@ -133,14 +296,26 @@ jobs:
         options: >-
           --health-cmd "redis-cli ping"
           --health-interval 5s --health-timeout 5s --health-retries 10
+      postgres:
+        image: postgres:16
+        ports: ["5432:5432"]
+        env:
+          POSTGRES_PASSWORD: bosunci
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s --health-timeout 5s --health-retries 10
     env:
       BOSUN_AMQP_URL: amqp://guest:guest@localhost:5672/
       BOSUN_NATS_URL: nats://localhost:4222
       BOSUN_REDIS_ADDR: localhost:6379
+      BOSUN_POSTGRES_DSN: postgres://postgres:bosunci@localhost:5432/postgres?sslmode=disable
       BOSUN_S3_ENDPOINT: localhost:8333
       BOSUN_S3_KEY: bosunci
       BOSUN_S3_SECRET: bosunci-secret
       BOSUN_S3_BUCKET: bosun-ci
+      BOSUN_WEBDAV_URL: http://localhost:8090
+      BOSUN_WEBDAV_USER: bosunci
+      BOSUN_WEBDAV_PASS: bosunci-secret
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
@@ -168,6 +343,22 @@ jobs:
           done
           docker logs seaweedfs
           exit 1
+      # WebDAV server for storewebdavmod: rclone's server over a local
+      # directory handles MKCOL, Depth: 1 PROPFIND, PUT, GET and DELETE, and
+      # gzips responses on request, like many production servers.
+      - name: Start rclone (WebDAV)
+        run: |
+          docker run -d --name webdav -p 8090:8080 --tmpfs /data:rw,mode=1777 \
+            rclone/rclone:1.75.2 \
+            serve webdav /data --addr :8080 --user "$BOSUN_WEBDAV_USER" --pass "$BOSUN_WEBDAV_PASS"
+          for i in $(seq 1 30); do
+            if curl -fs -o /dev/null -u "$BOSUN_WEBDAV_USER:$BOSUN_WEBDAV_PASS" -X PROPFIND -H "Depth: 0" "$BOSUN_WEBDAV_URL/"; then
+              exit 0
+            fi
+            sleep 1
+          done
+          docker logs webdav
+          exit 1
       - name: Create workspace
         run: go work init . $NESTED_MODULES
       - name: Test with live services
@@ -177,6 +368,18 @@ jobs:
             (cd "$m" && go test -race -count=1 -v ./...) || { echo "::endgroup::"; exit 1; }
             echo "::endgroup::"
           done
+      # A test-only nested module (not released, so not in NESTED_MODULES)
+      # keeps the Postgres driver out of the root module.
+      - name: Outbox relays on Postgres
+        run: |
+          go work use ./modules/outboxmod/pgtest
+          cd modules/outboxmod/pgtest && go test -race -count=1 -v ./...
+      # storewebdavmod lives in the root module.
+      - name: WebDAV store
+        run: go test -race -count=1 -v ./modules/storewebdavmod/
       - name: SeaweedFS logs
         if: failure()
         run: docker logs seaweedfs 2>&1 | tail -100
+      - name: WebDAV logs
+        if: failure()
+        run: docker logs webdav 2>&1 | tail -100

@@ -65,6 +65,8 @@ import (
 
 Commit the generated file like any other source. Each import is annotated with what the package registers, so a code review shows exactly what a new package adds to the app. Services created with `bosun new service` are already set up this way.
 
+With bosun v0.8.0 or later, the file also carries the module's doc comments on typed handlers and on struct types and fields, in a `bosun.RegisterDocComments` call, so the [OpenAPI spec](./openapi.md#describe-operations-and-schemas) can describe your operations and schemas. Editing one of those comments makes the file stale too. `bosun gen registry --no-docs` leaves them out.
+
 ### Keep it current
 
 Run `go generate ./...` after adding, removing or moving a package that registers with Bosun. To catch a forgotten regeneration, check the file in CI:
@@ -86,6 +88,7 @@ The generator parses the module's source with the Go standard library (no build 
 It skips:
 
 - `_test.go` files;
+- files excluded by build constraints, such as a `//go:build ignore` helper (see [Limitations](#limitations));
 - `vendor`, `testdata`, and directories whose names start with `.` or `_`;
 - nested modules (directories with their own `go.mod`);
 - the target package itself;
@@ -108,11 +111,12 @@ bosun gen registry --dir ./cmd/worker
 | `--dir` | `.` | Package directory to write into: the one that calls `bosun.New()`. |
 | `--out`, `-o` | `zz_bosun_registry.go` | File name, relative to `--dir` (or an absolute path). |
 | `--check` | `false` | Verify the file is up to date instead of writing it. |
+| `--tags` | none | Comma-separated build tags to satisfy, as for `go build -tags`. |
 
 ### Limitations
 
 - **Only package-level `var` declarations are detected.** A registration made inside `init()` or another function isn't found. Use the `var _ = bosun.X[...]()` form, which is the Bosun convention anyway, or import that package by hand.
-- **Build tags are ignored.** The generator reads every non-test file whatever its `//go:build` line. If a package is excluded entirely under some tags, import it by hand from a file with the same tags rather than relying on the generated file.
+- **One build configuration.** The generator applies build constraints the way `go build` does for the machine it runs on: files whose `//go:build` line or `_GOOS`/`_GOARCH` name suffix doesn't match are skipped, plus any tags passed with `--tags`. A package that registers only under other tags or platforms isn't in the generated file; import it by hand from a file with the same constraints.
 - **Every registering package is imported.** That is the point, but it also means a package you deliberately keep out of one binary needs its own target, or `bosun.Disable(pkgPath)` at runtime.
 
 ## Option 2: an aggregator package

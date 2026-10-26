@@ -1,8 +1,11 @@
 package bosun
 
 import (
+	"fmt"
 	"net/http"
 	"path"
+	"reflect"
+	"runtime"
 	"strings"
 )
 
@@ -13,9 +16,13 @@ import (
 // from app.Start() regardless of which group raised it.
 type Router struct {
 	app    *App
+	ctrl   reflect.Type // controller mounting these routes, for error messages
 	prefix string
 	base   []MiddlewareHandler
 	errs   *[]error
+
+	meta    []metaKV // controller/group metadata inherited by every route
+	mwNames []string // controller/group middleware names, outermost first
 }
 
 // Group returns a child router that mounts under prefix (joined onto the
@@ -39,10 +46,15 @@ type Router struct {
 func (r *Router) Group(prefix string, mws ...MWRef) *Router {
 	sub := &Router{
 		app:    r.app,
+		ctrl:   r.ctrl,
 		prefix: r.prefix,
 		base:   append([]MiddlewareHandler{}, r.base...),
 		errs:   r.errs,
+
+		meta:    append([]metaKV(nil), r.meta...),
+		mwNames: append([]string(nil), r.mwNames...),
 	}
+	sub.inherit(mws)
 	if prefix != "" && prefix != "/" {
 		sub.prefix = joinPrefix(sub.prefix, normalizePath(prefix))
 	}
@@ -60,28 +72,44 @@ func (r *Router) Group(prefix string, mws ...MWRef) *Router {
 // Get mounts a raw net/http handler at p — the untyped escape hatch. Use
 // this only when you need full control of the ResponseWriter (streaming,
 // SSE, hijack, file downloads). You give up audit events, OpenAPI
-// generation, and typed binding.
+// generation, and typed binding. The route is still listed in app.Routes()
+// with Raw set, carrying any bosun.Meta passed in mws.
 //
 // For typed handlers, call bosun.Get(r, p, handler) instead.
-func (r *Router) Get(p string, h http.HandlerFunc, mws ...MWRef) { r.handle("GET", p, h, mws) }
+func (r *Router) Get(p string, h http.HandlerFunc, mws ...MWRef) { r.raw("GET", p, h, mws) }
 
 // Post mounts a raw net/http POST handler at p. See Get for when to use
 // this vs the typed bosun.Post(r, ...).
-func (r *Router) Post(p string, h http.HandlerFunc, mws ...MWRef) { r.handle("POST", p, h, mws) }
+func (r *Router) Post(p string, h http.HandlerFunc, mws ...MWRef) { r.raw("POST", p, h, mws) }
 
 // Put mounts a raw net/http PUT handler at p. See Get for when to use this
 // vs the typed bosun.Put(r, ...).
-func (r *Router) Put(p string, h http.HandlerFunc, mws ...MWRef) { r.handle("PUT", p, h, mws) }
+func (r *Router) Put(p string, h http.HandlerFunc, mws ...MWRef) { r.raw("PUT", p, h, mws) }
 
 // Delete mounts a raw net/http DELETE handler at p. See Get for when to
 // use this vs the typed bosun.Delete(r, ...).
 func (r *Router) Delete(p string, h http.HandlerFunc, mws ...MWRef) {
-	r.handle("DELETE", p, h, mws)
+	r.raw("DELETE", p, h, mws)
 }
 
 // Patch mounts a raw net/http PATCH handler at p. See Get for when to use
 // this vs the typed bosun.Patch(r, ...).
-func (r *Router) Patch(p string, h http.HandlerFunc, mws ...MWRef) { r.handle("PATCH", p, h, mws) }
+func (r *Router) Patch(p string, h http.HandlerFunc, mws ...MWRef) { r.raw("PATCH", p, h, mws) }
+
+// raw mounts an untyped route and records it in app.Routes() with Raw set,
+// so route-wide checks see it; typed routes are recorded by typed() instead.
+func (r *Router) raw(method, p string, h http.HandlerFunc, refs []MWRef) {
+	meta, names := r.describe(refs)
+	recordRoute(r.app, RouteInfo{
+		Method:     method,
+		Path:       r.fullPath(p),
+		Handler:    runtime.FuncForPC(reflect.ValueOf(h).Pointer()).Name(),
+		Raw:        true,
+		Meta:       meta,
+		Middleware: names,
+	})
+	r.handle(method, p, h, refs)
+}
 
 func (r *Router) handle(method, p string, h http.HandlerFunc, refs []MWRef) {
 	routeMWs, err := r.app.resolveMWs(refs)
@@ -94,7 +122,26 @@ func (r *Router) handle(method, p string, h http.HandlerFunc, refs []MWRef) {
 	for i := len(all) - 1; i >= 0; i-- {
 		handler = all[i].Handle(handler)
 	}
-	r.app.Mux.Handle(method+" "+r.fullPath(p), handler)
+	r.mount(method+" "+r.fullPath(p), handler)
+}
+
+// mount registers pattern on the mux, turning a duplicate or conflicting
+// pattern into a Start error instead of the mux's panic.
+func (r *Router) mount(pattern string, h http.Handler) {
+	if prev, ok := r.app.mounted[pattern]; ok {
+		*r.errs = append(*r.errs, fmt.Errorf("bosun: duplicate route %q registered by %v and %v", pattern, prev, r.ctrl))
+		return
+	}
+	defer func() {
+		if p := recover(); p != nil {
+			*r.errs = append(*r.errs, fmt.Errorf("bosun: route %q on %v: %v", pattern, r.ctrl, p))
+		}
+	}()
+	r.app.Mux.Handle(pattern, h)
+	if r.app.mounted == nil {
+		r.app.mounted = map[string]reflect.Type{}
+	}
+	r.app.mounted[pattern] = r.ctrl
 }
 
 // fullPath is the mux pattern path for p mounted on this router. It is the

@@ -1,0 +1,8 @@
+# Vulnerabilities scripts/govulncheck.sh tolerates, one OSV ID per line with
+# the reason. Remove an entry as soon as the fix can be taken.
+
+# golang.org/x/text: infinite loop on invalid input. Reached only through
+# gorm in modules/gormrepomod. The fix (x/text v0.39.0) requires go 1.25,
+# and the root module stays on go 1.22; applications using gormrepomod can
+# require golang.org/x/text v0.39.0 themselves.
+GO-2026-5970

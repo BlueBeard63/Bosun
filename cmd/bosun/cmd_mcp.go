@@ -25,7 +25,7 @@ func mcpCmd() *cobra.Command {
 			// stdout is the protocol channel; never print to it here.
 			ctx, stop := signal.NotifyContext(cmd.Context(), os.Interrupt)
 			defer stop()
-			return mcpsrv.Serve(ctx, site, os.Stdin, os.Stdout, version)
+			return mcpsrv.Serve(ctx, site, cmd.InOrStdin(), cmd.OutOrStdout(), cliVersion())
 		},
 	}
 }

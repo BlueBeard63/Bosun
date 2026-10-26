@@ -1,11 +1,11 @@
 # OpenAPI
 
-Bosun generates an OpenAPI 3.0 spec from your typed handlers and serves it at `GET /openapi.json`. There are no annotations or separate schema files: route paths, parameters, request bodies and response schemas come from your Go types, and error responses come from three sources that you control. This page is a set of how-to guides for common tasks. For a guided first run, follow the [OpenAPI tutorial](./openapi-tutorial.md). For exact mappings and limits, see the [OpenAPI reference](./openapi-reference.md).
+Bosun generates an OpenAPI 3.0 spec from your typed handlers and serves it at `GET /openapi.json`, with an interactive Swagger UI page at `GET /docs`. There are no annotations or separate schema files: route paths, parameters, request bodies and response schemas come from your Go types, and error responses come from three sources that you control. This page is a set of how-to guides for common tasks. For a guided first run, follow the [OpenAPI tutorial](./openapi-tutorial.md). For exact mappings and limits, see the [OpenAPI reference](./openapi-reference.md).
 
 <figure class="diagram">
 <svg viewBox="0 0 620 250" role="img" aria-labelledby="oa-title oa-desc" xmlns="http://www.w3.org/2000/svg">
 <title id="oa-title">How the OpenAPI spec is built</title>
-<desc id="oa-desc">The app's typed routes give paths, parameters and schemas. Three error layers, declared, scanned and observed, add error responses. The spec controller merges them on each request to /openapi.json.</desc>
+<desc id="oa-desc">The app's typed routes give paths, parameters and schemas. Three error layers, declared, scanned and observed, add error responses. The spec controller merges them into the document served at /openapi.json.</desc>
 <defs>
 <marker id="oa-arw" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="var(--fg-muted)"/></marker>
 </defs>
@@ -30,7 +30,7 @@ Bosun generates an OpenAPI 3.0 spec from your typed handlers and serves it at `G
 <rect x="490" y="104" width="112" height="48" rx="6" fill="var(--bg)" stroke="var(--fg)" stroke-width="1"/>
 <text x="546" y="132" text-anchor="middle" font-family="'JetBrains Mono',ui-monospace,monospace" font-size="10" fill="var(--fg)">/openapi.json</text>
 </svg>
-<figcaption>Routes and schemas come from the app's typed handlers. Error responses are merged from three layers every time the spec is requested.</figcaption>
+<figcaption>Routes and schemas come from the app's typed handlers. Error responses are merged from three layers when the spec is built.</figcaption>
 </figure>
 
 ## Enable the spec
@@ -41,7 +41,7 @@ Import the package for its side effects, anywhere in your binary:
 import _ "github.com/bluebeard63/bosun/openapi"
 ```
 
-The package registers `openapi.SpecController`, which mounts `GET /openapi.json` when the app starts. The spec is built fresh on every request from the typed routes of the app that serves it (`app.TypedRoutes()`), so it always matches the running code. Raw routes registered with `r.Get` and similar methods are not included.
+The package registers `openapi.SpecController`, which mounts `GET /openapi.json` and the [docs page](#add-an-interactive-documentation-page) at `GET /docs` when the app starts. The spec is built from the typed routes of the app that serves it (`app.TypedRoutes()`) on the first request and then served from memory, so it always matches the running code. It is rebuilt when the app observes a new error status. Raw routes registered with `r.Get` and similar methods are not included.
 
 ## Serve the spec at another path
 
@@ -49,7 +49,8 @@ Remount the controller with `OverridePrefix`:
 
 ```go
 app := bosun.New(bosun.OverridePrefix[openapi.SpecController]("/api"))
-// spec now at GET /api/openapi.json; /openapi.json returns 404
+// spec now at GET /api/openapi.json and the docs page at GET /api/docs;
+// /openapi.json and /docs return 404
 ```
 
 ## Turn the spec off
@@ -79,7 +80,8 @@ Builds made with `go build -tags prod` then contain no spec endpoint and no scan
 ```go
 func internalOnly(next http.Handler) http.Handler {
     return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-        if r.URL.Path == "/openapi.json" && r.Header.Get("X-Internal-Token") != os.Getenv("INTERNAL_TOKEN") {
+        internal := r.URL.Path == "/openapi.json" || strings.HasPrefix(r.URL.Path, "/docs")
+        if internal && r.Header.Get("X-Internal-Token") != os.Getenv("INTERNAL_TOKEN") {
             http.NotFound(w, r)
             return
         }
@@ -94,7 +96,7 @@ Alternatively, remount it under a prefix that your gateway only exposes internal
 
 ## Document error responses
 
-Every operation always lists `200` and `500`, and lists `400` (with the field-level `ValidationError` body) when the handler binds input. Other error statuses come from three layers, which are merged together:
+Every operation always lists its success status (`200`, or the code set with `bosun.Status`) and `500`, and lists `400` (with the field-level `ValidationError` body) when the handler binds input. Other error statuses come from three layers, which are merged together:
 
 | Layer | How | When it works |
 |---|---|---|
@@ -165,17 +167,115 @@ Every typed response records its status against its route. Any status `>= 400` t
 
 Schemas are generated from your `In` and `Out` types:
 
-- **Field names** follow `json` tags. Fields tagged `json:"-"` keep their Go name (see [limitations](./openapi-reference.md#limitations)), and unexported fields are skipped.
+- **Field names** follow `encoding/json`: `json` tag names are used, fields tagged `json:"-"` and unexported fields are skipped, and embedded structs are flattened.
 - **Named structs** become reusable entries under `components/schemas`, referenced with `$ref`. Anonymous structs are written inline.
 - **`path:"..."`, `query:"..."` and `header:"..."` fields** become path, query and header parameters, typed from the Go field. None of them appears in the body schema.
 - **[Validation rules](./validation.md)** become schema constraints: `required` fields are listed as required, `min`/`max` become length, range or item-count limits, and `oneof` becomes an `enum`.
-- **Request bodies** are documented for `POST`, `PUT` and `PATCH` when the `In` struct has at least one body field.
+- **Request bodies** are documented for `POST`, `PUT`, `PATCH` and `DELETE` when the `In` struct has at least one body field.
 
-Give request and response types distinct, descriptive names. Schemas are keyed by the bare type name, so two different `User` types in two packages would share one schema entry.
+Schemas are keyed by package and type name, so `users.Out` is `UsersOut` and two `Out` types in different packages get separate entries. Types in package `main` keep their bare name. The [reference](./openapi-reference.md#schema-names) has the exact rules.
+
+## Describe operations and schemas
+
+Write doc comments, as you would anyway. With [`bosun gen registry`](./registration.md) generating your registry file, the spec picks them up:
+
+```go
+// Get returns one note.
+//
+// Notes are cached for a minute, so an edit can take that long to show.
+func (c *NotesController) Get(ctx context.Context, req *bosun.Req[NoteID]) (Note, error)
+
+// Note is a saved note.
+type Note struct {
+    ID    int    `json:"id"`
+    Title string `json:"title"` // Shown in lists.
+}
+```
+
+- A **typed handler's** comment becomes its operation's `summary` (the first sentence, on one line) and `description` (the rest).
+- A **struct type's** comment becomes its schema's `description`, and an exported **field's** comment (above it, or at the end of its line) its property's `description`, or its parameter's for `path`, `query` and `header` fields.
+
+Run `go generate ./...` after editing comments, so the registry file carries the new text. Routes, types and fields without comments get no `summary` or `description`.
+
+To set or override the text on the route itself, pass `bosun.Doc`:
+
+```go
+bosun.Delete(r, "/{id}", c.Delete, bosun.Doc("Delete a note", "Deleting a missing note succeeds."))
+```
+
+Each non-empty argument replaces what the comment gave, so `bosun.Doc("Delete a note", "")` keeps the comment's description. `bosun.Doc` works without the generated file, for example in tests or with hand-written imports.
+
+## Set the title, version and servers
+
+Register your own `openapi.Options` before `Start`:
+
+```go
+app := bosun.New()
+registry.RegisterInstance[*openapi.Options](app.Reg, &openapi.Options{
+    Title:       "Notes API",
+    Version:     "2.1.0",
+    Description: "Create, list and delete notes.",
+    Servers: []openapi.Server{
+        {URL: "https://api.example.com", Description: "production"},
+    },
+})
+```
+
+Without it, the document says `bosun API` version `1.0.0` and lists no servers.
+
+## Document authentication
+
+Add your security schemes to `Options.SecuritySchemes`. Routes that carry permissions (`bosun.MetaPermissions`, usually attached by your permission middleware with `WithMeta`) then list a security requirement:
+
+```go
+registry.RegisterInstance[*openapi.Options](app.Reg, &openapi.Options{
+    SecuritySchemes: map[string]openapi.SecurityScheme{
+        "bearer": {Type: "http", Scheme: "bearer", BearerFormat: "JWT"},
+    },
+})
+
+// in a controller
+bosun.Post(r, "/notes", c.Create, bosun.Meta(bosun.MetaPermissions, []string{"notes:write"}))
+```
+
+`POST /notes` now has `"security": [{"bearer": []}]` and `"x-permissions": ["notes:write"]`. With an `oauth2` or `openIdConnect` scheme the permissions are listed as the requirement's scopes instead, and they are added to the oauth2 flows' scopes. With several schemes, each is an alternative; set `PermissionSchemes` to pick which ones apply. The [reference](./openapi-reference.md#security) has the full mapping.
+
+## Mark nullable fields and add examples
+
+A pointer field in a body type is documented as `nullable: true`, since `encoding/json` sends a nil pointer as `null`. Add an `example` tag to show a sample value:
+
+```go
+type NoteIn struct {
+    Title string   `json:"title" example:"Groceries"`
+    Pages int      `json:"pages" example:"12"`
+    Due   *string  `json:"due" example:"2024-05-01"` // nullable
+    Tags  []string `json:"tags" example:"[\"home\"]"`
+}
+```
+
+Tags on non-string fields are read as JSON. `example` also works on `path`, `query` and `header` fields.
 
 ## Add an interactive documentation page
 
-Serve Swagger UI (or Redoc) from a raw route and point it at the spec. The [tutorial](./openapi-tutorial.md#step-8-browse-the-api-in-swagger-ui) has a complete `DocsController` you can copy. Because it uses a raw route, the page itself stays out of the spec.
+`SpecController` also serves a Swagger UI page at `GET /docs`, so there is nothing to add: open <http://localhost:8080/docs>. The page loads Swagger UI 5.17.14 from jsDelivr and the spec by a URL relative to itself, so it keeps working under `OverridePrefix` and behind a proxy that strips a path prefix. It is a raw route, so it is not in the spec.
+
+To change the path or title, or to serve the Swagger UI files yourself, register `openapi.DocsOptions` before `Start`:
+
+```go
+registry.RegisterInstance[*openapi.DocsOptions](app.Reg, &openapi.DocsOptions{
+    Path:      "/reference",          // default "/docs"
+    Title:     "Notes API reference", // default Options.Title
+    AssetsURL: "/static/swagger-ui",  // a copy of swagger-ui-dist, for offline or strict CSP
+})
+```
+
+The page has no inline script, so a Content Security Policy that allows scripts from your own origin (and the assets origin, if different) is enough. To turn the page off and keep the spec, set an empty `Path`:
+
+```go
+registry.RegisterInstance[*openapi.DocsOptions](app.Reg, &openapi.DocsOptions{})
+```
+
+If your app already has its own `/docs` route, starting it fails with a duplicate route error: move or turn off one of the two.
 
 ## Export the spec in CI
 

@@ -71,7 +71,34 @@ func (m *Mailer) Close() error { return m.sub.Unsubscribe() }
 
 ## At-least-once delivery and idempotency
 
-Delivery is at-least-once across every backend: a message may be redelivered after a handler error or a consumer crash. Handlers must therefore be idempotent, meaning that processing the same message twice has the same effect as processing it once. Each delivery carries a `Message.ID` and a 1-based `Message.Attempt` so a handler can detect and skip a duplicate. Returning an error from a typed handler nacks the message so the backend redelivers it; returning nil acks it.
+Delivery is at-least-once across every backend except core NATS, which redelivers after a handler error but not after a crash (see [backends](./event-backends.md#delivery-and-redelivery)): a message may be redelivered after a handler error or a consumer crash. Handlers must therefore be idempotent, meaning that processing the same message twice has the same effect as processing it once. Each delivery carries a `Message.ID` and a 1-based `Message.Attempt` so a handler can detect and skip a duplicate. Returning an error from a typed handler nacks the message so the backend redelivers it, after a backoff and up to an attempt limit (see below); returning nil acks it.
+
+## Retries, backoff, and dead-lettering
+
+A typed handler (`On`) that returns an error has its message redelivered after a delay that grows with each attempt. Once the message has been delivered the maximum number of times and failed again, it is taken out of the retry loop: it is published to the dead-letter subject if one is set, and the original is then acked. Without a dead-letter subject it is acked and logged at error level through `log/slog`. A payload that cannot be decoded into the handler's type will never succeed, so it is dead-lettered at once, or dropped as before if no dead-letter subject is set.
+
+```go
+_, err := UserCreated.On(ctx, bus, handle,
+    eventmod.WithGroup("mailers"),
+    eventmod.WithMaxAttempts(5),
+    eventmod.WithBackoff(eventmod.ExponentialBackoff(200*time.Millisecond, 10*time.Second)),
+    eventmod.WithDeadLetter("users.created.dlq"),
+)
+```
+
+| Option | Default | Meaning |
+| --- | --- | --- |
+| `WithMaxAttempts(n)` | 10 (`DefaultMaxAttempts`) | Deliveries before giving up. `n <= 0` retries forever. |
+| `WithBackoff(b)` | `ExponentialBackoff(100ms, 5s)` | Delay before each redelivery, given the attempt that just failed. `ConstantBackoff(d)` is a fixed delay; `WithBackoff(nil)` redelivers immediately. |
+| `WithDeadLetter(subject)` | none | Where exhausted and undecodable messages go. The subscriber passed to `On` must also be a `Publisher`, as every bundled driver's bus is; otherwise `On` returns an error. |
+
+The dead-letter message keeps the original payload and headers (correlation id, trace context, tenant) and adds `Bosun-Dead-Letter-Subject` (the subject it was published to), `Bosun-Dead-Letter-Attempts`, `Bosun-Dead-Letter-Error` (the last handler error) and `Bosun-Dead-Letter-ID` (the original `Message.ID`). It is a fresh message on the dead-letter subject, so its own `Attempt` starts at 1. The original is acked only after the dead-letter publish succeeds; if that publish fails, the message is redelivered after the backoff and the dead-letter publish is tried again.
+
+> **Behaviour change in v0.8.** Before v0.8 a failing typed handler was redelivered immediately and forever. Now a message that fails 10 times is dropped with an error log unless you set `WithDeadLetter`. Use `WithMaxAttempts(0)` and `WithBackoff(nil)` to restore the old behaviour.
+
+How the delay is applied depends on the backend. The in-memory bus schedules the redelivery with a timer, so other messages keep flowing while a failed one waits. The broker drivers have no per-message delay, so the typed layer waits in the handler before nacking. Those drivers hand a subscription its messages one at a time, so while a message backs off the rest of that subscription's messages wait behind it, for at most the largest backoff delay per failed attempt. This also slows a consumer whose downstream is failing, which is usually what you want, but keep the maximum delay short (the default caps it at 5 seconds) and, on Redis, well below `Options.ClaimIdle`, or another group member may claim the entry while it waits. The [backends](./event-backends.md#delivery-and-redelivery) page has the details.
+
+Retry options apply only to the typed layer's auto-ack. With `WithManualAck`, or with the raw `Subscriber.Subscribe`, the handler acks and nacks itself and can read `Message.Attempt` to make its own decision.
 
 ## Consumer groups
 

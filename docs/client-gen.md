@@ -30,7 +30,7 @@ When one service calls another over HTTP, you want a compile-checked client rath
 
 ## Sharing types
 
-For the generated client to compile, the request and response types must be importable by the caller. Put your DTOs in a shared `contracts` package that both the service and its callers import, and use those types in your handlers. The manifest records each route's In and Out type together with its import path, and the generator emits the matching import and method signatures. Types that are unnamed, such as `struct{}` for a bodyless route, need no import.
+For the generated client to compile, the request and response types must be importable by the caller. Put your DTOs in a shared `contracts` package that both the service and its callers import, and use those types in your handlers. The manifest records each route's In and Out type with every named type qualified by its import path, including types inside slices, maps and type arguments, so `[]contracts.User` and `contracts.Page[models.Item]` work. The generator imports each package under an alias that is unique in the file, so two packages that are both called `contracts` don't clash. Types that are unnamed, such as `struct{}` for a bodyless route, need no import.
 
 ## Generating
 
@@ -40,7 +40,7 @@ Point the generator at a running service, or at a saved manifest file. It prints
 bosun gen client http://billing:8080 --package clients --out clients/billing.go
 ```
 
-Each route becomes a method whose name comes from the handler, whose path parameters become string arguments, and whose body and result are the handler's types.
+Each route becomes a method whose name comes from the handler, whose path parameters become string arguments, and whose body and result are the handler's types. A closure handler is named from the HTTP method and the path's last segment, such as `GetHealth`. When two routes would get the same name, as with a `List` on two controllers, each is prefixed with its controller (`UsersList`, `OrdersList`). A path parameter whose name is a Go keyword or would shadow something in the method, such as `{type}` or `{ctx}`, gets a `Param` suffix (`typeParam`). The generator type-checks its output and reports an error instead of writing a client that does not compile.
 
 ```go
 client := clients.NewBillingClient("http://billing:8080")

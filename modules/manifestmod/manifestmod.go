@@ -17,7 +17,9 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"reflect"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/bluebeard63/bosun"
@@ -37,6 +39,11 @@ type RouteAdvert struct {
 	Out       string `json:"out,omitempty"`
 	InImport  string `json:"in_import,omitempty"`
 	OutImport string `json:"out_import,omitempty"`
+	// InType and OutType are In and Out with every named type qualified by
+	// its import path, including types nested in slices, maps, pointers and
+	// type arguments ("[]example.com/app/contracts.User").
+	InType  string `json:"in_type,omitempty"`
+	OutType string `json:"out_type,omitempty"`
 }
 
 // QueueAdvert describes an event subject the service produces or consumes.
@@ -129,10 +136,12 @@ func build(routes []bosun.RouteInfo, info Info) Manifest {
 		if ri.In != nil {
 			ra.In = ri.In.String()
 			ra.InImport = ri.In.PkgPath()
+			ra.InType = qualifiedType(ri.In)
 		}
 		if ri.Out != nil {
 			ra.Out = ri.Out.String()
 			ra.OutImport = ri.Out.PkgPath()
+			ra.OutType = qualifiedType(ri.Out)
 		}
 		m.Routes = append(m.Routes, ra)
 	}
@@ -149,6 +158,48 @@ func build(routes []bosun.RouteInfo, info Info) Manifest {
 		c.Contribute(&m)
 	}
 	return m
+}
+
+// qualifiedType renders t like reflect.Type.String, but with every named type
+// qualified by its import path rather than its package name, so a generator
+// can import each one.
+func qualifiedType(t reflect.Type) string {
+	if t.Name() != "" {
+		if t.PkgPath() == "" {
+			return t.Name() // predeclared
+		}
+		// A generic instantiation's name already qualifies its type arguments.
+		return t.PkgPath() + "." + t.Name()
+	}
+	switch t.Kind() {
+	case reflect.Pointer:
+		return "*" + qualifiedType(t.Elem())
+	case reflect.Slice:
+		return "[]" + qualifiedType(t.Elem())
+	case reflect.Array:
+		return fmt.Sprintf("[%d]%s", t.Len(), qualifiedType(t.Elem()))
+	case reflect.Map:
+		return "map[" + qualifiedType(t.Key()) + "]" + qualifiedType(t.Elem())
+	case reflect.Struct:
+		if t.NumField() == 0 {
+			return "struct {}"
+		}
+		fields := make([]string, t.NumField())
+		for i := range fields {
+			f := t.Field(i)
+			s := qualifiedType(f.Type)
+			if !f.Anonymous {
+				s = f.Name + " " + s
+			}
+			if f.Tag != "" {
+				s += " " + strconv.Quote(string(f.Tag))
+			}
+			fields[i] = s
+		}
+		return "struct { " + strings.Join(fields, "; ") + " }"
+	default:
+		return t.String() // interfaces, funcs and channels
+	}
 }
 
 // Caddyfile renders a Caddy site block that reverse-proxies to the service.

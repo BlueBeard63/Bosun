@@ -58,7 +58,7 @@ app := bosun.New(bosun.WithMiddleware(bosun.UseFunc(func(next http.Handler) http
 
 A build step that only needs the JSON does not need the endpoint at all; see `EmitIfRequestedFor` below.
 
-The response lists each route with its method, path, operation, and declared statuses; the health endpoints; and every event subject the service declared, with its direction.
+The response lists each route with its method, path, operation, and declared statuses, plus its request and response types for [`bosun gen client`](./client-gen.md) (`in`/`out` as Go prints them, `in_import`/`out_import` for their packages, and `in_type`/`out_type` with every named type qualified by its import path); the health endpoints; and every event subject the service declared, with its direction.
 
 ```json
 {

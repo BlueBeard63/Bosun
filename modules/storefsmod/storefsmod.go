@@ -3,11 +3,14 @@
 // external dependencies, which makes it the default store for development and
 // tests. Presign returns an HMAC-signed URL when a Secret is configured, for
 // serving objects through your own handler; otherwise Presign is unsupported.
+// Put replaces objects atomically through temp files named ".bosun-tmp-*",
+// which List never returns.
 //
 //	var _ = storefsmod.For()
 package storefsmod
 
 import (
+	"bytes"
 	"context"
 	"crypto/hmac"
 	"crypto/sha256"
@@ -62,30 +65,68 @@ type meta struct {
 	Meta        map[string]string `json:"meta,omitempty"`
 }
 
-// Put writes the object and its metadata.
+// Put writes the object and its metadata. Each file is written to a temp
+// file beside its target, synced and renamed over it, so a failed or
+// cancelled upload leaves the previous object intact.
 func (s *FSStore) Put(ctx context.Context, key string, r io.Reader, opts ...storemod.PutOption) error {
 	cfg := storemod.ResolvePut(opts)
-	op := s.objPath(key)
-	if err := os.MkdirAll(filepath.Dir(op), 0o755); err != nil {
-		return err
-	}
-	f, err := os.Create(op)
-	if err != nil {
-		return err
-	}
-	if _, err := io.Copy(f, r); err != nil {
-		_ = f.Close()
-		return err
-	}
-	if err := f.Close(); err != nil {
-		return err
-	}
-	mp := s.metaPath(key)
-	if err := os.MkdirAll(filepath.Dir(mp), 0o755); err != nil {
+	if err := writeAtomic(ctx, s.objPath(key), r); err != nil {
 		return err
 	}
 	b, _ := json.Marshal(meta{ContentType: cfg.ContentType, Meta: cfg.Meta})
-	return os.WriteFile(mp, b, 0o644)
+	return writeAtomic(ctx, s.metaPath(key), bytes.NewReader(b))
+}
+
+// tmpPrefix names in-progress uploads; List skips files that start with it.
+const tmpPrefix = ".bosun-tmp-"
+
+// writeAtomic streams r into a temp file in dst's directory, syncs it and
+// renames it over dst. On any error, including ctx cancellation, the temp
+// file is removed and dst is untouched.
+func writeAtomic(ctx context.Context, dst string, r io.Reader) (err error) {
+	if cerr := ctx.Err(); cerr != nil {
+		return cerr
+	}
+	dir := filepath.Dir(dst)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return err
+	}
+	f, err := os.CreateTemp(dir, tmpPrefix+"*")
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if err != nil {
+			_ = f.Close()
+			_ = os.Remove(f.Name())
+		}
+	}()
+	if _, err = io.Copy(f, ctxReader{ctx, r}); err != nil {
+		return err
+	}
+	if err = f.Chmod(0o644); err != nil {
+		return err
+	}
+	if err = f.Sync(); err != nil {
+		return err
+	}
+	if err = f.Close(); err != nil {
+		return err
+	}
+	return os.Rename(f.Name(), dst)
+}
+
+// ctxReader stops a copy as soon as ctx is done.
+type ctxReader struct {
+	ctx context.Context
+	r   io.Reader
+}
+
+func (c ctxReader) Read(p []byte) (int, error) {
+	if err := c.ctx.Err(); err != nil {
+		return 0, err
+	}
+	return c.r.Read(p)
 }
 
 // Get opens the object and returns its metadata.
@@ -142,7 +183,7 @@ func (s *FSStore) List(ctx context.Context, prefix string) ([]storemod.Object, e
 			}
 			return err
 		}
-		if info.IsDir() {
+		if info.IsDir() || strings.HasPrefix(info.Name(), tmpPrefix) {
 			return nil
 		}
 		rel, err := filepath.Rel(root, p)

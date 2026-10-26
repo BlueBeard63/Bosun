@@ -30,7 +30,7 @@ go vet ./... && go test -race ./...                      # root module
 (cd cmd/bosun && go generate .)                          # after editing docs/
 ```
 
-To test the nested modules against your local changes rather than the published root, use a Go workspace. `go.work` is gitignored.
+To test the nested modules against your local changes rather than the published root, use a Go workspace, created the same way CI creates it. `go.work` and `go.work.sum` are gitignored, so each contributor creates their own, and it needs Go 1.25 because the NATS, S3 and OpenTelemetry drivers do.
 
 ```sh
 go work init . ./cmd/bosun ./modules/eventamqpmod ./modules/eventnatsmod \

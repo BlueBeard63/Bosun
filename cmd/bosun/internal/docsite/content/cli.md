@@ -4,10 +4,9 @@ The `bosun` command is the framework's tooling: it serves the documentation, exp
 
 ## Installing
 
-Install the binary with `go install`. Because Bosun is a private module, set `GOPRIVATE` first.
+Install the binary with `go install`:
 
 ```bash
-export GOPRIVATE=github.com/bluebeard63/*
 go install github.com/bluebeard63/bosun/cmd/bosun@latest
 ```
 

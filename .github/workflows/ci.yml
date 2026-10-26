@@ -297,6 +297,9 @@ jobs:
       BOSUN_S3_KEY: bosunci
       BOSUN_S3_SECRET: bosunci-secret
       BOSUN_S3_BUCKET: bosun-ci
+      BOSUN_WEBDAV_URL: http://localhost:8090
+      BOSUN_WEBDAV_USER: bosunci
+      BOSUN_WEBDAV_PASS: bosunci-secret
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
@@ -324,6 +327,22 @@ jobs:
           done
           docker logs seaweedfs
           exit 1
+      # WebDAV server for storewebdavmod: rclone's server over a local
+      # directory handles MKCOL, Depth: 1 PROPFIND, PUT, GET and DELETE, and
+      # gzips responses on request, like many production servers.
+      - name: Start rclone (WebDAV)
+        run: |
+          docker run -d --name webdav -p 8090:8080 --tmpfs /data:rw,mode=1777 \
+            rclone/rclone:1.75.2 \
+            serve webdav /data --addr :8080 --user "$BOSUN_WEBDAV_USER" --pass "$BOSUN_WEBDAV_PASS"
+          for i in $(seq 1 30); do
+            if curl -fs -o /dev/null -u "$BOSUN_WEBDAV_USER:$BOSUN_WEBDAV_PASS" -X PROPFIND -H "Depth: 0" "$BOSUN_WEBDAV_URL/"; then
+              exit 0
+            fi
+            sleep 1
+          done
+          docker logs webdav
+          exit 1
       - name: Create workspace
         run: go work init . $NESTED_MODULES
       - name: Test with live services
@@ -339,6 +358,12 @@ jobs:
         run: |
           go work use ./modules/outboxmod/pgtest
           cd modules/outboxmod/pgtest && go test -race -count=1 -v ./...
+      # storewebdavmod lives in the root module.
+      - name: WebDAV store
+        run: go test -race -count=1 -v ./modules/storewebdavmod/
       - name: SeaweedFS logs
         if: failure()
         run: docker logs seaweedfs 2>&1 | tail -100
+      - name: WebDAV logs
+        if: failure()
+        run: docker logs webdav 2>&1 | tail -100

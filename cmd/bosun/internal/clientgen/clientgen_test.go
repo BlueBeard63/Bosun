@@ -34,7 +34,8 @@ func TestGenerate(t *testing.T) {
 		"func (c *BillingClient) Create(ctx context.Context, in contracts.CreateUserIn) (contracts.User, error)",
 		"func (c *BillingClient) Delete(ctx context.Context, id string) (struct{}, error)",
 		`"example.com/app/contracts"`,
-		"url.PathEscape(id)",
+		`c.do(ctx, "GET", "/users/{id}", map[string]string{"id": id}, nil, &out)`,
+		`c.do(ctx, "POST", "/users", nil, &in, &out)`,
 	}
 	for _, w := range want {
 		if !strings.Contains(src, w) {

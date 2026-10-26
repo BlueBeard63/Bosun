@@ -3,6 +3,9 @@ package outboxmod_test
 import (
 	"context"
 	"errors"
+	"path/filepath"
+	"strconv"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -24,9 +27,17 @@ func init() {
 
 func setup(t *testing.T) *bosun.App {
 	t.Helper()
-	// A per-test named in-memory DB keeps tests isolated (a plain :memory: DSN
-	// would give each pooled connection its own database).
-	dsn := "file:" + t.Name() + "?mode=memory&cache=shared"
+	return start(t, memDB(t), &outboxmod.Options{Poll: 20 * time.Millisecond, Batch: 50}, nil)
+}
+
+var dbSeq atomic.Int64
+
+// memDB opens a migrated, uniquely named in-memory DB, which keeps tests
+// isolated, also across -count runs (a plain :memory: DSN would give each
+// pooled connection its own database).
+func memDB(t *testing.T) *gorm.DB {
+	t.Helper()
+	dsn := "file:" + t.Name() + strconv.FormatInt(dbSeq.Add(1), 10) + "?mode=memory&cache=shared"
 	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
 	if err != nil {
 		t.Fatal(err)
@@ -34,9 +45,19 @@ func setup(t *testing.T) *bosun.App {
 	if err := db.AutoMigrate(&outboxmod.Record{}); err != nil {
 		t.Fatal(err)
 	}
+	return db
+}
+
+// start boots an app with its own relay on db. A non-nil pub replaces the
+// in-memory bus as the relay's publisher.
+func start(t *testing.T, db *gorm.DB, opts *outboxmod.Options, pub eventmod.Publisher) *bosun.App {
+	t.Helper()
 	app := bosun.New()
 	registry.RegisterInstance[*gorm.DB](app.Reg, db)
-	registry.RegisterInstance[*outboxmod.Options](app.Reg, &outboxmod.Options{Poll: 20 * time.Millisecond, Batch: 50})
+	registry.RegisterInstance[*outboxmod.Options](app.Reg, opts)
+	if pub != nil {
+		registry.RegisterInstance[eventmod.Publisher](app.Reg, pub)
+	}
 	if err := app.Start(); err != nil {
 		t.Fatal(err)
 	}
@@ -122,3 +143,206 @@ func TestRollbackDoesNotPublish(t *testing.T) {
 		t.Fatalf("outbox has %d rows after rollback, want 0", count)
 	}
 }
+
+// stubPub records each publish by outbox row id and fails the subjects in
+// fail. If block is set, Publish signals entered and then waits on block,
+// ignoring ctx, to simulate a hung broker.
+type stubPub struct {
+	fail    map[string]bool
+	block   chan struct{}
+	entered chan struct{}
+	sent    chan string // subjects published successfully, if set
+
+	mu    sync.Mutex
+	calls map[string]int // by outbox row id, failures included
+}
+
+func (p *stubPub) Publish(_ context.Context, subject string, _ []byte, opts ...eventmod.PubOption) error {
+	id := eventmod.ResolvePub(opts).Headers[outboxmod.HeaderID]
+	p.mu.Lock()
+	if p.calls == nil {
+		p.calls = map[string]int{}
+	}
+	p.calls[id]++
+	p.mu.Unlock()
+	if p.block != nil {
+		p.entered <- struct{}{}
+		<-p.block
+	}
+	if p.fail[subject] {
+		return errors.New("broker rejected " + subject)
+	}
+	if p.sent != nil {
+		p.sent <- subject
+	}
+	return nil
+}
+
+func (p *stubPub) callsFor(id uint) int {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.calls[strconv.FormatUint(uint64(id), 10)]
+}
+
+func enqueue(t *testing.T, ob outboxmod.Outbox, subjects ...string) {
+	t.Helper()
+	for _, s := range subjects {
+		if err := ob.Enqueue(context.Background(), s, []byte(s), nil); err != nil {
+			t.Fatalf("enqueue %s: %v", s, err)
+		}
+	}
+}
+
+// waitFor polls cond until it holds or a generous deadline passes.
+func waitFor(t *testing.T, what string, cond func() bool) {
+	t.Helper()
+	deadline := time.Now().Add(20 * time.Second)
+	for !cond() {
+		if time.Now().After(deadline) {
+			t.Fatalf("timed out waiting for %s", what)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+func TestFailingRowsDoNotBlockNewer(t *testing.T) {
+	pub := &stubPub{fail: map[string]bool{"bad": true}, sent: make(chan string, 1)}
+	db := memDB(t)
+	app := start(t, db, &outboxmod.Options{
+		Poll: 10 * time.Millisecond, Batch: 3, RetryBase: time.Hour, MaxAttempts: 5,
+	}, pub)
+
+	// More failing rows than a batch holds, all ahead of the good one.
+	enqueue(t, resolve[outboxmod.Outbox](t, app), "bad", "bad", "bad", "bad", "bad", "bad", "good")
+
+	select {
+	case s := <-pub.sent:
+		if s != "good" {
+			t.Fatalf("published %q, want good", s)
+		}
+	case <-time.After(20 * time.Second):
+		t.Fatal("a newer row stayed blocked behind failing rows")
+	}
+
+	var bad []outboxmod.Record
+	if err := db.Where("subject = ?", "bad").Find(&bad).Error; err != nil {
+		t.Fatal(err)
+	}
+	for _, r := range bad {
+		if r.Attempts != 1 || r.LastError == "" || r.PublishedAt != nil || r.DeadAt != nil {
+			t.Fatalf("failed row %d: attempts %d, error %q, published %v, dead %v; want one recorded failure",
+				r.ID, r.Attempts, r.LastError, r.PublishedAt, r.DeadAt)
+		}
+		if r.NextAttemptAt == nil || time.Until(*r.NextAttemptAt) < 30*time.Minute {
+			t.Fatalf("failed row %d next attempt = %v, want backed off by RetryBase", r.ID, r.NextAttemptAt)
+		}
+	}
+}
+
+func TestRowDiesAfterMaxAttempts(t *testing.T) {
+	pub := &stubPub{fail: map[string]bool{"bad": true}}
+	db := memDB(t)
+	app := start(t, db, &outboxmod.Options{
+		Poll: 10 * time.Millisecond, RetryBase: time.Millisecond, RetryMax: time.Millisecond, MaxAttempts: 3,
+	}, pub)
+	enqueue(t, resolve[outboxmod.Outbox](t, app), "bad")
+
+	var rec outboxmod.Record
+	waitFor(t, "the row to be marked dead", func() bool {
+		return db.First(&rec).Error == nil && rec.DeadAt != nil
+	})
+	if rec.Attempts != 3 || rec.PublishedAt != nil {
+		t.Fatalf("dead row: attempts %d, published %v; want 3 attempts, unpublished", rec.Attempts, rec.PublishedAt)
+	}
+	time.Sleep(100 * time.Millisecond) // several more ticks
+	if n := pub.callsFor(rec.ID); n != 3 {
+		t.Fatalf("dead row published %d times, want 3 (no retries once dead)", n)
+	}
+}
+
+func TestCloseReturnsWhenPublishHangs(t *testing.T) {
+	pub := &stubPub{block: make(chan struct{}), entered: make(chan struct{}, 1)}
+	app := start(t, memDB(t), &outboxmod.Options{Poll: 10 * time.Millisecond, CloseTimeout: 50 * time.Millisecond}, pub)
+	enqueue(t, resolve[outboxmod.Outbox](t, app), "stuck")
+	select {
+	case <-pub.entered:
+	case <-time.After(20 * time.Second):
+		t.Fatal("relay never published")
+	}
+	t.Cleanup(func() { close(pub.block) }) // let the abandoned publish finish
+
+	done := make(chan error, 1)
+	go func() { done <- app.Shutdown() }()
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Fatal("Shutdown = nil, want an error reporting the relay did not stop")
+		}
+	case <-time.After(20 * time.Second):
+		t.Fatal("Shutdown hung behind a blocked Publish")
+	}
+}
+
+// testTwoRelays runs two apps, each with its own relay and connection pool,
+// against one database, and checks every row is published exactly once.
+func testTwoRelays(t *testing.T, open func() *gorm.DB) {
+	const rows = 300
+	db := open()
+	recs := make([]outboxmod.Record, rows)
+	for i := range recs {
+		recs[i] = outboxmod.Record{Subject: "two.relays", Payload: []byte("x"), CreatedAt: time.Now()}
+	}
+	if err := db.CreateInBatches(recs, 100).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	opts := &outboxmod.Options{Poll: 5 * time.Millisecond, Batch: 10}
+	pubs := []*stubPub{{}, {}}
+	start(t, db, opts, pubs[0])
+	start(t, open(), opts, pubs[1])
+
+	waitFor(t, "every row to be published", func() bool {
+		var n int64
+		return db.Model(&outboxmod.Record{}).Where("published_at IS NOT NULL").Count(&n).Error == nil && n == rows
+	})
+	var total [2]int
+	for _, r := range recs {
+		a, b := pubs[0].callsFor(r.ID), pubs[1].callsFor(r.ID)
+		if a+b != 1 {
+			t.Fatalf("row %d published %d+%d times, want once", r.ID, a, b)
+		}
+		total[0] += a
+		total[1] += b
+	}
+	t.Logf("relay A published %d rows, relay B %d", total[0], total[1])
+}
+
+func TestTwoRelaysPublishEachRowOnce(t *testing.T) {
+	// A file database: shared-cache memory databases fail concurrent writers
+	// at once instead of waiting out busy_timeout.
+	path := filepath.Join(t.TempDir(), "outbox.db")
+	testTwoRelays(t, func() *gorm.DB {
+		db, err := gorm.Open(sqlite.Open(path), &gorm.Config{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		sqlDB, err := db.DB()
+		if err != nil {
+			t.Fatal(err)
+		}
+		sqlDB.SetMaxOpenConns(1) // one connection per pool, so the pragmas stick
+		t.Cleanup(func() { _ = sqlDB.Close() })
+		for _, pragma := range []string{"PRAGMA busy_timeout = 10000", "PRAGMA journal_mode = WAL"} {
+			if err := db.Exec(pragma).Error; err != nil {
+				t.Fatal(err)
+			}
+		}
+		if err := db.AutoMigrate(&outboxmod.Record{}); err != nil {
+			t.Fatal(err)
+		}
+		return db
+	})
+}
+
+// The same check against Postgres lives in the nested module
+// modules/outboxmod/pgtest, so the root module needs no Postgres driver.

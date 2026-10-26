@@ -133,10 +133,19 @@ jobs:
         options: >-
           --health-cmd "redis-cli ping"
           --health-interval 5s --health-timeout 5s --health-retries 10
+      postgres:
+        image: postgres:16
+        ports: ["5432:5432"]
+        env:
+          POSTGRES_PASSWORD: bosunci
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s --health-timeout 5s --health-retries 10
     env:
       BOSUN_AMQP_URL: amqp://guest:guest@localhost:5672/
       BOSUN_NATS_URL: nats://localhost:4222
       BOSUN_REDIS_ADDR: localhost:6379
+      BOSUN_POSTGRES_DSN: postgres://postgres:bosunci@localhost:5432/postgres?sslmode=disable
       BOSUN_S3_ENDPOINT: localhost:8333
       BOSUN_S3_KEY: bosunci
       BOSUN_S3_SECRET: bosunci-secret
@@ -177,6 +186,12 @@ jobs:
             (cd "$m" && go test -race -count=1 -v ./...) || { echo "::endgroup::"; exit 1; }
             echo "::endgroup::"
           done
+      # A test-only nested module (not released, so not in NESTED_MODULES)
+      # keeps the Postgres driver out of the root module.
+      - name: Outbox relays on Postgres
+        run: |
+          go work use ./modules/outboxmod/pgtest
+          cd modules/outboxmod/pgtest && go test -race -count=1 -v ./...
       - name: SeaweedFS logs
         if: failure()
         run: docker logs seaweedfs 2>&1 | tail -100

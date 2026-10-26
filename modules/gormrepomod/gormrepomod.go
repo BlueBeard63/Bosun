@@ -37,16 +37,22 @@ type GormDB interface {
 	Unwrap() *gorm.DB
 }
 
-// txKey tags a context that is inside a Repo.Tx callback. The value is
-// the active *gorm.DB transaction handle.
-type txKey struct{}
+// txKey tags a context that is inside a Repo.Tx callback on one database.
+// It holds that database's connection pool, so repos on the same database
+// join the transaction while a repo bound to another database (a different
+// Named DB) never runs against it. The value is the active *gorm.DB
+// transaction handle.
+type txKey struct{ pool gorm.ConnPool }
+
+func txKeyOf(db *gorm.DB) txKey { return txKey{pool: db.Config.ConnPool} }
 
 // session returns the DB handle the next operation should run against.
-// Inside a Tx block the stashed *gorm.DB (the transaction) is used as-is,
-// so participation propagates across any number of repos. Outside a Tx,
-// db.WithContext(ctx) attaches the request context for cancellation.
+// Inside a Tx block on db's database the stashed *gorm.DB (the transaction)
+// is used as-is, so participation propagates across any number of repos.
+// Otherwise db.WithContext(ctx) attaches the request context for
+// cancellation.
 func session(db *gorm.DB, ctx context.Context) *gorm.DB {
-	if tx, ok := ctx.Value(txKey{}).(*gorm.DB); ok {
+	if tx, ok := ctx.Value(txKeyOf(db)).(*gorm.DB); ok {
 		return tx
 	}
 	return db.WithContext(ctx)
@@ -99,12 +105,13 @@ func crudDelete[T any](db *gorm.DB, id any) error {
 }
 
 func runTx(db *gorm.DB, ctx context.Context, fn func(context.Context) error) error {
-	if _, ok := ctx.Value(txKey{}).(*gorm.DB); ok {
-		// already inside a transaction — reuse it
+	key := txKeyOf(db)
+	if _, ok := ctx.Value(key).(*gorm.DB); ok {
+		// already inside a transaction on this database — reuse it
 		return fn(ctx)
 	}
 	return db.Transaction(func(tx *gorm.DB) error {
-		return fn(context.WithValue(ctx, txKey{}, tx))
+		return fn(context.WithValue(ctx, key, tx))
 	})
 }
 

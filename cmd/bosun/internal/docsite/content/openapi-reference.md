@@ -12,6 +12,8 @@ This page describes exactly what `github.com/bluebeard63/bosun/openapi` generate
 | `Options` | The document's `info`, `servers` and `securitySchemes`, and which schemes routes with permissions require. Default: `&Options{}`. Override it with `registry.RegisterInstance[*openapi.Options]`. See [Options](#options). |
 | `Server{URL, Description string}` | One entry of `Options.Servers`. |
 | `SecurityScheme` | One entry of `Options.SecuritySchemes`: an OpenAPI 3.0 security scheme. See [Security](#security). |
+| `bosun.Doc(summary, description string)` | Route option that sets the operation's `summary` and `description`. It stores a `bosun.RouteDoc` under `bosun.MetaDoc` in the route's `Meta`. |
+| `bosun.RegisterDocComments(map[string]string)` | Records doc comments for the spec. Called by the file `bosun gen registry` writes. See [Descriptions](#descriptions). |
 | `DocsOptions{Path, Title, AssetsURL string}` | The interactive docs page. Default: `&DocsOptions{Path: "/docs"}`. Override it with `registry.RegisterInstance[*openapi.DocsOptions]`. See [Docs page](#docs-page). |
 | `DefaultAssetsURL` | `https://cdn.jsdelivr.net/npm/swagger-ui-dist@5.17.14`, the Swagger UI build the docs page loads by default. |
 | `OAuthFlows`, `OAuthFlow` | The flows of an `oauth2` `SecurityScheme`: `Implicit`, `Password`, `ClientCredentials` and `AuthorizationCode`, each with `AuthorizationURL`, `TokenURL`, `RefreshURL` and `Scopes map[string]string`. |
@@ -101,6 +103,7 @@ Each typed route (`bosun.Get`, `Post`, `Put`, `Delete`, `Patch`) becomes one ope
 |---|---|
 | Path key | `RouteInfo.Path`: the controller prefix, group prefixes and the route path, with `:name` written as `{name}`. A route at `"/"` under `/notes` is `/notes`. A `{name...}` wildcard is written as `{name}`, and a `{$}` end anchor is dropped, so `/files/{path...}` becomes `/files/{path}` and `/notes/{$}` becomes `/notes/`. |
 | Method key | The HTTP method, in lower case. |
+| `summary`, `description` | From `bosun.Doc` and the handler's doc comment. Left out when empty. See [Descriptions](#descriptions). |
 | `operationId` | `<Controller><Method>`: the receiver type name without a `Controller` suffix, then the method name, e.g. `NotesGet` for `(*NotesController).Get`. Handlers that aren't methods use the lower-case HTTP method and the path's words, e.g. `get_notes_id`. Operations are numbered in path and method order, and an ID that is already taken gets the first free numeric suffix (`NotesGet2`), so every ID is unique. |
 | `parameters`, path | One per `{name}` or `{name...}` segment: `in: path`, `required: true`. The schema comes from the `In` field tagged `path:"name"` (type plus [validation](./validation.md) constraints), or `{"type":"string"}` when there's no such field. |
 | `parameters`, query | One per `In` field tagged `query:"name"`: `in: query`. `required` is `true` when the field has the `required` rule. The schema comes from the field type plus its constraints. |
@@ -210,6 +213,22 @@ When two types would get the same key, both are qualified with more import path 
 | `oneof=a b` | `enum` of strings | `enum` of numbers | n/a | n/a |
 
 Constraints aren't added to properties whose schema is a `$ref` (a named struct), because OpenAPI 3.0 ignores keywords next to `$ref`. Custom `Validate()` methods can't be inspected and don't appear in the spec.
+
+## Descriptions
+
+Doc comments reach the spec through `bosun.RegisterDocComments`, which the file written by `bosun gen registry` calls. Its keys are the package import path (`main` for package `main`), a `.`, and:
+
+| Key | Collected from | Becomes |
+|---|---|---|
+| `(*T).Method`, `T.Method`, `Func` | Typed handlers: functions and methods whose second parameter is `*bosun.Req[...]` | The operation's `summary` and `description` |
+| `T` | Struct types (not aliases) | The schema's `description` |
+| `T.Field` | Exported struct fields: the comment above the field, else the one at the end of its line | The property's `description`, or the parameter's for `path`, `query` and `header` fields |
+
+Comments are collected from every package in the module except `_test.go` files, other binaries' `main` packages and the directories `bosun gen registry` skips. Directives such as `//go:generate` are dropped. The generator only writes the call when the module requires bosun v0.8.0 or later or replaces bosun, and never with `--no-docs`.
+
+An operation's `summary` is the comment's first sentence, joined onto one line: it ends at the first `.` followed by a space or line break and not by a lower-case letter, or at the end of the first paragraph. The rest is the `description`. A non-empty `bosun.Doc` summary or description replaces the one from the comment. Empty values are left out of the spec.
+
+A generic type is keyed without its type parameters, so `Page[T]`'s comment describes every instance's schema. A field's key uses the struct that declares it, so a promoted field of an embedded struct is described by that struct's comment for the field.
 
 ## Source scanning rules
 

@@ -41,7 +41,11 @@ func structSchema(t reflect.Type, schemas *schemaSet) map[string]any {
 		if f.quoted {
 			schema = map[string]any{"type": "string"}
 		}
-		props[f.name] = decorate(constrain(schema, f.sf.Type, rules), f.sf, true)
+		prop := decorate(constrain(schema, f.sf.Type, rules), f.sf, true)
+		if doc := fieldDoc(f.owner, f.sf); doc != "" {
+			prop = withExtras(prop, map[string]any{"description": doc})
+		}
+		props[f.name] = prop
 		if hasRule(rules, "required") {
 			required = append(required, f.name)
 		}
@@ -49,6 +53,11 @@ func structSchema(t reflect.Type, schemas *schemaSet) map[string]any {
 	out := map[string]any{"type": "object", "properties": props}
 	if len(required) > 0 {
 		out["required"] = required
+	}
+	if k := typeKey(t); k != "" {
+		if doc := bosun.DocComment(k); doc != "" {
+			out["description"] = doc
+		}
 	}
 	return out
 }
@@ -102,6 +111,7 @@ func exampleValue(raw string, schema any) any {
 type jsonField struct {
 	name   string
 	sf     reflect.StructField
+	owner  reflect.Type // struct that declares sf (an embedded one if promoted)
 	index  []int
 	tagged bool // name came from the json tag
 	quoted bool // ",string" option on a number or bool: sent as a string
@@ -159,7 +169,7 @@ func jsonFields(t reflect.Type) []jsonField {
 					next = append(next, level{t: ft, index: index})
 					continue
 				}
-				f := jsonField{name: name, sf: sf, index: index, tagged: name != ""}
+				f := jsonField{name: name, sf: sf, owner: lv.t, index: index, tagged: name != ""}
 				if name == "" {
 					f.name = sf.Name
 				}

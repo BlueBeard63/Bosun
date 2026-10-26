@@ -142,9 +142,13 @@ func (c *SpecController) build(routes []bosun.RouteInfo) map[string]any {
 			if sf, ok := fieldByTag(rt.In, "path", p); ok {
 				schema = decorate(constrain(schemaFor(sf.Type, schemas), sf.Type, fieldRules(sf)), sf, false)
 			}
-			params = append(params, map[string]any{
+			param := map[string]any{
 				"name": p, "in": "path", "required": true, "schema": schema,
-			})
+			}
+			if sf, ok := fieldByTag(rt.In, "path", p); ok {
+				setDoc(param, rt.In, sf)
+			}
+			params = append(params, param)
 		}
 		// query + header params from the In type
 		if rt.In.Kind() == reflect.Struct {
@@ -156,10 +160,12 @@ func (c *SpecController) build(routes []bosun.RouteInfo) map[string]any {
 						continue // binding uses the first tag in path, query, header order
 					}
 					rules := fieldRules(sf)
-					params = append(params, map[string]any{
+					param := map[string]any{
 						"name": name, "in": in, "required": hasRule(rules, "required"),
 						"schema": decorate(constrain(schemaFor(sf.Type, schemas), sf.Type, rules), sf, false),
-					})
+					}
+					setDoc(param, rt.In, sf)
+					params = append(params, param)
 				}
 			}
 		}

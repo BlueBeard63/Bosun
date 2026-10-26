@@ -71,12 +71,15 @@ bosun gen registry --dir ./cmd/worker # write into another main package
 bosun gen registry --check            # CI: fail if the file is stale
 ```
 
+When the module requires bosun v0.8.0 or later, or replaces bosun with a local checkout, the file also registers the doc comments of typed handlers and of struct types and their fields with `bosun.RegisterDocComments`. The OpenAPI spec uses them for summaries and descriptions (see [describe operations and schemas](./openapi.md#describe-operations-and-schemas)). For an older bosun they are left out, since the call doesn't exist there.
+
 | Flag | Default | Description |
 | --- | --- | --- |
 | `--dir` | `.` | Package directory to write into. |
 | `--out`, `-o` | `zz_bosun_registry.go` | Generated file name, relative to `--dir`. |
 | `--check` | `false` | Exit non-zero if the file is missing or out of date, without writing it. |
 | `--tags` | none | Comma-separated build tags to satisfy, as for `go build -tags`. Files excluded by build constraints are skipped. |
+| `--no-docs` | `false` | Leave the doc comments out of the file. |
 
 ## bosun new
 

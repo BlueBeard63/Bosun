@@ -65,6 +65,8 @@ import (
 
 Commit the generated file like any other source. Each import is annotated with what the package registers, so a code review shows exactly what a new package adds to the app. Services created with `bosun new service` are already set up this way.
 
+With bosun v0.8.0 or later, the file also carries the module's doc comments on typed handlers and on struct types and fields, in a `bosun.RegisterDocComments` call, so the [OpenAPI spec](./openapi.md#describe-operations-and-schemas) can describe your operations and schemas. Editing one of those comments makes the file stale too. `bosun gen registry --no-docs` leaves them out.
+
 ### Keep it current
 
 Run `go generate ./...` after adding, removing or moving a package that registers with Bosun. To catch a forgotten regeneration, check the file in CI:

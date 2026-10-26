@@ -175,6 +175,36 @@ Schemas are generated from your `In` and `Out` types:
 
 Schemas are keyed by package and type name, so `users.Out` is `UsersOut` and two `Out` types in different packages get separate entries. Types in package `main` keep their bare name. The [reference](./openapi-reference.md#schema-names) has the exact rules.
 
+## Describe operations and schemas
+
+Write doc comments, as you would anyway. With [`bosun gen registry`](./registration.md) generating your registry file, the spec picks them up:
+
+```go
+// Get returns one note.
+//
+// Notes are cached for a minute, so an edit can take that long to show.
+func (c *NotesController) Get(ctx context.Context, req *bosun.Req[NoteID]) (Note, error)
+
+// Note is a saved note.
+type Note struct {
+    ID    int    `json:"id"`
+    Title string `json:"title"` // Shown in lists.
+}
+```
+
+- A **typed handler's** comment becomes its operation's `summary` (the first sentence, on one line) and `description` (the rest).
+- A **struct type's** comment becomes its schema's `description`, and an exported **field's** comment (above it, or at the end of its line) its property's `description`, or its parameter's for `path`, `query` and `header` fields.
+
+Run `go generate ./...` after editing comments, so the registry file carries the new text. Routes, types and fields without comments get no `summary` or `description`.
+
+To set or override the text on the route itself, pass `bosun.Doc`:
+
+```go
+bosun.Delete(r, "/{id}", c.Delete, bosun.Doc("Delete a note", "Deleting a missing note succeeds."))
+```
+
+Each non-empty argument replaces what the comment gave, so `bosun.Doc("Delete a note", "")` keeps the comment's description. `bosun.Doc` works without the generated file, for example in tests or with hand-written imports.
+
 ## Set the title, version and servers
 
 Register your own `openapi.Options` before `Start`:

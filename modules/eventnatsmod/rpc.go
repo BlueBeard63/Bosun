@@ -24,6 +24,9 @@ func (b *Bus) Request(ctx context.Context, subject string, data []byte, opts ...
 	for k, v := range cfg.Headers {
 		msg.Header.Set(k, v)
 	}
+	if msg.Header.Get(nats.MsgIdHdr) == "" {
+		msg.Header.Set(nats.MsgIdHdr, newID())
+	}
 	reply, err := b.nc.RequestMsgWithContext(ctx, msg)
 	if err != nil {
 		if errors.Is(err, nats.ErrNoResponders) {
@@ -54,20 +57,9 @@ func (b *Bus) Respond(ctx context.Context, subject string, h eventmod.RequestHan
 		}
 		_ = b.nc.PublishMsg(rm)
 	}
-	var (
-		sub *nats.Subscription
-		err error
-	)
-	if cfg.Group != "" {
-		sub, err = b.nc.QueueSubscribe(subject, cfg.Group, cb)
-	} else {
-		sub, err = b.nc.Subscribe(subject, cb)
-	}
+	sub, err := b.subscribe(subject, cfg.Group, cb)
 	if err != nil {
 		return nil, err
 	}
-	b.mu.Lock()
-	b.subs = append(b.subs, sub)
-	b.mu.Unlock()
-	return &subHandle{sub: sub}, nil
+	return &subHandle{subs: []*nats.Subscription{sub}}, nil
 }

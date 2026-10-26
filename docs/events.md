@@ -71,7 +71,7 @@ func (m *Mailer) Close() error { return m.sub.Unsubscribe() }
 
 ## At-least-once delivery and idempotency
 
-Delivery is at-least-once across every backend: a message may be redelivered after a handler error or a consumer crash. Handlers must therefore be idempotent, meaning that processing the same message twice has the same effect as processing it once. Each delivery carries a `Message.ID` and a 1-based `Message.Attempt` so a handler can detect and skip a duplicate. Returning an error from a typed handler nacks the message so the backend redelivers it; returning nil acks it.
+Delivery is at-least-once across every backend except core NATS, which redelivers after a handler error but not after a crash (see [backends](./event-backends.md#delivery-and-redelivery)): a message may be redelivered after a handler error or a consumer crash. Handlers must therefore be idempotent, meaning that processing the same message twice has the same effect as processing it once. Each delivery carries a `Message.ID` and a 1-based `Message.Attempt` so a handler can detect and skip a duplicate. Returning an error from a typed handler nacks the message so the backend redelivers it; returning nil acks it.
 
 ## Consumer groups
 

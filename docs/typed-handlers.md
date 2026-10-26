@@ -100,11 +100,70 @@ func (c *Items) Delete(ctx context.Context, req *bosun.Req[DeleteIn]) (struct{},
 }
 ```
 
-For a custom `Content-Type` or streaming, use the raw router methods instead; the [files guide](./files.md) shows a worked example.
+A `Content-Type` set with `bosun.ResponseHeader` (see below) replaces the default in this table. For streaming, use the raw router methods instead; the [files guide](./files.md) shows a worked example.
+
+## Status, headers and cookies
+
+A typed handler answers `200` on success unless told otherwise. For a fixed status, pass the `bosun.Status(code)` route option. OpenAPI generation documents that code as the success response.
+
+```go
+bosun.Post(r, "/notes", c.Create, bosun.Status(http.StatusCreated))
+bosun.Delete(r, "/notes/{id}", c.Delete, bosun.Status(http.StatusNoContent))
+```
+
+To decide at runtime, or to set response headers and cookies, call the response helpers with the handler's `ctx`, or with any context derived from it:
+
+```go
+func (c *Notes) Create(ctx context.Context, req *bosun.Req[NewNote]) (Note, error) {
+    n, err := c.store.Create(ctx, req.Body)
+    if err != nil {
+        return Note{}, err
+    }
+    bosun.SetStatus(ctx, http.StatusCreated)               // overrides bosun.Status
+    bosun.ResponseHeader(ctx).Set("Location", "/notes/"+n.ID)
+    return n, nil
+}
+
+func (c *Auth) Login(ctx context.Context, req *bosun.Req[LoginIn]) (LoginOut, error) {
+    sess, err := c.auth.Login(ctx, req.Body.Email, req.Body.Password)
+    if err != nil {
+        bosun.ResponseHeader(ctx).Set("WWW-Authenticate", `Bearer realm="api"`)
+        return LoginOut{}, bosun.E(http.StatusUnauthorized, "invalid credentials", err)
+    }
+    bosun.SetCookie(ctx, &http.Cookie{Name: "session", Value: sess.ID, HttpOnly: true, Secure: true})
+    return LoginOut{Name: sess.Name}, nil
+}
+```
+
+The rules:
+
+- `SetStatus` and `Status` take a `2xx` or `3xx` code. An invalid code panics in `SetStatus` and fails `app.Start()` for `Status`. They apply only on success; a returned error still decides the error response's status.
+- `204 No Content`, `205 Reset Content` and `304 Not Modified` are sent with no body, whatever `Out` holds.
+- Headers and cookies apply to error responses too, so `Retry-After` and `WWW-Authenticate` work with `bosun.E`. An error response is always sent as `application/json`.
+- The helpers work only with the context the handler received. The embedded `req.Context()` doesn't carry them, and outside a typed handler they do nothing.
 
 ## Body content types
 
 The body decoder chooses its strategy from the request `Content-Type`. `application/json`, any `+json` type such as `application/merge-patch+json`, or an empty content type is JSON-decoded into the body; media types are matched case-insensitively and parameters such as `charset` are ignored. `application/x-www-form-urlencoded` is parsed with `ParseForm` and `multipart/form-data` with `ParseMultipartForm`; both populate `form:` tags but do not JSON-decode. A body with any other content type is refused with `415 Unsupported Media Type`; a request with no body is not checked, so tag-based fields still bind. File uploads are read through `req.MultipartReader()` or `req.FormFile(...)` yourself, since `form:` tags bind only string fields.
+
+## Body size limit
+
+A typed route reads at most 1 MiB (`bosun.DefaultMaxBody`) of request body. This covers JSON, form and multipart bodies and `string` In types. A larger body is answered with `413 Request Entity Too Large` and the usual error JSON, and the handler is not called:
+
+```json
+{"error":"request body too large"}
+```
+
+A body whose `Content-Length` is over the limit is refused before any of it is read. Otherwise the body is read through `http.MaxBytesReader` until the limit is hit. Change the limit for the whole app with `bosun.WithMaxBody(n)`, or for one route with the `bosun.MaxBody(n)` route option, which wins over the app setting. `n <= 0` removes the limit.
+
+```go
+app := bosun.New(bosun.WithMaxBody(4 << 20)) // 4 MiB for every typed route
+
+bosun.Post(r, "/avatar", c.Upload, bosun.MaxBody(20<<20)) // 20 MiB for this one
+bosun.Post(r, "/hook", c.Hook, bosun.MaxBody(64<<10))     // 64 KiB for this one
+```
+
+The app limit applies only to bodies the framework parses. A route whose `In` is `struct{}` reads `req.Request.Body` itself (for example to stream a large upload), so it has no limit unless it sets `bosun.MaxBody`, which then caps the raw body too. Raw handlers mounted with `r.Get`, `r.Post` and so on are never limited.
 
 ## Tag binding reference
 
@@ -118,7 +177,9 @@ type Example struct {
 }
 ```
 
-Path, query, header, and form tags support these scalar kinds: `string`, the signed and unsigned integers, `bool`, `float32`, and `float64`. Any other kind (slices, maps, `time.Time`) can't be bound from a tag and answers `500`, because it's a mistake in the code rather than bad input. For richer parsing, take the value as a string and parse it in the handler.
+Path, query, header, and form tags support these scalar kinds: `string`, the signed and unsigned integers, `bool`, `float32`, and `float64`. A pointer to one of them (`*int`) stays `nil` when the value is absent, so "not sent" can be told apart from zero. Query, header, and form tags also take a slice of a scalar kind, filled from every value of a repeated key, so `?tag=a&tag=b` binds `Tags []string` to `["a", "b"]`. Empty values count as absent throughout.
+
+Any other type (maps, structs, `time.Time`, or a slice on a path tag) can't be bound from a tag. Because that's a mistake in the code rather than bad input, `app.Start()` fails and names the field. For richer parsing, take the value as a string and parse it in the handler.
 
 ## Validation and input errors
 
@@ -133,3 +194,11 @@ The [validation guide](./validation.md) covers the rules, optional fields, neste
 ## Auditing
 
 When an `Auditor` is registered, every typed request emits an `AuditEvent` containing request metadata, a redacted snapshot of `req.Body`, and either a redacted snapshot of the response or the full error with its origin. A field is redacted when it is tagged `audit:"-"` or when its name contains a sensitive word such as `password`, `secret`, `token`, or `authorization`. Only `req.Body` is walked, so headers and cookies never leak unless you copy them into the body through a binding tag. The [errors guide](./errors.md) covers the error side of the audit event.
+
+Redacting copies the whole body and response, which is costly for large list endpoints. An auditor that keeps only some events can also implement `bosun.AuditFilter`. Its `ShouldAudit(ctx, ev)` method runs first, with every event field set except `Request` and `Response`. When it returns `false` the event is dropped and nothing is redacted.
+
+```go
+func (a *DBAuditor) ShouldAudit(_ context.Context, ev bosun.AuditEvent) bool {
+    return ev.Method != http.MethodGet || ev.Status >= 400 // skip successful reads
+}
+```

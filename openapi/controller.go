@@ -88,16 +88,21 @@ func (c *SpecController) build(routes []bosun.RouteInfo) map[string]any {
 
 	for _, rt := range routes {
 		oaPath, pathParams := convertPath(rt.Path)
-		responses := map[string]any{
-			"200": map[string]any{
-				"description": "OK",
-				"content": map[string]any{
-					"application/json": map[string]any{
-						"schema": schemaRef(rt.Out, schemas),
-					},
-				},
-			},
+		// The success response uses the route's bosun.Status, default 200;
+		// statuses that forbid a body (204, 205, 304) have no content.
+		success := http.StatusOK
+		if rt.Status != 0 {
+			success = rt.Status
 		}
+		ok := map[string]any{"description": http.StatusText(success)}
+		if success != http.StatusNoContent && success != http.StatusResetContent && success != http.StatusNotModified {
+			ok["content"] = map[string]any{
+				"application/json": map[string]any{
+					"schema": schemaRef(rt.Out, schemas),
+				},
+			}
+		}
+		responses := map[string]any{strconv.Itoa(success): ok}
 		// Error responses come from three runtime-capable layers:
 		// declared via bosun.Errors(...), discovered by scanning handler
 		// source (on disk in dev, embedded via openapi.Sources in prod),

@@ -216,7 +216,7 @@ func (c *$T) do(ctx context.Context, method, pattern string, params map[string]s
 		b, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
 		return fmt.Errorf("%s %s: %s: %s", method, path.String(), resp.Status, strings.TrimSpace(string(b)))
 	}
-	if out == nil {
+	if out == nil || resp.StatusCode == http.StatusNoContent { // bosun.Status(204) sends no body
 		return nil
 	}
 	// A string or []byte Out is written raw, not as JSON.

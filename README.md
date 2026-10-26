@@ -151,3 +151,11 @@ go test ./...
 ```
 
 The GORM tests use SQLite, which needs cgo (a C compiler on your `PATH`). The broker and object-store drivers have integration tests that run only when a server is available, via env vars such as `BOSUN_NATS_URL`, `BOSUN_REDIS_ADDR`, `BOSUN_AMQP_URL`, and `BOSUN_S3_ENDPOINT`; without them those tests skip. Nested driver modules are separate Go modules, so test them from their own directories inside the workspace described under [Repository layout](#repository-layout).
+
+## Licence
+
+Copyright 2026 BlueBeard63.
+
+Bosun is licensed under the [Apache License, Version 2.0](LICENSE). You can use it in any project, open or closed source, commercial or not, as long as you keep the copyright and licence notices. Each nested module (`cmd/bosun` and `modules/*`) carries its own copy of the licence, because Go module downloads include only the module's own directory.
+
+Contributions are accepted under the same licence, with a `Signed-off-by` line. See [CONTRIBUTING.md](CONTRIBUTING.md#signing-off-your-commits-dco).

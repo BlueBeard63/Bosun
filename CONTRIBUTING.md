@@ -20,6 +20,16 @@ The nested modules require the root module by its released version. That is why 
 - Open feature PRs against the integration branch with `Refs #N` in the body, and squash-merge them.
 - When the release is ready, open one PR from the integration branch into `master` with `Closes #N` for every issue, and merge it with a merge commit.
 
+## Signing off your commits (DCO)
+
+Bosun is licensed under [Apache-2.0](LICENSE), and contributions are accepted under the same licence. Sign off every commit to certify the [Developer Certificate of Origin](https://developercertificate.org/), i.e. that you wrote the change or have the right to submit it under Apache-2.0:
+
+```sh
+git commit -s -m "feat: ..."
+```
+
+This adds `Signed-off-by: Your Name <you@example.com>` to the commit message. If you forget, `git commit --amend -s` fixes the last commit, and `git rebase --signoff <base>` fixes a whole branch. Pull requests with unsigned commits can't be merged.
+
 ## Running the checks locally
 
 CI runs these checks; you can run the same ones yourself before opening a PR:

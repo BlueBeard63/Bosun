@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"testing"
@@ -141,6 +142,55 @@ func TestPutCancelledStopsAndCleansUp(t *testing.T) {
 	}
 	if _, _, err := s.Get(context.Background(), "a/c.txt"); !errors.Is(err, storemod.ErrNotFound) {
 		t.Fatalf("get after cancelled put = %v, want ErrNotFound", err)
+	}
+}
+
+func TestListOnlyVisitsPrefix(t *testing.T) {
+	s := newStore(t, &storefsmod.Options{})
+	ctx := context.Background()
+	for _, k := range []string{"a/b/1.txt", "a/b/c/2.txt", "a/bc/3.txt", "a/x/4.txt", "a/5.txt", "z/6.txt"} {
+		if err := s.Put(ctx, k, strings.NewReader(k)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	root := filepath.Join(s.Opts.Root, "obj")
+	cases := []struct {
+		prefix string
+		within string // every visited path must be this directory or under it
+		want   []string
+	}{
+		{"a/b/", "a/b", []string{"a/b/1.txt", "a/b/c/2.txt"}},
+		{"a/b", "a", []string{"a/b/1.txt", "a/b/c/2.txt", "a/bc/3.txt"}},
+		{"a/b/c", "a/b", []string{"a/b/c/2.txt"}},
+		{"nope/", "nope", nil},
+	}
+	for _, c := range cases {
+		var visited []string
+		restore := storefsmod.SetVisitHook(func(p string) {
+			rel, _ := filepath.Rel(root, p)
+			visited = append(visited, filepath.ToSlash(rel))
+		})
+		objs, err := s.List(ctx, c.prefix)
+		restore()
+		if err != nil {
+			t.Fatalf("list %q: %v", c.prefix, err)
+		}
+		var got []string
+		for _, o := range objs {
+			got = append(got, o.Key)
+		}
+		sort.Strings(got)
+		if strings.Join(got, ",") != strings.Join(c.want, ",") {
+			t.Fatalf("list %q = %v, want %v", c.prefix, got, c.want)
+		}
+		for _, v := range visited {
+			if v != c.within && !strings.HasPrefix(v, c.within+"/") {
+				t.Fatalf("list %q visited %s, outside %s/", c.prefix, v, c.within)
+			}
+			if strings.HasPrefix(v, "a/x/") {
+				t.Fatalf("list %q descended into a/x/: %s", c.prefix, v)
+			}
+		}
 	}
 }
 

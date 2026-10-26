@@ -18,6 +18,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"io/fs"
 	"mime"
 	"net/url"
 	"os"
@@ -172,18 +173,38 @@ func (s *FSStore) Delete(ctx context.Context, key string) error {
 	return nil
 }
 
-// List returns objects whose key begins with prefix.
+// testHookVisit, when set by tests, sees every path List visits.
+var testHookVisit func(p string)
+
+// List returns objects whose key begins with prefix, at any depth. The walk
+// starts at the deepest directory the prefix covers and skips directories
+// that cannot hold a match, and only matching objects are stat'ed and have
+// their metadata read.
 func (s *FSStore) List(ctx context.Context, prefix string) ([]storemod.Object, error) {
 	root := filepath.Join(s.Opts.Root, "obj")
+	start := root
+	if i := strings.LastIndex(prefix, "/"); i > 0 {
+		// A prefix whose directory part is not a clean key matches nothing
+		// under that directory; walking from root keeps traversal impossible.
+		if dir := prefix[:i]; cleanKey(dir) == dir && !strings.Contains(dir, `\`) {
+			start = filepath.Join(root, filepath.FromSlash(dir))
+		}
+	}
 	var out []storemod.Object
-	err := filepath.Walk(root, func(p string, info os.FileInfo, err error) error {
+	err := filepath.WalkDir(start, func(p string, d fs.DirEntry, err error) error {
 		if err != nil {
 			if os.IsNotExist(err) {
 				return nil
 			}
 			return err
 		}
-		if info.IsDir() || strings.HasPrefix(info.Name(), tmpPrefix) {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if testHookVisit != nil {
+			testHookVisit(p)
+		}
+		if p == start && d.IsDir() {
 			return nil
 		}
 		rel, err := filepath.Rel(root, p)
@@ -191,8 +212,21 @@ func (s *FSStore) List(ctx context.Context, prefix string) ([]storemod.Object, e
 			return err
 		}
 		key := filepath.ToSlash(rel)
-		if !strings.HasPrefix(key, prefix) {
+		if d.IsDir() {
+			if dk := key + "/"; !strings.HasPrefix(dk, prefix) && !strings.HasPrefix(prefix, dk) {
+				return filepath.SkipDir
+			}
 			return nil
+		}
+		if strings.HasPrefix(d.Name(), tmpPrefix) || !strings.HasPrefix(key, prefix) {
+			return nil
+		}
+		info, err := d.Info()
+		if err != nil {
+			if os.IsNotExist(err) {
+				return nil // removed during the walk
+			}
+			return err
 		}
 		out = append(out, storemod.Object{Key: key, Size: info.Size(), ModTime: info.ModTime(), ContentType: s.contentType(key)})
 		return nil

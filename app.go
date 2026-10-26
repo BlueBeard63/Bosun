@@ -30,6 +30,7 @@ type App struct {
 
 	shutdownTimeout time.Duration        // grace period for in-flight requests
 	serverConfig    []func(*http.Server) // set via WithHTTPServer
+	maxBody         int64                // typed-route body limit; set via WithMaxBody
 }
 
 // New creates an App, applies options, then applies every enabled
@@ -44,6 +45,7 @@ func New(opts ...Option) *App {
 		prefixes: map[reflect.Type]string{},
 
 		shutdownTimeout: DefaultShutdownTimeout,
+		maxBody:         DefaultMaxBody,
 	}
 	for _, o := range opts {
 		o(app)

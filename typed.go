@@ -94,12 +94,15 @@ func Patch[In, Out any](r *Router, p string, h func(context.Context, *Req[In]) (
 func typed[In, Out any](r *Router, method, p string, h func(context.Context, *Req[In]) (Out, error), opts []RouteOpt) {
 	var mws []MWRef
 	var declared []int
+	routeMaxBody, hasRouteMaxBody := int64(0), false
 	for _, o := range opts {
 		switch v := o.(type) {
 		case MWRef:
 			mws = append(mws, v)
 		case declaredErrors:
 			declared = append(declared, v...)
+		case maxBody:
+			routeMaxBody, hasRouteMaxBody = int64(v), true
 		}
 	}
 
@@ -132,6 +135,17 @@ func typed[In, Out any](r *Router, method, p string, h func(context.Context, *Re
 	outIsBytes := outType.Kind() == reflect.Slice && outType.Elem().Kind() == reflect.Uint8 &&
 		!outType.Implements(reflect.TypeFor[json.Marshaler]())
 	outIsEmptyStruct := outType.Kind() == reflect.Struct && outType.NumField() == 0
+
+	// The app limit covers bodies the framework parses; a struct{} In leaves
+	// the body to the handler (e.g. streaming uploads), so only an explicit
+	// MaxBody caps it.
+	bodyLimit := r.app.maxBody
+	if isEmptyStruct {
+		bodyLimit = 0
+	}
+	if hasRouteMaxBody {
+		bodyLimit = routeMaxBody
+	}
 
 	recordRoute(r.app, RouteInfo{
 		Method:   method,
@@ -172,13 +186,25 @@ func typed[In, Out any](r *Router, method, p string, h func(context.Context, *Re
 		var handlerErr error
 		var bindErr error
 
+		if bodyLimit > 0 && req.Body != nil {
+			if req.ContentLength > bodyLimit {
+				// Declared too large: refuse without reading any of it.
+				bindErr = errBodyTooLarge(fmt.Errorf("content length %d exceeds %d", req.ContentLength, bodyLimit))
+			}
+			req.Body = http.MaxBytesReader(w, req.Body, bodyLimit)
+		}
+
 		switch {
+		case bindErr != nil:
+			// rejected above
 		case isEmptyStruct:
 			// nothing to parse
 		case isString:
 			if req.Body != nil {
 				b, err := io.ReadAll(req.Body)
-				if err != nil {
+				if bodyTooLarge(err) {
+					bindErr = errBodyTooLarge(err)
+				} else if err != nil {
 					bindErr = err
 				} else {
 					reflect.ValueOf(&typedReq.Body).Elem().SetString(string(b))

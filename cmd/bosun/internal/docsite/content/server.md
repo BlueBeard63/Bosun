@@ -40,6 +40,8 @@ app := bosun.New(
 
 `WithHTTPServer` receives the `*http.Server` that `Run`, `RunContext` and `Serve` use, with `Handler` already set to `app.Handler()`. Use it for timeouts, `TLSConfig`, `ErrorLog` or `MaxHeaderBytes`.
 
+The server starts with `ReadHeaderTimeout` set to `bosun.DefaultReadHeaderTimeout` (10 seconds), so a client that sends its headers slowly can't hold a connection open forever. Set it in `WithHTTPServer` to change it. Request bodies are capped separately, per typed route; see [body size limit](./typed-handlers.md#body-size-limit).
+
 In Kubernetes, set the shutdown timeout below `terminationGracePeriodSeconds` (default 30s) so draining completes before the pod is killed.
 
 ## Controlling when to stop

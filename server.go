@@ -72,7 +72,10 @@ func (a *App) Serve(ctx context.Context, ln net.Listener) error {
 
 // serve runs the started app on ln and owns the graceful-shutdown sequence.
 func (a *App) serve(ctx context.Context, ln net.Listener) error {
-	srv := &http.Server{Handler: a.Handler()}
+	srv := &http.Server{
+		Handler:           a.Handler(),
+		ReadHeaderTimeout: DefaultReadHeaderTimeout, // bound slow-header clients
+	}
 	for _, configure := range a.serverConfig {
 		configure(srv)
 	}

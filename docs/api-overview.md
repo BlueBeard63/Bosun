@@ -23,7 +23,7 @@ if err := app.Run(":8080"); err != nil {
 }
 ```
 
-Several options shape an app at construction. `bosun.Disable(pkgPath)` uninstalls every registration under an import path. `bosun.OverridePrefix[T](prefix)` remounts a controller at a different prefix than it declared. `bosun.WithMiddleware(mws ...MWRef)` registers app-wide middleware that wraps every request; see [middleware](./middleware.md#app-wide-middleware). `bosun.WithShutdownTimeout(d)` sets the drain grace period (default `bosun.DefaultShutdownTimeout`, 10s), and `bosun.WithHTTPServer(func(*http.Server))` customizes the server that `Run` uses.
+Several options shape an app at construction. `bosun.Disable(pkgPath)` uninstalls every registration under an import path. `bosun.OverridePrefix[T](prefix)` remounts a controller at a different prefix than it declared. `bosun.WithMiddleware(mws ...MWRef)` registers app-wide middleware that wraps every request; see [middleware](./middleware.md#app-wide-middleware). `bosun.WithShutdownTimeout(d)` sets the drain grace period (default `bosun.DefaultShutdownTimeout`, 10s), and `bosun.WithHTTPServer(func(*http.Server))` customizes the server that `Run` uses. `bosun.WithMaxBody(n)` sets the request body limit for typed routes (default `bosun.DefaultMaxBody`, 1 MiB).
 
 ## Self-registration
 
@@ -35,7 +35,7 @@ These functions run at package-init time through `var _ = ...` and return a mean
 
 ## Typed routes and errors
 
-The five typed generics share the signature `func[In, Out any](r *Router, path string, h Handler[In, Out], opts ...RouteOpt)`, and type inference means you never write the type parameters. `bosun.Errors(codes ...int) RouteOpt` declares extra status codes for OpenAPI. `bosun.E(status, publicMessage, cause) *Error` returns a controlled error: the client sees the status and message while the cause is recorded for the audit log with the call site. Any other error becomes a 500. The [typed handlers](./typed-handlers.md) and [errors](./errors.md) guides cover these fully.
+The five typed generics share the signature `func[In, Out any](r *Router, path string, h Handler[In, Out], opts ...RouteOpt)`, and type inference means you never write the type parameters. `bosun.Errors(codes ...int) RouteOpt` declares extra status codes for OpenAPI, and `bosun.MaxBody(n int64) RouteOpt` overrides the body limit for one route. `bosun.E(status, publicMessage, cause) *Error` returns a controlled error: the client sees the status and message while the cause is recorded for the audit log with the call site. Any other error becomes a 500. The [typed handlers](./typed-handlers.md) and [errors](./errors.md) guides cover these fully.
 
 ## Context values and dynamic values
 

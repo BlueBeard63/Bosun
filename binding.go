@@ -16,7 +16,8 @@ import (
 // bind fills *In from the request body and from struct tags. Body decoding
 // depends on Content-Type: JSON for application/json, any *+json type, or
 // none; form for application/x-www-form-urlencoded and multipart/form-data.
-// A body of any other type is refused with 415. Per-field
+// A body of any other type is refused with 415, and one that runs past the
+// route's size limit (see WithMaxBody) with 413. Per-field
 // sources are selected by the first matching tag in this order:
 // `path:"x"`, `query:"x"`, `header:"X-Foo"`, `form:"x"`.
 //
@@ -37,6 +38,9 @@ func bind(req *http.Request, in any) error {
 		} else {
 			err = req.ParseForm()
 		}
+		if bodyTooLarge(err) {
+			return errBodyTooLarge(err)
+		}
 		if err != nil {
 			return &ValidationError{Message: "invalid form body"}
 		}
@@ -44,6 +48,9 @@ func bind(req *http.Request, in any) error {
 		// nothing to decode
 	case ct == "" || (mtErr == nil && (mt == "application/json" || strings.HasSuffix(mt, "+json"))):
 		if err := json.NewDecoder(req.Body).Decode(in); err != nil {
+			if bodyTooLarge(err) {
+				return errBodyTooLarge(err)
+			}
 			return jsonBindError(err)
 		}
 	default:

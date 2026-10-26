@@ -65,15 +65,28 @@ func (s *Orders) Place(ctx context.Context, o Order) error {
 
 ## The relay
 
-The relay is a background service that polls for rows whose `PublishedAt` is null, publishes each through `eventmod.Publisher`, and stamps it published. A publish failure is left for the next tick, so an event is retried until it is sent. The poll interval and batch size are configurable.
+The relay is a background service that polls for rows that are due, publishes each through `eventmod.Publisher`, and stamps it published. Zero fields in `Options` take the defaults shown.
 
 ```go
 registry.RegisterInstance[*outboxmod.Options](app.Reg, &outboxmod.Options{
-    Poll:  time.Second,
-    Batch: 100,
+    Poll:         time.Second,
+    Batch:        100,
+    Lease:        time.Minute,
+    RetryBase:    time.Second,
+    RetryMax:     5 * time.Minute,
+    MaxAttempts:  20,
+    CloseTimeout: bosun.DefaultShutdownTimeout,
 })
 ```
 
+A failed publish is recorded on the row (`Attempts`, `LastError`) and retried with exponential backoff from `RetryBase` up to `RetryMax`, so failing rows step aside and newer rows keep flowing. After `MaxAttempts` failures the row is marked dead (`DeadAt` is set) and no longer retried; clear `DeadAt` to retry it. Rows are no longer published strictly in id order once one fails.
+
+Several replicas can run the relay against one database. Before publishing a batch the relay claims it with a conditional `UPDATE` that pushes the rows' `NextAttemptAt` forward by `Lease` only where they are still due, so each row is claimed by one relay: Postgres and MySQL lock the rows and re-check the condition after a competing update commits, and SQLite serializes writers. If a relay dies mid-batch, its rows become due again when the lease expires; keep `Lease` above the time a batch takes to publish. Claiming is atomic only with the GORM repo from `For()`; with your own repo via `Register()`, run a single relay.
+
+On shutdown the relay finishes the row it is publishing and hands the rest of its batch back. If that takes longer than `CloseTimeout` (for example, a broker that hangs), it cancels the publish and `Close` returns an error rather than blocking shutdown.
+
+Existing deployments pick up the new columns with `AutoMigrate`.
+
 ## Idempotency
 
-Because the relay may publish a row more than once (for example, if it crashes after publishing but before stamping the row), delivery is at-least-once. The relay sets the outbox row id on each message as the `Bosun-Outbox-Id` header, so a consumer can record processed ids and skip duplicates. This is the same idempotency requirement as the rest of the [event system](./events.md), and it is a hard requirement, not an optimization.
+Because the relay may publish a row more than once (for example, if it crashes after publishing but before stamping the row, or a batch outlives its lease), delivery is at-least-once. The relay sets the outbox row id on each message as the `Bosun-Outbox-Id` header, so a consumer can record processed ids and skip duplicates. This is the same idempotency requirement as the rest of the [event system](./events.md), and it is a hard requirement, not an optimization.

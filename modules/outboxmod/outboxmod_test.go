@@ -3,7 +3,6 @@ package outboxmod_test
 import (
 	"context"
 	"errors"
-	"os"
 	"path/filepath"
 	"strconv"
 	"sync"
@@ -17,7 +16,6 @@ import (
 	"github.com/bluebeard63/bosun/modules/outboxmod"
 	"github.com/bluebeard63/bosun/modules/repomod"
 	"github.com/bluebeard63/bosun/registry"
-	"gorm.io/driver/postgres"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 )
@@ -346,31 +344,5 @@ func TestTwoRelaysPublishEachRowOnce(t *testing.T) {
 	})
 }
 
-// TestTwoRelaysPostgres runs against the database in BOSUN_POSTGRES_DSN, which
-// the CI integration job provides.
-func TestTwoRelaysPostgres(t *testing.T) {
-	dsn := os.Getenv("BOSUN_POSTGRES_DSN")
-	if dsn == "" {
-		t.Skip("BOSUN_POSTGRES_DSN not set")
-	}
-	fresh := true
-	testTwoRelays(t, func() *gorm.DB {
-		db, err := gorm.Open(postgres.Open(dsn), &gorm.Config{})
-		if err != nil {
-			t.Fatal(err)
-		}
-		if sqlDB, err := db.DB(); err == nil {
-			t.Cleanup(func() { _ = sqlDB.Close() })
-		}
-		if fresh { // start from an empty table
-			fresh = false
-			if err := db.Migrator().DropTable(&outboxmod.Record{}); err != nil {
-				t.Fatal(err)
-			}
-			if err := db.AutoMigrate(&outboxmod.Record{}); err != nil {
-				t.Fatal(err)
-			}
-		}
-		return db
-	})
-}
+// The same check against Postgres lives in the nested module
+// modules/outboxmod/pgtest, so the root module needs no Postgres driver.

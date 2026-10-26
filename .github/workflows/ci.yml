@@ -186,8 +186,12 @@ jobs:
             (cd "$m" && go test -race -count=1 -v ./...) || { echo "::endgroup::"; exit 1; }
             echo "::endgroup::"
           done
+      # A test-only nested module (not released, so not in NESTED_MODULES)
+      # keeps the Postgres driver out of the root module.
       - name: Outbox relays on Postgres
-        run: go test -race -count=1 -v -run Postgres ./modules/outboxmod/
+        run: |
+          go work use ./modules/outboxmod/pgtest
+          cd modules/outboxmod/pgtest && go test -race -count=1 -v ./...
       - name: SeaweedFS logs
         if: failure()
         run: docker logs seaweedfs 2>&1 | tail -100

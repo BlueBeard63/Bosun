@@ -51,7 +51,8 @@ func WithShutdownTimeout(d time.Duration) Option {
 
 // WithHTTPServer customizes the *http.Server used by Run, RunContext and
 // Serve — e.g. to set ReadHeaderTimeout, IdleTimeout, TLSConfig or ErrorLog.
-// Handler is preset to app.Handler(); configure functions run in order. A
+// Handler is preset to app.Handler() and ReadHeaderTimeout to
+// DefaultReadHeaderTimeout (10s); configure functions run in order. A
 // BaseContext you set is kept, but is cancelled when shutdown begins.
 //
 //	app := bosun.New(bosun.WithHTTPServer(func(s *http.Server) {

@@ -96,7 +96,7 @@ Alternatively, remount it under a prefix that your gateway only exposes internal
 
 ## Document error responses
 
-Every operation always lists `200` and `500`, and lists `400` (with the field-level `ValidationError` body) when the handler binds input. Other error statuses come from three layers, which are merged together:
+Every operation always lists its success status (`200`, or the code set with `bosun.Status`) and `500`, and lists `400` (with the field-level `ValidationError` body) when the handler binds input. Other error statuses come from three layers, which are merged together:
 
 | Layer | How | When it works |
 |---|---|---|

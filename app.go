@@ -25,11 +25,14 @@ type App struct {
 	routes  routeTable              // typed-route metadata mounted on this app
 	mounted map[string]reflect.Type // "METHOD /path" -> controller that mounted it
 
+	observed observedTable // statuses each typed route has returned
+
 	startOnce sync.Once
 	startErr  error
 
 	shutdownTimeout time.Duration        // grace period for in-flight requests
 	serverConfig    []func(*http.Server) // set via WithHTTPServer
+	maxBody         int64                // typed-route body limit; set via WithMaxBody
 
 	errMaps []errorMapping // sentinel -> status mappings, set via MapError
 }
@@ -46,6 +49,7 @@ func New(opts ...Option) *App {
 		prefixes: map[reflect.Type]string{},
 
 		shutdownTimeout: DefaultShutdownTimeout,
+		maxBody:         DefaultMaxBody,
 	}
 	for _, o := range opts {
 		o(app)

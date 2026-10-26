@@ -7,8 +7,10 @@ package scaffold
 import (
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"os/exec"
+	"path"
 	"path/filepath"
 	"regexp"
 	"runtime/debug"
@@ -31,19 +33,76 @@ type Service struct {
 	// It is for developing Bosun itself, so a scaffold builds against
 	// unreleased changes.
 	LocalBosun string
+
+	// Workspace, when set, is the go.work the service is being added to. The
+	// service requires the workspace's contracts module through a replace
+	// directive, so it also builds outside the workspace (GOWORK=off, Docker).
+	Workspace *Workspace
+
+	// Force allows writing into a directory that already has files in it,
+	// overwriting any the scaffold generates.
+	Force bool
 }
 
 type serviceData struct {
 	Service
-	EventImport  string
-	EventPkg     string
-	EventCall    string // "Default" or "Use"
-	EventModule  string // driver module to require; "" when the backend lives in bosun
-	BosunVersion string // github.com/bluebeard63/bosun version to require
-	GoVersion    string // go directive of the generated go.mod
-	GoImage      string // golang image tag the Dockerfile builds with
-	BosunReplace string // quoted replacement path for bosun, from LocalBosun
-	EventReplace string // quoted replacement path for EventModule, from LocalBosun
+	EventImport      string
+	EventPkg         string
+	EventCall        string // "Default" or "Use"
+	EventModule      string // driver module to require; "" when the backend lives in bosun
+	BosunVersion     string // github.com/bluebeard63/bosun version to require
+	GoVersion        string // go directive of the generated go.mod
+	GoImage          string // golang image tag the Dockerfile builds with
+	BosunReplace     string // quoted replacement path for bosun, from LocalBosun
+	EventReplace     string // quoted replacement path for EventModule, from LocalBosun
+	ContractsModule  string // workspace contracts module to require, if any
+	ContractsReplace string // quoted path from the service to the contracts module
+	ContractsDir     string // contracts directory relative to the workspace root
+	WorkspaceDir     string // service directory relative to the workspace root
+}
+
+var (
+	nameRE    = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9_-]*$`)
+	modElemRE = regexp.MustCompile(`^[A-Za-z0-9_~-]([A-Za-z0-9._~-]*[A-Za-z0-9_~-])?$`)
+)
+
+// validName rejects names that can't be used verbatim as a directory, a
+// module path element and a Go string literal.
+func validName(kind, name string) error {
+	if !nameRE.MatchString(name) {
+		return fmt.Errorf("invalid %s name %q: use letters, digits, '-' and '_', starting with a letter", kind, name)
+	}
+	return nil
+}
+
+// validModule checks the shape of a Go module path: slash-separated elements
+// of letters, digits and "._~-", none starting or ending with a dot.
+func validModule(mod string) error {
+	for _, elem := range strings.Split(mod, "/") {
+		if !modElemRE.MatchString(elem) {
+			return fmt.Errorf("invalid module path %q", mod)
+		}
+	}
+	return nil
+}
+
+func validEvent(event string) error {
+	switch event {
+	case "", "inmem", "amqp", "nats", "redis", "none":
+		return nil
+	}
+	return fmt.Errorf("invalid event backend %q: want inmem, amqp, nats, redis or none", event)
+}
+
+func validPort(port int) error {
+	if port < 1 || port > 65535 {
+		return fmt.Errorf("invalid port %d", port)
+	}
+	return nil
+}
+
+func (s Service) validate() error {
+	return errors.Join(validName("service", s.Name), validModule(s.Module), validEvent(s.Event), validPort(s.Port))
 }
 
 // minGoVersion is the go directive a fresh service needs. Broker drivers that
@@ -82,6 +141,37 @@ func (s Service) data() serviceData {
 		}
 	}
 	return d
+}
+
+// placeIn fills the workspace-relative paths for a service written to dir.
+func (d *serviceData) placeIn(dir string) error {
+	ws := d.Workspace
+	if ws == nil {
+		return nil
+	}
+	abs, err := filepath.Abs(dir)
+	if err != nil {
+		return err
+	}
+	rel, err := filepath.Rel(ws.Root, abs)
+	if err != nil || rel == "." || strings.HasPrefix(rel, "..") {
+		return fmt.Errorf("%s is not inside workspace %s", abs, ws.Root)
+	}
+	d.WorkspaceDir = filepath.ToSlash(rel)
+	if ws.ContractsModule != "" {
+		toContracts, err := filepath.Rel(abs, ws.ContractsDir)
+		if err != nil {
+			return err
+		}
+		inWS, err := filepath.Rel(ws.Root, ws.ContractsDir)
+		if err != nil {
+			return err
+		}
+		d.ContractsModule = ws.ContractsModule
+		d.ContractsReplace = strconv.Quote(filepath.ToSlash(toContracts))
+		d.ContractsDir = filepath.ToSlash(inWS)
+	}
+	return nil
 }
 
 // goImage maps a go directive ("1.25.0") to the golang image tag ("1.25")
@@ -131,19 +221,57 @@ func bosunVersion() string {
 // main.go carries no hand-written side-effect imports: a generated
 // zz_bosun_registry.go (bosun gen registry) blank-imports every package that
 // registers with Bosun, and `go generate` keeps it current.
+//
+// It refuses a non-empty dir unless s.Force is set, and validates the name
+// and module path before writing anything.
 func WriteService(dir string, s Service) ([]string, error) {
+	if err := s.validate(); err != nil {
+		return nil, err
+	}
+	if err := checkFree(dir, s.Force); err != nil {
+		return nil, err
+	}
+	d := s.data()
+	if err := d.placeIn(dir); err != nil {
+		return nil, err
+	}
 	files := map[string]string{
 		"go.mod":              tmplGoMod,
 		"main.go":             tmplMain,
 		"internal/api/api.go": tmplAPI,
 		"Dockerfile":          tmplDockerfile,
 	}
-	written, err := render(dir, files, s.data())
+	if d.WorkspaceDir != "" {
+		files["Dockerfile"] = tmplWorkspaceDockerfile
+	}
+	written, err := render(dir, files, d)
 	if err != nil {
 		return written, err
 	}
 	reg, err := writeRegistry(dir)
 	return append(written, reg), err
+}
+
+// ErrExists reports a scaffold target directory that already has files in it.
+var ErrExists = errors.New("directory already exists and is not empty")
+
+// checkFree refuses to scaffold into a directory with files in it, so an
+// existing service is never silently overwritten.
+func checkFree(dir string, force bool) error {
+	if force {
+		return nil
+	}
+	entries, err := os.ReadDir(dir)
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if len(entries) > 0 {
+		return fmt.Errorf("%w: %s", ErrExists, dir)
+	}
+	return nil
 }
 
 // writeRegistry generates the service's zz_bosun_registry.go exactly as
@@ -217,6 +345,118 @@ func syncDockerfile(dir string) error {
 	return os.WriteFile(path, df, 0o644)
 }
 
+// Workspace is a Go workspace (go.work) that services are added to.
+type Workspace struct {
+	Root            string // absolute directory holding go.work
+	Module          string // module path prefix, e.g. example.com/acme; "" if unknown
+	ContractsModule string // module path of the shared contracts module; "" if none
+	ContractsDir    string // absolute directory of the contracts module
+}
+
+// FindWorkspace walks up from dir to the nearest go.work and describes it,
+// or returns nil if dir isn't inside a workspace. The module prefix and the
+// contracts module come from the modules go.work uses: a module whose path
+// ends in /contracts, as `bosun new project` creates, or failing that a
+// module under <prefix>/services/.
+func FindWorkspace(dir string) (*Workspace, error) {
+	abs, err := filepath.Abs(dir)
+	if err != nil {
+		return nil, err
+	}
+	for d := abs; ; d = filepath.Dir(d) {
+		data, err := os.ReadFile(filepath.Join(d, "go.work"))
+		if err == nil {
+			return describeWorkspace(d, data), nil
+		}
+		if !errors.Is(err, fs.ErrNotExist) {
+			return nil, err
+		}
+		if filepath.Dir(d) == d {
+			return nil, nil
+		}
+	}
+}
+
+func describeWorkspace(root string, gowork []byte) *Workspace {
+	ws := &Workspace{Root: root}
+	var servicePrefix string
+	for _, use := range workUses(gowork) {
+		dir := filepath.Join(root, filepath.FromSlash(use))
+		mod := modulePath(filepath.Join(dir, "go.mod"))
+		switch {
+		case mod == "":
+		case path.Base(mod) == "contracts" && ws.ContractsModule == "":
+			ws.ContractsModule, ws.ContractsDir = mod, dir
+			ws.Module = path.Dir(mod)
+		case servicePrefix == "" && strings.Contains(mod, "/services/"):
+			servicePrefix = mod[:strings.LastIndex(mod, "/services/")]
+		}
+	}
+	if ws.Module == "" || ws.Module == "." {
+		ws.Module = servicePrefix
+	}
+	return ws
+}
+
+// workUses returns the directories listed in go.work's use directives.
+func workUses(gowork []byte) []string {
+	var uses []string
+	inBlock := false
+	for _, line := range strings.Split(string(gowork), "\n") {
+		if i := strings.Index(line, "//"); i >= 0 {
+			line = line[:i]
+		}
+		line = strings.TrimSpace(line)
+		switch {
+		case inBlock && line == ")":
+			inBlock = false
+		case inBlock && line != "":
+			uses = append(uses, unquote(line))
+		case line == "use (":
+			inBlock = true
+		case strings.HasPrefix(line, "use "):
+			uses = append(uses, unquote(strings.TrimSpace(strings.TrimPrefix(line, "use "))))
+		}
+	}
+	return uses
+}
+
+var moduleRE = regexp.MustCompile(`(?m)^module\s+(\S+)`)
+
+// modulePath reads the module path from a go.mod, or "" if there is none.
+func modulePath(gomod string) string {
+	data, err := os.ReadFile(gomod)
+	if err != nil {
+		return ""
+	}
+	m := moduleRE.FindSubmatch(data)
+	if m == nil {
+		return ""
+	}
+	return unquote(string(m[1]))
+}
+
+func unquote(s string) string {
+	if u, err := strconv.Unquote(s); err == nil {
+		return u
+	}
+	return s
+}
+
+// Use adds the module in dir to go.work with `go work use`, which also
+// raises go.work's go line to the module's if needed.
+func (w *Workspace) Use(dir string) error {
+	abs, err := filepath.Abs(dir)
+	if err != nil {
+		return err
+	}
+	rel, err := filepath.Rel(w.Root, abs)
+	if err != nil {
+		return err
+	}
+	return goCmd(w.Root, "work", "use", "./"+filepath.ToSlash(rel))
+}
+
 // Project describes a workspace to scaffold, including its first service.
 type Project struct {
 	Module     string
@@ -225,14 +465,34 @@ type Project struct {
 	Port       int
 	Event      string
 	LocalBosun string // see Service.LocalBosun
+	Force      bool   // see Service.Force
 }
 
-// WriteProject renders a workspace into dir/ (go.work, contracts, README) plus
-// its first service under services/<Service>, and returns the written paths.
+// WriteProject renders a workspace into dir/ (go.work, the contracts module,
+// README) plus its first service under services/<Service>, and returns the
+// written paths. go.work uses both modules, and the service requires the
+// contracts module through a replace directive.
 func WriteProject(dir string, p Project) ([]string, error) {
+	if err := errors.Join(validName("project", p.Name), validModule(p.Module)); err != nil {
+		return nil, err
+	}
+	if err := checkFree(dir, p.Force); err != nil {
+		return nil, err
+	}
+	abs, err := filepath.Abs(dir)
+	if err != nil {
+		return nil, err
+	}
 	svc := Service{
 		Module: p.Module + "/services/" + p.Service, Name: p.Service, Port: p.Port, Event: p.Event,
-		LocalBosun: p.LocalBosun,
+		LocalBosun: p.LocalBosun, Force: p.Force,
+		Workspace: &Workspace{
+			Root: abs, Module: p.Module,
+			ContractsModule: p.Module + "/contracts", ContractsDir: filepath.Join(abs, "contracts"),
+		},
+	}
+	if err := svc.validate(); err != nil {
+		return nil, err
 	}
 	pd := struct {
 		Project
@@ -241,6 +501,7 @@ func WriteProject(dir string, p Project) ([]string, error) {
 
 	written, err := render(dir, map[string]string{
 		"go.work":          tmplGoWork,
+		"contracts/go.mod": tmplContractsGoMod,
 		"contracts/doc.go": tmplContracts,
 		"README.md":        tmplReadme,
 	}, pd)
@@ -283,7 +544,14 @@ require (
 {{- if .EventModule}}
 	{{.EventModule}} {{.BosunVersion}}
 {{- end}}
+{{- if .ContractsModule}}
+	{{.ContractsModule}} v0.0.0
+{{- end}}
 )
+{{- if .ContractsModule}}
+
+replace {{.ContractsModule}} => {{.ContractsReplace}}
+{{- end}}
 {{- if .BosunReplace}}
 
 replace github.com/bluebeard63/bosun => {{.BosunReplace}}
@@ -370,11 +638,35 @@ EXPOSE {{.Port}}
 ENTRYPOINT ["/app"]
 `
 
+// tmplWorkspaceDockerfile builds a workspace service from the workspace root,
+// so the contracts module its go.mod replaces is inside the build context.
+const tmplWorkspaceDockerfile = `# Build from the workspace root: docker build -f {{.WorkspaceDir}}/Dockerfile .
+FROM golang:{{.GoImage}} AS build
+WORKDIR /src
+{{- if .ContractsDir}}
+COPY {{.ContractsDir}} ./{{.ContractsDir}}
+{{- end}}
+COPY {{.WorkspaceDir}} ./{{.WorkspaceDir}}
+WORKDIR /src/{{.WorkspaceDir}}
+RUN CGO_ENABLED=0 GOWORK=off go build -o /app .
+
+FROM gcr.io/distroless/static
+COPY --from=build /app /app
+EXPOSE {{.Port}}
+ENTRYPOINT ["/app"]
+`
+
 const tmplGoWork = `go {{.GoVersion}}
 
 use (
+	./contracts
 	./services/{{.Service}}
 )
+`
+
+const tmplContractsGoMod = `module {{.Module}}/contracts
+
+go 1.22
 `
 
 const tmplContracts = `// Package contracts holds shared types only: event payloads, request and
@@ -388,8 +680,11 @@ const tmplReadme = `# {{.Name}}
 
 A Bosun microservice workspace.
 
-- ` + "`contracts/`" + ` shared types only (event payloads, DTOs, generated clients).
+- ` + "`contracts/`" + ` shared types only (event payloads, DTOs, generated clients), its own module.
 - ` + "`services/{{.Service}}/`" + ` the first service; run it with ` + "`go run ./services/{{.Service}}`" + `.
 
-Add another service with ` + "`bosun new service <name>`" + `.
+Add another service with ` + "`bosun new service <name>`" + ` from anywhere in this
+workspace: it is created under ` + "`services/`" + ` and added to ` + "`go.work`" + `.
+Build a service image from this directory with
+` + "`docker build -f services/<name>/Dockerfile .`" + `.
 `

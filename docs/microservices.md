@@ -54,11 +54,18 @@ Use the [event bus](./events.md) for asynchronous, decoupled communication: one 
 
 ## Scaffolding
 
-`bosun new project` creates the workspace, the contracts package, and a first service; `bosun new service` adds another service to an existing workspace. Both prompt for the module path, the first service name, and the event backend, or take those as flags with `--yes` for non-interactive use.
+`bosun new project` creates the workspace, the contracts module, and a first service; `bosun new service`, run anywhere inside the workspace, adds another service under `services/` and adds it to `go.work`. Both prompt for the module path and the event backend (and `bosun new project` for the first service name), or take those as flags with `--yes` for non-interactive use.
 
 ```bash
 bosun new project acme --yes
-bosun new service orders --module acme/services/orders --event nats --yes
+cd acme
+bosun new service orders --event nats --yes   # creates services/orders, module example.com/acme/services/orders
+```
+
+`contracts` is a module of its own. Each service's `go.mod` requires it through a `replace` directive pointing at `../../contracts`, so a service builds inside the workspace, on its own with `GOWORK=off`, and in Docker. A service's `Dockerfile` copies `contracts` and the service into the image, so build it from the workspace root:
+
+```bash
+docker build -f services/orders/Dockerfile .
 ```
 
 Each generated service is a runnable Bosun app with a sample route, health and manifest endpoints, and the event backend wired in, ready for you to add controllers and services.

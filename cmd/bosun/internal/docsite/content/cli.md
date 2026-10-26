@@ -85,19 +85,24 @@ Scaffolds a new service or a new workspace. Both subcommands prompt for their op
 
 The generated `go.mod` requires bosun at the version the CLI was built against, plus the driver module for a broker backend (`amqp`, `nats`, `redis`). The command then runs `go mod tidy` to resolve dependencies and write `go.sum`, so the service builds straight away; if `go` isn't on your `PATH` or tidy fails (for example offline), it prints a warning and you run `go mod tidy` yourself. The `Dockerfile` builds with the `golang` image matching the `go` directive in `go.mod`.
 
+Inside a Go workspace (a `go.work` in the current directory or a parent, such as one made by `bosun new project`), the service is created under `services/<name>` at the workspace root instead of `./<name>`, its module path defaults to `<workspace module>/services/<name>`, it requires the workspace's `contracts` module, and it is added to `go.work` with `go work use`.
+
+The name must start with a letter and contain only letters, digits, `-` and `_`, and the module path must be a valid Go module path. The command refuses to write into a directory that already has files in it unless you pass `--force`.
+
 ```bash
 bosun new service billing --module example.com/billing --event inmem --yes
 ```
 
 | Flag | Default | Description |
 | --- | --- | --- |
-| `--module` | `example.com/<name>` | Go module path. |
+| `--module` | `example.com/<name>`, or `<workspace module>/services/<name>` in a workspace | Go module path. |
 | `--event` | `inmem` | Event backend: `inmem`, `amqp`, `nats`, `redis`, or `none`. |
 | `--port` | `8080` | Listen port baked into the service. |
 | `--yes`, `-y` | `false` | Accept defaults without prompting. |
+| `--force` | `false` | Write into a non-empty directory, overwriting the generated files. |
 | `--bosun-dir` | none | Build against a local bosun checkout by adding `replace` directives to `go.mod`. For working on Bosun itself. |
 
-`bosun new project <name>` creates a workspace with a shared contracts package and a first service.
+`bosun new project <name>` creates a workspace: a `go.work` that uses a shared `contracts` module and a first service under `services/`.
 
 ```bash
 bosun new project acme --module example.com/acme --service api --yes
@@ -110,4 +115,5 @@ bosun new project acme --module example.com/acme --service api --yes
 | `--event` | `inmem` | Event backend for the first service. |
 | `--port` | `8080` | Listen port for the first service. |
 | `--yes`, `-y` | `false` | Accept defaults without prompting. |
+| `--force` | `false` | Write into a non-empty directory, overwriting the generated files. |
 | `--bosun-dir` | none | As for `bosun new service`. |

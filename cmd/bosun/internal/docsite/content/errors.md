@@ -1,6 +1,6 @@
 # Error handling
 
-Bosun maps handler errors to HTTP status codes and JSON bodies with a two-rule model. Return `bosun.E(status, publicMsg, cause)` for a controlled response, and return any other error to get a `500 "internal server error"` whose original message is captured in the audit event but never sent to the client. This guide shows how to use that model well.
+Bosun maps handler errors to HTTP status codes and JSON bodies with a two-rule model. Return `bosun.E(status, publicMsg, cause)` for a controlled response, and return any other error to get a `500 "internal server error"` whose original message is captured in the audit event but never sent to the client. Sentinel errors can be mapped to a status once per app with `bosun.MapError`. This guide shows how to use that model well.
 
 <figure class="diagram">
 <svg viewBox="0 0 660 220" role="img" aria-labelledby="err-title err-desc" xmlns="http://www.w3.org/2000/svg">
@@ -83,9 +83,40 @@ func mapDBErr(err error) error {
 }
 ```
 
+## Mapping sentinel errors
+
+For sentinel errors you can register the mapping once per app instead. `bosun.MapError(target, status, msg)` is an option to `bosun.New`. When a typed handler returns an error that matches `target` under `errors.Is`, including a wrapped one, the client gets `status` and `msg` instead of a 500:
+
+```go
+app := bosun.New(
+    bosun.MapError(billing.ErrCardDeclined, http.StatusPaymentRequired, "card declined"),
+    bosun.MapError(orders.ErrConflict, http.StatusConflict, ""), // "" uses the status text: "conflict"
+)
+```
+
+```go
+func (c *Orders) Pay(ctx context.Context, req *bosun.Req[PayIn]) (PayOut, error) {
+    if err := c.Billing.Charge(ctx, req.Body.Card); err != nil {
+        return PayOut{}, fmt.Errorf("charging order %d: %w", req.Body.OrderID, err)
+    }
+    ...
+}
+```
+
+A declined card answers `402 {"error":"card declined"}`, and the wrapped error, with its cause, goes to the audit event. Mappings belong to the app they are passed to. `MapError` panics on a nil target or a status outside 100 to 999.
+
+An error type can also carry its own status by implementing `HTTPStatus() int`, and optionally `PublicMessage() string` for the client message. Without `PublicMessage`, the lower-case status text is used. `Error()` is never shown. The type doesn't import bosun, so domain and module packages can use it freely. `repomod.ErrNotFound` and `storemod.ErrNotFound` do this, so returning either from a handler answers `404 {"error":"not found"}` with no mapping.
+
+An error is resolved in this order:
+
+1. A `*bosun.Error` in the chain: its status and message.
+2. The first `MapError` mapping whose target matches, in registration order. This overrides a sentinel's own status, for example `bosun.MapError(storemod.ErrNotFound, http.StatusGone, "expired")`.
+3. An error in the chain with an `HTTPStatus()` method.
+4. Anything else: `500 "internal server error"`.
+
 ## What never reaches the client
 
-The cause passed to `bosun.E` is captured in the audit event but never in the response. A plain error returned from a handler is collapsed to `"internal server error"`. The intent is that the client-facing response is chosen by the handler author, not determined by wherever in the call stack an error arose.
+The cause passed to `bosun.E` is captured in the audit event but never in the response. A plain error returned from a handler that is not mapped is collapsed to `"internal server error"`, and an error's own `Error()` text is never sent, even when it is mapped. The intent is that the client-facing response is chosen by the handler author, not determined by wherever in the call stack an error arose.
 
 ## Input errors
 
@@ -95,7 +126,7 @@ Requests that fail binding or [validation](./validation.md) never reach your han
 {"error":"validation failed","fields":[{"field":"email","in":"body","rule":"required","message":"is required"}]}
 ```
 
-Custom `Validate()` methods can return `bosun.E(...)` to use a different status, such as `422` for a business rule.
+Custom `Validate()` methods can return `bosun.E(...)` to use a different status, such as `422` for a business rule. Mapped sentinels resolve as they do for handlers. Any other error from `Validate()` is answered with `400 {"error":"invalid request"}`; its text goes to the audit event, not the client.
 
 ## Panics
 

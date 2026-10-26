@@ -112,6 +112,7 @@ func typed[In, Out any](r *Router, method, p string, h func(context.Context, *Re
 		*r.errs = append(*r.errs, fmt.Errorf("%s %s: bosun.Status(%d): not a 2xx or 3xx status", method, p, routeStatus))
 		return
 	}
+	meta, mwNames := r.describe(mws)
 
 	p = normalizePath(p)
 	full := r.fullPath(p)
@@ -167,6 +168,9 @@ func typed[In, Out any](r *Router, method, p string, h func(context.Context, *Re
 		Out:      outType,
 		Status:   routeStatus,
 		Declared: declared,
+
+		Meta:       meta,
+		Middleware: mwNames,
 	})
 	okStatus := http.StatusOK
 	if routeStatus != 0 {
@@ -242,7 +246,7 @@ func typed[In, Out any](r *Router, method, p string, h func(context.Context, *Re
 
 		if bindErr != nil {
 			var body any
-			status, body = inputErrorBody(bindErr)
+			status, body = app.inputErrorBody(bindErr)
 			handlerErr = bindErr
 			writeJSON(w, status, body)
 		} else {
@@ -252,8 +256,9 @@ func typed[In, Out any](r *Router, method, p string, h func(context.Context, *Re
 				status = call.rc.status // bosun.SetStatus
 			}
 			if handlerErr != nil {
-				status = errStatus(handlerErr)
-				writeJSON(w, status, map[string]string{"error": publicMessage(handlerErr)})
+				var msg string
+				status, msg = app.errorResponse(handlerErr)
+				writeJSON(w, status, map[string]string{"error": msg})
 			} else if err := writeOut(w, status, out, outIsString, outIsBytes, outIsEmptyStruct); err != nil {
 				status = http.StatusInternalServerError
 				handlerErr = fmt.Errorf("encoding response: %w", err)

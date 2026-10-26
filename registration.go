@@ -129,6 +129,7 @@ type MWRef struct {
 	t      reflect.Type      // set by Use[T]()
 	inline MiddlewareHandler // set by UseFunc() and factory helpers
 	args   []any             // populated when Use is called with arguments
+	meta   []metaKV          // route metadata, set by Meta() / WithMeta()
 }
 
 // Use references middleware type T.

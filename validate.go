@@ -424,9 +424,12 @@ func oneOf(f reflect.Value, opts []string) bool {
 // --- error rendering ---
 
 // inputErrorBody converts a bind/validation failure into its status and
-// JSON body. ValidationErrors render with fields; *Error keeps its status
-// and public message; other errors render their message with a 400.
-func inputErrorBody(err error) (int, any) {
+// JSON body. ValidationErrors render with fields; *Error, MapError
+// mappings and errors with their own HTTPStatus resolve as on the handler
+// path; any other error (e.g. a plain error from Validate) is a 400
+// "invalid request". Its text is never shown to the client: it reaches the
+// audit event as the cause.
+func (a *App) inputErrorBody(err error) (int, any) {
 	var ve *ValidationError
 	if errors.As(err, &ve) {
 		body := map[string]any{"error": ve.message()}
@@ -435,9 +438,8 @@ func inputErrorBody(err error) (int, any) {
 		}
 		return 400, body
 	}
-	var be *Error
-	if errors.As(err, &be) {
-		return be.Status, map[string]string{"error": be.Msg}
+	if status, msg, ok := knownError(a.errMaps, err); ok {
+		return status, map[string]string{"error": msg}
 	}
-	return 400, map[string]string{"error": err.Error()}
+	return 400, map[string]string{"error": "invalid request"}
 }

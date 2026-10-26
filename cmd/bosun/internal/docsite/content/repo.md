@@ -59,7 +59,7 @@ type Repo[T any] interface {
 }
 ```
 
-`Get` and `Query().One` return the portable `repomod.ErrNotFound` (not the driver's own sentinel) when no row matches, so check with `errors.Is`.
+`Get` and `Query().One` return the portable `repomod.ErrNotFound` (not the driver's own sentinel) when no row matches, so check with `errors.Is`. A typed handler that returns it, wrapped or not, answers `404 {"error":"not found"}`; see [mapping sentinel errors](./errors.md#mapping-sentinel-errors) to change that.
 
 ## Querying
 

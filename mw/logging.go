@@ -12,6 +12,15 @@ import (
 
 // --- Logging ---
 
+// Logging writes one slog line per request ("request", at Info level, via
+// InfoContext so context-aware handlers see the request context) with the
+// method, path, status, duration, remote address (the TCP peer), the
+// correlation id, and — when mw.RealIP ran upstream — the resolved
+// client_ip.
+//
+// The correlation id is read from the request context, so register
+// mw.Correlation outside Logging; if it runs inside instead, Logging falls
+// back to the X-Correlation-ID response header it sets.
 type Logging struct {
 	log *slog.Logger
 }
@@ -28,13 +37,22 @@ func (m *Logging) Handle(next http.Handler) http.Handler {
 		start := time.Now()
 		rec := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
 		next.ServeHTTP(rec, r)
-		m.log.Info("request",
+		cid := bosun.CorrelationID(r.Context())
+		if cid == "" {
+			cid = w.Header().Get(bosun.HeaderCorrelationID)
+		}
+		attrs := []any{
 			"method", r.Method,
 			"path", r.URL.Path,
 			"status", rec.status,
 			"duration", time.Since(start).String(),
 			"remote", r.RemoteAddr,
-		)
+			"correlation_id", cid,
+		}
+		if ip := resolvedClientIP(r); ip != "" {
+			attrs = append(attrs, "client_ip", ip)
+		}
+		m.log.InfoContext(r.Context(), "request", attrs...)
 	})
 }
 

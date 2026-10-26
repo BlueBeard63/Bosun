@@ -99,6 +99,32 @@ func TestRateLimitEvictsIdleKeys(t *testing.T) {
 	}
 }
 
+func TestRateLimitRetryAfter(t *testing.T) {
+	d := &bosun.Dynamic[RateLimitOptions]{}
+	d.Set(&RateLimitOptions{PerMinute: 1})
+	now := time.Now()
+	m := &RateLimit{opts: d, now: func() time.Time { return now }}
+	if err := m.Init(); err != nil {
+		t.Fatal(err)
+	}
+	h := m.Handle(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+	hit := func() *httptest.ResponseRecorder {
+		req := httptest.NewRequest("GET", "/x", nil)
+		req.RemoteAddr = "1.2.3.4:1000"
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		return rec
+	}
+	if rec := hit(); rec.Header().Get("Retry-After") != "" {
+		t.Fatal("Retry-After on an allowed request")
+	}
+	now = now.Add(20*time.Second + 500*time.Millisecond)
+	rec := hit()
+	if rec.Code != http.StatusTooManyRequests || rec.Header().Get("Retry-After") != "40" {
+		t.Fatalf("status = %d Retry-After = %q, want 429 / 40", rec.Code, rec.Header().Get("Retry-After"))
+	}
+}
+
 func TestLoggingFlushes(t *testing.T) {
 	m := &Logging{}
 	if err := m.Init(); err != nil {

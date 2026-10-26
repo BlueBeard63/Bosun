@@ -89,6 +89,13 @@ On a handler error (a nack with requeue) the message is redelivered to the subsc
 - **In-memory** re-enqueues the message with an incremented `Attempt`.
 - **NATS** re-publishes the message with an incremented `Attempt` to a retry subject that only the failing subscription, or the members of its queue group, listen on. Core NATS stores nothing, so this is best effort: a message that is being handled when the process stops is not redelivered. Back the subject with JetStream if you need durable delivery.
 
+Every driver's `Attempt` counts the deliveries of a message to that subscription, which is what the typed layer's attempt limit and dead-lettering use (see [retries](./events.md#retries-backoff-and-dead-lettering)). The backoff before a redelivery is applied as follows:
+
+- **In-memory** re-enqueues the message from a timer once the delay has passed, so the subscription's workers keep handling other messages in the meantime. A message still waiting when the bus closes is lost, like any undelivered in-memory message.
+- **RabbitMQ, NATS, and Redis** wait in the handler before nacking. The message stays unacked (RabbitMQ, Redis) or unpublished to the retry subject (NATS) while it waits, and the subscription dispatches nothing else until the wait ends, so the delay is bounded by the backoff's maximum. A handler that is backing off counts as in flight, so closing the bus can take up to that maximum longer. On Redis, keep that maximum well below `Options.ClaimIdle`, or another member of the group may claim the entry and handle it concurrently. On NATS, a message waiting out its backoff when the process stops is not redelivered, in keeping with core NATS being best effort.
+
+The typed layer does its own dead-lettering by publishing to the subject you name with `WithDeadLetter`, so it works the same on every backend and needs no broker configuration. It is independent of a RabbitMQ queue's dead-letter exchange, which only receives messages that are rejected without requeue (for example, an undecodable payload when no dead-letter subject is set).
+
 Redis streams grow without limit by default. Set `Options.MaxLen` to trim each stream to roughly that many entries on every publish (`XADD MAXLEN ~`), and size it for your slowest group, because entries trimmed before a group reads them are lost to that group.
 
 ```go

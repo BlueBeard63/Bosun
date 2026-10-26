@@ -75,14 +75,13 @@ func (declaredErrors) routeOpt() {}
 // generation in binaries where source scanning isn't available or desired.
 func Errors(codes ...int) RouteOpt { return declaredErrors(codes) }
 
-// routeTable holds the route metadata one App has mounted and the statuses
-// those routes have returned. Each App owns its own, so apps built in the
-// same process (e.g. in tests) never see each other's routes.
+// routeTable holds the route metadata one App has mounted. Each App owns its
+// own, so apps built in the same process (e.g. in tests) never see each
+// other's routes. Observed statuses are kept separately (see observed.go).
 type routeTable struct {
-	mu       sync.Mutex
-	routes   []RouteInfo // typed routes only
-	all      []RouteInfo // typed and raw routes, in mount order
-	observed map[string]map[int]struct{}
+	mu     sync.Mutex
+	routes []RouteInfo // typed routes only
+	all    []RouteInfo // typed and raw routes, in mount order
 }
 
 func (t *routeTable) add(ri RouteInfo) {
